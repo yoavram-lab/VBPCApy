@@ -18,6 +18,7 @@ import numpy as np
 from scipy.io import loadmat
 from scipy.linalg import orth  # Use orth from scipy.linalg
 import matplotlib.pyplot as plt
+import time
 
 # from argschk import argschk
 # from rmempty import rmempty
@@ -145,6 +146,160 @@ def pca_full(X, ncomp, **kwargs):
     dsph = display_init(opts.display, lc)
     print_first_step(opts.verbose, rms, prms)
     Aold = A
+
+    hpVa = 0.001
+    hpVb = 0.001
+    hpV = 0.001
+
+    time_start = time.time()
+    time_autosave = time_start
+    tic = time.time()
+
+    for iter in range(1, opts['maxiters'] + 1):
+        # Update Va and Vmu if using prior and past the broad prior iterations
+        if use_prior and iter > opts['niter_broadprior']:
+            if opts['bias']:
+                Vmu = np.sum(Mu ** 2)
+                if Muv.size > 0:
+                    Vmu += np.sum(Muv)
+                Vmu = (Vmu + 2 * hpVa) / (n1 + 2 * hpVb)
+            
+            Va = np.sum(A ** 2, axis=0)
+            if Av:
+                for i in range(n1):
+                    Va += np.diag(Av[i])
+            Va = (Va + 2 * hpVa) / (n1 + 2 * hpVb)
+        
+        # Update bias if enabled
+        if opts['bias']:
+            dMu = np.sum(errMx, axis=1) / Nobs_i
+            if Muv.size > 0:
+                Muv = V / (Nobs_i + V / Vmu)
+            th = 1 / (1 + V / (Nobs_i * Vmu))
+            Mu_old = Mu.copy()
+            Mu = th * (Mu + dMu)
+            dMu = Mu - Mu_old
+            X, Xprobe = subtract_mu(dMu, X, M, Xprobe, Mprobe, True)
+        
+        # Update S
+        if not Isv:
+            for j in range(n2):
+                A_j = (M[:, j].reshape(-1, 1) * A)  # Equivalent to repmat(M(:,j),1,ncomp) .* A
+                Psi = A_j.T @ A_j + np.diag(V)
+                if Av:
+                    for i in np.where(M[:, j])[0]:
+                        Psi += Av[i]
+                invPsi = np.linalg.inv(Psi)
+                S[:, j] = invPsi @ A_j.T @ X[:, j]
+                Sv[j] = V * invPsi
+                PrintProgress(opts['verbose'], j + 1, n2, 'Updating S:')
+        else:
+            for k in range(nobscomb):
+                j = obscombj[k][0]
+                A_j = (M[:, j].reshape(-1, 1) * A)
+                Psi = A_j.T @ A_j + np.diag(V)
+                if Av:
+                    for i in np.where(M[:, j])[0]:
+                        Psi += Av[i]
+                invPsi = np.linalg.inv(Psi)
+                Sv[k] = V * invPsi
+                tmp = invPsi @ A_j.T
+                for j_idx in obscombj[k]:
+                    S[:, j_idx] = tmp @ X[:, j_idx]
+                PrintProgress(opts['verbose'], k + 1, nobscomb, 'Updating S:')
+        
+        if opts['verbose'] == 2:
+            print('\r', end='')
+        
+        # Rotate to PCA if enabled
+        if opts['rotate2pca']:
+            dMu, A, Av, S, Sv = rotate_to_pca(A, Av, S, Sv, Isv, obscombj, opts['bias'])
+            if opts['bias']:
+                X, Xprobe = subtract_mu(dMu, X, M, Xprobe, Mprobe, True)
+                Mu += dMu
+        
+        # Update A
+        if opts['verbose'] == 2:
+            print('                                              \r', end='')
+        for i in range(n1):
+            S_i = (M[i, :].reshape(-1, 1) * S).T  # Equivalent to repmat(full(M(i,:),ncomp,1)) .* S
+            Phi = S_i @ S_i.T + np.diag(V / Va)
+            if Isv:
+                for j in np.where(M[i, :])[0]:
+                    Phi += Sv[Isv[j]]
+            else:
+                for j in np.where(M[i, :])[0]:
+                    Phi += Sv[j]
+            invPhi = np.linalg.inv(Phi)
+            A[i, :] = X[i, :] @ S_i @ invPhi
+            if Av:
+                Av[i] = V * invPhi
+            PrintProgress(opts['verbose'], i + 1, n1, 'Updating A:')
+        if opts['verbose'] == 2:
+            print('\r', end='')
+        
+        # Compute RMS errors
+        rms, errMx = compute_rms(X, A, S, M, ndata)
+        prms, _ = compute_rms(Xprobe, A, S, Mprobe, nprobe)
+        
+        # Update V
+        sXv = 0
+        if not Isv:
+            for r in range(ndata):
+                i = IX[r]
+                j = JX[r]
+                sXv += A[i, :] @ Sv[j] @ A[i, :].T
+                if Av:
+                    sXv += S[:, j].T @ Av[i] @ S[:, j] + np.sum(Sv[j] * Av[i])
+        else:
+            for r in range(ndata):
+                i = IX[r]
+                j = JX[r]
+                sXv += A[i, :] @ Sv[Isv[j]] @ A[i, :].T
+                if Av:
+                    sXv += S[:, j].T @ Av[i] @ S[:, j] + np.sum(Sv[Isv[j]] * Av[i])
+        
+        if Muv.size > 0:
+            sXv += np.sum(Muv[IX])
+        
+        sXv += (rms ** 2) * ndata
+        V = (sXv + 2 * hpV) / (ndata + 2 * hpV)
+        
+        t = time.time() - tic
+        lc['rms'].append(rms)
+        lc['prms'].append(prms)
+        lc['time'].append(t)
+        
+        # Update cost function if applicable
+        if opts['cfstop'].size > 0:
+            cost = cf_full(X, A, S, Mu, V, Av, Sv, Isv, Muv, Va, Vmu, M, sXv, ndata)
+            lc['cost'].append(cost)
+        
+        # Display progress
+        DisplayProgress(dsph, lc)
+        angleA = subspace_angle(A, Aold)
+        PrintStep(opts['verbose'], lc, angleA)
+        
+        # Check for convergence
+        convmsg = convergence_check(opts, lc, angleA)
+        if convmsg:
+            if use_prior and iter <= opts['niter_broadprior']:
+                pass  # Do nothing
+            elif opts['verbose']:
+                print(convmsg)
+            break
+        Aold = A.copy()
+        
+        # Autosave if necessary
+        current_time = time.time()
+        if (current_time - time_autosave) > opts['autosave']:
+            time_autosave = current_time
+            if opts['verbose'] == 2:
+                print('Saving ... ', end='')
+            save_parameters(opts['filename'], A, S, Mu, V, Av, Muv, Sv, Isv, Va, Vmu, lc, Ir, Ic, n1x, n2x, n1, n2)
+            if opts['verbose'] == 2:
+                print('done')
+
 
 
     return A, S, Mu, V, cv, hp, lc
