@@ -55,8 +55,8 @@ void eigen_to_csr(const SpMat& mat, std::vector<double>& data,
     }
 }
 
-// Function to compute ERRPCA_PT
-py::dict ERRPCA_PT(const py::array_t<double, py::array::c_style | py::array::forcecast>& X_data,
+// Function to compute errpca_pt
+py::dict errpca_pt(const py::array_t<double, py::array::c_style | py::array::forcecast>& X_data,
                    const py::array_t<int, py::array::c_style | py::array::forcecast>& X_indices,
                    const py::array_t<int, py::array::c_style | py::array::forcecast>& X_indptr,
                    const Eigen::MatrixXd& A,
@@ -163,9 +163,9 @@ py::dict ERRPCA_PT(const py::array_t<double, py::array::c_style | py::array::for
 }
 
 PYBIND11_MODULE(errpca_pt, m) {
-    m.doc() = "ERRPCA_PT: Compute sparse matrix of reconstruction errors";
+    m.doc() = "errpca_pt: Compute sparse matrix of reconstruction errors";
 
-    m.def("ERRPCA_PT", &ERRPCA_PT,
+    m.def("errpca_pt", &errpca_pt,
           py::arg("X_data"),
           py::arg("X_indices"),
           py::arg("X_indptr"),
