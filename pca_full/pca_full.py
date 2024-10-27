@@ -1,9 +1,9 @@
 # return dictionary with A, S, Mu, V, cv, hp, lc
-# A: Likely represents a matrix of principal components (loadings).
-# S: Another output matrix, possibly the transformed data in the new PCA space (scores).
-# Mu: The mean values of the data.
+# A: Likely represents a matrix of principal components (loadings).# A is the liner transition matrix - Josh
+# S: Another output matrix, possibly the transformed data in the new PCA space (scores). # this is the matrix of prinicipal components
+# Mu: The mean values of the data. # this is the bias, like the y intecept in a linear regression, but for a matrix
 # V: Variance, possibly of the noise.
-# cv: Posterior covariances (likely a structure with details for A and S).
+# cv: Posterior covariances (likely a structure with details for A and S). # as well as Mu
 # hp: Hyperparameters (related to prior distributions).
 # lc: Learning curves (metrics for performance over iterations).
 
