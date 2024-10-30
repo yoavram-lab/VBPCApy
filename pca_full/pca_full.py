@@ -11,6 +11,7 @@
 # ncomp: The number of principal components to compute.
 # kwargs: Stands for "keyword arguments". It allows you to pass optional parameters as a dictionary.
 import numpy as np
+from scipy.io import savemat
 import scipy.linalg
 import scipy.io
 from scipy.sparse import issparse, csr_matrix
@@ -137,16 +138,17 @@ def pca_full(X, ncomp, **kwargs):
     prms, _ = compute_rms(Xprobe, A, S, Mprobe, nprobe)
     
     lc = {
-        'rms': rms,
-        'prms': prms,
-        'time': 0,
-        'cost': float('nan')
+        'rms': [rms],
+        'prms': [prms],
+        'time': [0],
+        'cost': [np.nan]
     }
-    
-    dsph = display_init(opts.display, lc)
-    print_first_step(opts.verbose, rms, prms)
-    Aold = A
 
+    dsph = display_init(opts['display'], lc)
+    print_first_step(opts['verbose'], rms, prms)
+    Aold = A.copy()
+
+    # Parameters of the prior for variance parameters
     hpVa = 0.001
     hpVb = 0.001
     hpV = 0.001
@@ -156,21 +158,21 @@ def pca_full(X, ncomp, **kwargs):
     tic = time.time()
 
     for iter in range(1, opts['maxiters'] + 1):
-        # Update Va and Vmu if using prior and past the broad prior iterations
+
+        # The prior is not updated at the beginning of learning to avoid killing sources
         if use_prior and iter > opts['niter_broadprior']:
+            # Update Va and Vmu
             if opts['bias']:
                 Vmu = np.sum(Mu ** 2)
                 if Muv.size > 0:
-                    Vmu += np.sum(Muv)
+                    Vmu = Vmu + np.sum(Muv)
                 Vmu = (Vmu + 2 * hpVa) / (n1 + 2 * hpVb)
-            
             Va = np.sum(A ** 2, axis=0)
             if Av:
                 for i in range(n1):
-                    Va += np.diag(Av[i])
+                    Va = Va + np.diag(Av[i])
             Va = (Va + 2 * hpVa) / (n1 + 2 * hpVb)
-        
-        # Update bias if enabled
+
         if opts['bias']:
             dMu = np.sum(errMx, axis=1) / Nobs_i
             if Muv.size > 0:
@@ -179,130 +181,300 @@ def pca_full(X, ncomp, **kwargs):
             Mu_old = Mu.copy()
             Mu = th * (Mu + dMu)
             dMu = Mu - Mu_old
-            X, Xprobe = subtract_mu(dMu, X, M, Xprobe, Mprobe, True)
-        
+            X, Xprobe = subtract_mu(dMu, X, M, Xprobe, Mprobe, update_bias=True)
+
         # Update S
         if not Isv:
             for j in range(n2):
-                A_j = (M[:, j].reshape(-1, 1) * A)  # Equivalent to repmat(M(:,j),1,ncomp) .* A
-                Psi = A_j.T @ A_j + np.diag(V)
+                A_j = (M[:, j][:, np.newaxis]) * A
+                Psi = A_j.T @ A_j + np.diag(np.full(ncomp, V))
                 if Av:
                     for i in np.where(M[:, j])[0]:
-                        Psi += Av[i]
+                        Psi = Psi + Av[i]
                 invPsi = np.linalg.inv(Psi)
                 S[:, j] = invPsi @ A_j.T @ X[:, j]
                 Sv[j] = V * invPsi
+
                 PrintProgress(opts['verbose'], j + 1, n2, 'Updating S:')
         else:
             for k in range(nobscomb):
                 j = obscombj[k][0]
-                A_j = (M[:, j].reshape(-1, 1) * A)
-                Psi = A_j.T @ A_j + np.diag(V)
+                A_j = (M[:, j][:, np.newaxis]) * A
+                Psi = A_j.T @ A_j + np.diag(np.full(ncomp, V))
                 if Av:
                     for i in np.where(M[:, j])[0]:
-                        Psi += Av[i]
+                        Psi = Psi + Av[i]
                 invPsi = np.linalg.inv(Psi)
                 Sv[k] = V * invPsi
                 tmp = invPsi @ A_j.T
                 for j_idx in obscombj[k]:
                     S[:, j_idx] = tmp @ X[:, j_idx]
+
                 PrintProgress(opts['verbose'], k + 1, nobscomb, 'Updating S:')
-        
         if opts['verbose'] == 2:
             print('\r', end='')
-        
-        # Rotate to PCA if enabled
+
         if opts['rotate2pca']:
             dMu, A, Av, S, Sv = rotate_to_pca(A, Av, S, Sv, Isv, obscombj, opts['bias'])
             if opts['bias']:
-                X, Xprobe = subtract_mu(dMu, X, M, Xprobe, Mprobe, True)
-                Mu += dMu
-        
+                X, Xprobe = subtract_mu(dMu, X, M, Xprobe, Mprobe, update_bias=True)
+                Mu = Mu + dMu
+
         # Update A
         if opts['verbose'] == 2:
             print('                                              \r', end='')
         for i in range(n1):
-            S_i = (M[i, :].reshape(-1, 1) * S).T  # Equivalent to repmat(full(M(i,:),ncomp,1)) .* S
+            S_i = (M[i, :][np.newaxis, :]) * S
             Phi = S_i @ S_i.T + np.diag(V / Va)
-            if Isv:
-                for j in np.where(M[i, :])[0]:
-                    Phi += Sv[Isv[j]]
-            else:
-                for j in np.where(M[i, :])[0]:
-                    Phi += Sv[j]
+            for j_idx in np.where(M[i, :])[0]:
+                if Isv:
+                    Phi = Phi + Sv[Isv[j_idx]]
+                else:
+                    Phi = Phi + Sv[j_idx]
             invPhi = np.linalg.inv(Phi)
-            A[i, :] = X[i, :] @ S_i @ invPhi
+            A[i, :] = X[i, :] @ S_i.T @ invPhi
             if Av:
                 Av[i] = V * invPhi
+
             PrintProgress(opts['verbose'], i + 1, n1, 'Updating A:')
         if opts['verbose'] == 2:
             print('\r', end='')
-        
-        # Compute RMS errors
+
         rms, errMx = compute_rms(X, A, S, M, ndata)
-        prms, _ = compute_rms(Xprobe, A, S, Mprobe, nprobe)
-        
+        prms = compute_rms(Xprobe, A, S, Mprobe, nprobe) if nprobe > 0 else np.nan
+
         # Update V
         sXv = 0
         if not Isv:
             for r in range(ndata):
                 i = IX[r]
                 j = JX[r]
-                sXv += A[i, :] @ Sv[j] @ A[i, :].T
+                a_i = A[i, :].reshape(1, -1)  # Shape (1, ncomp)
+                sXv += (a_i @ Sv[j] @ a_i.T).item()
                 if Av:
-                    sXv += S[:, j].T @ Av[i] @ S[:, j] + np.sum(Sv[j] * Av[i])
+                    s_j = S[:, j].reshape(-1, 1)  # Shape (ncomp, 1)
+                    sXv += (s_j.T @ Av[i] @ s_j).item() + np.sum(Sv[j] * Av[i])
         else:
             for r in range(ndata):
                 i = IX[r]
                 j = JX[r]
-                sXv += A[i, :] @ Sv[Isv[j]] @ A[i, :].T
+                a_i = A[i, :].reshape(1, -1)  # Shape (1, ncomp)
+                sXv += (a_i @ Sv[Isv[j]] @ a_i.T).item()
                 if Av:
-                    sXv += S[:, j].T @ Av[i] @ S[:, j] + np.sum(Sv[Isv[j]] * Av[i])
+                    s_j = S[:, j].reshape(-1, 1)  # Shape (ncomp, 1)
+                    sXv += (s_j.T @ Av[i] @ s_j).item() + np.sum(Sv[Isv[j]] * Av[i])
         
+
         if Muv.size > 0:
             sXv += np.sum(Muv[IX])
-        
-        sXv += (rms ** 2) * ndata
+
+        sXv = sXv + (rms ** 2) * ndata
+
         V = (sXv + 2 * hpV) / (ndata + 2 * hpV)
-        
+
         t = time.time() - tic
         lc['rms'].append(rms)
         lc['prms'].append(prms)
         lc['time'].append(t)
-        
-        # Update cost function if applicable
+
         if opts['cfstop'].size > 0:
             cost = cf_full(X, A, S, Mu, V, Av, Sv, Isv, Muv, Va, Vmu, M, sXv, ndata)
             lc['cost'].append(cost)
-        
-        # Display progress
+
         DisplayProgress(dsph, lc)
         angleA = subspace_angle(A, Aold)
-        PrintStep(opts['verbose'], lc, angleA)
-        
-        # Check for convergence
+        print_step(opts['verbose'], lc, angleA)
+
         convmsg = convergence_check(opts, lc, angleA)
         if convmsg:
             if use_prior and iter <= opts['niter_broadprior']:
-                pass  # Do nothing
+                # if the prior has never been updated: do nothing
+                pass
             elif opts['verbose']:
-                print(convmsg)
+                print(f'{convmsg}')
             break
         Aold = A.copy()
-        
-        # Autosave if necessary
+
         current_time = time.time()
         if (current_time - time_autosave) > opts['autosave']:
             time_autosave = current_time
             if opts['verbose'] == 2:
                 print('Saving ... ', end='')
-            save_parameters(opts['filename'], A, S, Mu, V, Av, Muv, Sv, Isv, Va, Vmu, lc, Ir, Ic, n1x, n2x, n1, n2)
-            if opts['verbose'] == 2:
-                print('done')
+            # Save parameters (assuming save_parameters is a helper function)
+            # save_parameters(opts['filename'], A, S, Mu, V, Av, Muv, Sv, Isv, Va, Vmu, lc, Ir, Ic, n1x, n2x, n1, n2
+            try:
+                    savemat(opts['filename'], {
+                        'A': A,
+                        'S': S,
+                        'Mu': Mu,
+                        'V': V,
+                        'Av': Av,
+                        'Muv': Muv,
+                        'Sv': Sv,
+                        'Isv': Isv,
+                        'Va': Va,
+                        'Vmu': Vmu,
+                        'lc': lc,
+                        'Ir': Ir,
+                        'Ic': Ic,
+                        'n1x': n1x,
+                        'n2x': n2x,
+                        'n1': n1,
+                        'n2': n2
+                    })
+                    if opts['verbose'] == 2:
+                        print('done')
+            except Exception as e:
+                if opts['verbose']:
+                    print(f"Error saving to {opts['filename']}: {e}")
 
 
+    # Finally rotate to the PCA solution
+    if not opts['rotate2pca']:
+        dMu, A, Av, S, Sv = rotate_to_pca(A, Av, S, Sv, Isv, obscombj, opts['bias'])
+        if opts['bias']:
+            Mu = Mu + dMu
 
-    return A, S, Mu, V, cv, hp, lc
+    if n1 < n1x:
+        A, Av = add_m_rows(A, Av, Ir, n1x, Va)
+        Mu, Muv = add_m_rows(Mu, Muv, Ir, n1x, Vmu)
+    if n2 < n2x:
+        S, Sv, Isv = add_m_cols(S, Sv, Ic, n2x, Isv)
+
+    result = {
+        'A': A,
+        'S': S,
+        'Mu': Mu,
+        'V': V,
+        'Av': Av,
+        'Sv': Sv,
+        'Isv': Isv,
+        'Muv': Muv,
+        'Va': Va,
+        'Vmu': Vmu,
+        'lc': lc,
+        'cv': {
+            'A': Av,
+            'S': Sv,
+            'Isv': Isv,
+            'Mu': Muv
+        },
+        'hp': {
+            'Va': Va,
+            'Vmu': Vmu
+        }
+    }
+
+    return result
+
+##############################################################################################
+def subtract_mu(Mu, X, M, Xprobe=None, Mprobe=None, update_bias=True):
+    """
+    Subtracts the bias vector Mu from the data matrix X. If X is sparse,
+    uses the SUBTRACT_MU function from the compiled module. Otherwise,
+    performs element-wise subtraction.
+
+    Parameters:
+    - Mu: (n1,) bias vector.
+    - X: (n1, n2) data matrix (sparse or dense).
+    - M: (n1, n2) mask matrix.
+    - Xprobe: (n1, n2_probe) probe matrix (optional).
+    - Mprobe: (n1, n2_probe) probe mask matrix (optional).
+    - update_bias: bool flag to determine whether to update X and Xprobe.
+
+    Returns:
+    - X_new: Updated data matrix after subtraction.
+    - Xprobe_new: Updated probe matrix after subtraction (if provided).
+    """
+    n2 = X.shape[1]
+
+    if not update_bias:
+        return X, Xprobe
+
+    if issparse(X):
+        # Ensure that Xprobe is also sparse if provided
+        X = subtract_mu_from_sparse(X, Mu)
+        if Xprobe is not None and Xprobe.size > 0:
+            Xprobe = subtract_mu_from_sparse(Xprobe, Mu)
+    else:
+        X = X - np.multiply(np.tile(Mu, (1, n2)), M)
+        if Xprobe is not None and Xprobe.size > 0 and Mprobe is not None:
+            Xprobe = Xprobe - np.multiply(np.tile(Mu, (1, Xprobe.shape[1])), Mprobe)
+
+    return X, Xprobe
+
+
+##############################################################################################
+def rotate_to_pca(A, Av, S, Sv, Isv, obscombj, update_bias):
+    n1 = A.shape[0]
+    n2 = S.shape[1]
+
+    # Initialize dMu based on update_bias flag
+    if update_bias:
+        mS = np.mean(S, axis=1, keepdims=True)
+        dMu = A @ mS
+        S = S - mS
+    else:
+        dMu = 0
+
+    # Calculate covariance of S
+    covS = S @ S.T
+    if len(Isv) == 0:
+        for j in range(n2):
+            covS += Sv[j]
+    else:
+        nobscomb = len(obscombj)
+        for j in range(nobscomb):
+            covS += len(obscombj[j]) * Sv[j]
+
+    covS /= n2
+
+    # Perform PCA on covS
+    eigvals, VS = np.linalg.eigh(covS)
+
+    D = np.diag(np.sqrt(eigvals))
+    RA = VS @ D
+    A = A @ RA
+
+    # Calculate covariance of A
+    covA = A.T @ A
+    if Av:
+        for i in range(n1):
+            Av[i] = RA.T @ Av[i] @ RA
+            covA += Av[i]
+
+    covA /= n1
+
+    # Perform PCA on covA
+    eigvals, VA = np.linalg.eigh(covA)
+    DA = np.sort(-eigvals)[::-1]
+    I = np.argsort(-eigvals)
+    VA = VA[:, I]
+    A = A @ VA
+
+    if Av:
+        for i in range(n1):
+            Av[i] = VA.T @ Av[i] @ VA
+
+    # R = VA.T @ np.diag(1 / np.sqrt(np.diag(D))) @ VS.T
+    # Calculate the square root of the diagonal of D
+    D_diag = np.sqrt(np.diag(D))
+    
+    # Initialize an array for the inverse of D's diagonal, handling zeros
+    D_inv = np.zeros_like(D_diag)
+    non_zero_indices = D_diag > 0  # Identify non-zero elements in D
+    D_inv[non_zero_indices] = 1 / D_diag[non_zero_indices]  # Invert only non-zero elements
+    
+    # Calculate R using the adjusted inverse diagonal matrix
+    R = VA.T @ np.diag(D_inv) @ VS.T
+
+
+    # Transform S and Sv
+    S = R @ S
+    for j in range(len(Sv)):
+        Sv[j] = R @ Sv[j] @ R.T
+        
+    return dMu, A, Av, S, Sv
 
 ##############################################################################################
 
@@ -402,43 +574,6 @@ def init_parms(init, n1, n2, ncomp, nobscomb, Isv):
 
 ##############################################################################################
 
-def subtract_mu(Mu, X, M, Xprobe=None, Mprobe=None, update_bias=True):
-    """
-    Subtracts the bias vector Mu from the data matrix X. If X is sparse,
-    uses the SUBTRACT_MU function from the compiled module. Otherwise,
-    performs element-wise subtraction.
-
-    Parameters:
-    - Mu: (n1,) bias vector.
-    - X: (n1, n2) data matrix (sparse or dense).
-    - M: (n1, n2) mask matrix.
-    - Xprobe: (n1, n2_probe) probe matrix (optional).
-    - Mprobe: (n1, n2_probe) probe mask matrix (optional).
-    - update_bias: bool flag to determine whether to update X and Xprobe.
-
-    Returns:
-    - X_new: Updated data matrix after subtraction.
-    - Xprobe_new: Updated probe matrix after subtraction (if provided).
-    """
-    n2 = X.shape[1]
-
-    if not update_bias:
-        return X, Xprobe
-
-    if issparse(X):
-        # Ensure that Xprobe is also sparse if provided
-        X = subtract_mu_from_sparse(X, Mu)
-        if Xprobe is not None and Xprobe.size > 0:
-            Xprobe = subtract_mu_from_sparse(Xprobe, Mu)
-    else:
-        X = X - np.multiply(np.tile(Mu, (1, n2)), M)
-        if Xprobe is not None and Xprobe.size > 0 and Mprobe is not None:
-            Xprobe = Xprobe - np.multiply(np.tile(Mu, (1, Xprobe.shape[1])), Mprobe)
-
-    return X, Xprobe
-
-
-##############################################################################################
 
 def print_first_step(verbose, rms, prms):
     if not verbose:
