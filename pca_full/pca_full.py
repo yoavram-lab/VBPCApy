@@ -195,7 +195,7 @@ def pca_full(X, ncomp, **kwargs):
                 S[:, j] = invPsi @ A_j.T @ X[:, j]
                 Sv[j] = V * invPsi
 
-                PrintProgress(opts['verbose'], j + 1, n2, 'Updating S:')
+                print_progress(opts['verbose'], j + 1, n2, 'Updating S:')
         else:
             for k in range(nobscomb):
                 j = obscombj[k][0]
@@ -210,7 +210,7 @@ def pca_full(X, ncomp, **kwargs):
                 for j_idx in obscombj[k]:
                     S[:, j_idx] = tmp @ X[:, j_idx]
 
-                PrintProgress(opts['verbose'], k + 1, nobscomb, 'Updating S:')
+                print_progress(opts['verbose'], k + 1, nobscomb, 'Updating S:')
         if opts['verbose'] == 2:
             print('\r', end='')
 
@@ -236,7 +236,7 @@ def pca_full(X, ncomp, **kwargs):
             if Av:
                 Av[i] = V * invPhi
 
-            PrintProgress(opts['verbose'], i + 1, n1, 'Updating A:')
+            print_progress(opts['verbose'], i + 1, n1, 'Updating A:')
         if opts['verbose'] == 2:
             print('\r', end='')
 
@@ -281,7 +281,7 @@ def pca_full(X, ncomp, **kwargs):
             cost = cf_full(X, A, S, Mu, V, Av, Sv, Isv, Muv, Va, Vmu, M, sXv, ndata)
             lc['cost'].append(cost)
 
-        DisplayProgress(dsph, lc)
+        display_progress(dsph, lc)
         angleA = subspace_angle(A, Aold)
         print_step(opts['verbose'], lc, angleA)
 
@@ -574,7 +574,6 @@ def init_parms(init, n1, n2, ncomp, nobscomb, Isv):
 
 ##############################################################################################
 
-
 def print_first_step(verbose, rms, prms):
     if not verbose:
         return
@@ -582,6 +581,42 @@ def print_first_step(verbose, rms, prms):
     print(f"Step 0: rms = {rms:.6f}")
     if not np.isnan(prms):
         print(f" ({prms:.6f})")
+
+import numpy as np
+
+##############################################################################################
+
+def print_step(verbose, lc, a_angle):
+    if not verbose:
+        return
+
+    iter = len(lc['rms']) - 1
+    steptime = lc['time'][-1] - lc['time'][-2]
+
+    print(f"Step {iter}: ", end='')
+    if not np.isnan(lc['cost'][-1]):
+        print(f"cost = {lc['cost'][-1]:.6f}, ", end='')
+    print(f"rms = {lc['rms'][-1]:.6f}", end='')
+    if not np.isnan(lc['prms'][-1]):
+        print(f" ({lc['prms'][-1]:.6f})", end='')
+    print(f", angle = {a_angle:.2e}", end='')
+    if steptime > 1:
+        print(f" ({round(steptime)} sec)")
+    else:
+        print(f" ({steptime:.0e} sec)")
+
+##############################################################################################
+
+def print_progress_bar(verbose, string):
+    if verbose == 2:
+        print(string)
+        # print("\n|                                                  |\r|")
+
+##############################################################################################
+
+def print_progress(verbose, i, n, string):
+    if verbose == 2:
+        print(f"\r{string} {i}/{n}", end='')
 
 ##############################################################################################
 
@@ -637,3 +672,13 @@ def display_init(display, lc):
     return dsph
 
     
+##############################################################################################
+
+def display_progress(dsph, lc):
+    if dsph['display']:
+        dsph['rms'].set_xdata(np.arange(len(lc['rms'])))
+        dsph['rms'].set_ydata(lc['rms'])
+        dsph['prms'].set_xdata(np.arange(len(lc['prms'])))
+        dsph['prms'].set_ydata(lc['prms'])
+        import matplotlib.pyplot as plt
+        plt.draw()
