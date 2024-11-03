@@ -282,7 +282,8 @@ def pca_full(X, ncomp, **kwargs):
             lc['cost'].append(cost)
 
         display_progress(dsph, lc)
-        angleA = subspace_angle(A, Aold)
+        angles = subspace_angle(A, Aold)
+        angleA = angles[0]
         print_step(opts['verbose'], lc, angleA)
 
         convmsg = convergence_check(opts, lc, angleA)
