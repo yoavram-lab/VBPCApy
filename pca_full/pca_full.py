@@ -406,11 +406,11 @@ def subtract_mu(Mu, X, M, Xprobe=None, Mprobe=None, update_bias=True):
 
 
 ##############################################################################################
+
 def rotate_to_pca(A, Av, S, Sv, Isv, obscombj, update_bias):
     n1 = A.shape[0]
     n2 = S.shape[1]
 
-    # Initialize dMu based on update_bias flag
     if update_bias:
         mS = np.mean(S, axis=1, keepdims=True)
         dMu = A @ mS
@@ -418,8 +418,8 @@ def rotate_to_pca(A, Av, S, Sv, Isv, obscombj, update_bias):
     else:
         dMu = 0
 
-    # Calculate covariance of S
     covS = S @ S.T
+    
     if len(Isv) == 0:
         for j in range(n2):
             covS += Sv[j]
@@ -430,15 +430,17 @@ def rotate_to_pca(A, Av, S, Sv, Isv, obscombj, update_bias):
 
     covS /= n2
 
-    # Perform PCA on covS
     eigvals, VS = np.linalg.eigh(covS)
 
-    D = np.diag(np.sqrt(eigvals))
-    RA = VS @ D
+    # Construct D and RA as in MATLAB
+    D = np.diag(eigvals)
+    sqrt_D = np.sqrt(D)  # Square root of diagonal elements
+    
+    RA = VS @ sqrt_D
     A = A @ RA
 
-    # Calculate covariance of A
     covA = A.T @ A
+    
     if Av:
         for i in range(n1):
             Av[i] = RA.T @ Av[i] @ RA
@@ -446,35 +448,30 @@ def rotate_to_pca(A, Av, S, Sv, Isv, obscombj, update_bias):
 
     covA /= n1
 
-    # Perform PCA on covA
     eigvals, VA = np.linalg.eigh(covA)
-    DA = np.sort(-eigvals)[::-1]
+
     I = np.argsort(-eigvals)
+    eigvals = eigvals[I]
     VA = VA[:, I]
+
     A = A @ VA
 
     if Av:
         for i in range(n1):
             Av[i] = VA.T @ Av[i] @ VA
 
-    # R = VA.T @ np.diag(1 / np.sqrt(np.diag(D))) @ VS.T
-    # Calculate the square root of the diagonal of D
+    # Adjust R calculation using D_inv
+    epsilon = 1e-10
     D_diag = np.sqrt(np.diag(D))
-    
-    # Initialize an array for the inverse of D's diagonal, handling zeros
-    D_inv = np.zeros_like(D_diag)
-    non_zero_indices = D_diag > 0  # Identify non-zero elements in D
-    D_inv[non_zero_indices] = 1 / D_diag[non_zero_indices]  # Invert only non-zero elements
-    
-    # Calculate R using the adjusted inverse diagonal matrix
-    R = VA.T @ np.diag(D_inv) @ VS.T
+    D_inv = np.diag(np.where(D_diag > epsilon, 1 / D_diag, 0))  # Invert only where values are above epsilon
+    # D_inv = np.diag(1 / np.sqrt(np.diag(D)))  # Handle inverses directly
+    R = VA.T @ D_inv @ VS.T
 
-
-    # Transform S and Sv
     S = R @ S
+    
     for j in range(len(Sv)):
         Sv[j] = R @ Sv[j] @ R.T
-        
+
     return dMu, A, Av, S, Sv
 
 ##############################################################################################
