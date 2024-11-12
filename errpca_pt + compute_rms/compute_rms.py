@@ -1,45 +1,50 @@
 import numpy as np
 import scipy.sparse as sp
 from errpca_pt import errpca_pt
+
 def compute_rms(X, A, S, M, ndata, numCPU=1):
-    """
-    Computes the RMS error and the reconstruction error matrix.
-    """
     if X.size == 0:
         return np.nan, []  # Equivalent to MATLAB's empty array
-
+    
+    print("befor is sparse")
     if sp.issparse(X):
-        # Handle sparse matrices
-        # Extract components of the sparse matrix X
+        # Prepare arguments for errpca_pt
         X_data = X.data.astype(np.float64)
         X_indices = X.indices.astype(np.int32)
         X_indptr = X.indptr.astype(np.int32)
-
-        # Ensure A and S are float64 arrays
         A = np.array(A, dtype=np.float64)
         S = np.array(S, dtype=np.float64)
+        print("inside is sparse")
+        # Print arguments before calling errpca_pt
+        print("Arguments sent to errpca_pt:")
+        print("X_data:", X_data)
+        print("X_indices:", X_indices)
+        print("X_indptr:", X_indptr)
+        print("A:", A)
+        print("S:", S)
+        print("numCPU:", numCPU)
 
-        # Call errpca_pt with the correct arguments
+        # Call errpca_pt and get result
         errMx_dict = errpca_pt(X_data, X_indices, X_indptr, A, S, numCPU)
 
-        # Reconstruct errMx from the returned dictionary
-        errMx_data = errMx_dict['data']
-        errMx_indices = errMx_dict['indices']
-        errMx_indptr = errMx_dict['indptr']
-        errMx_shape = errMx_dict['shape']
-        errMx = sp.csr_matrix((errMx_data, errMx_indices, errMx_indptr), shape=errMx_shape)
+        # Print returned data from errpca_pt
+        print("Returned from errpca_pt:")
+        print("errMx data:", errMx_dict['data'])
+        print("errMx indices:", errMx_dict['indices'])
+        print("errMx indptr:", errMx_dict['indptr'])
+        print("errMx shape:", errMx_dict['shape'])
 
+        # Reconstruct errMx from the dictionary
+        errMx = sp.csr_matrix(
+            (errMx_dict['data'], errMx_dict['indices'], errMx_dict['indptr']),
+            shape=errMx_dict['shape']
+        )
     else:
-        # Handle dense matrices
         residual = X - A @ S
         if sp.issparse(M):
             M = M.toarray()
-        errMx = np.multiply(residual, M)  # Element-wise multiplication
+        errMx = np.multiply(residual, M)
 
     # Compute RMS
-    if sp.issparse(errMx):
-        rms = np.sqrt((errMx.data ** 2).sum() / ndata)
-    else:
-        rms = np.sqrt(np.sum(errMx ** 2) / ndata)
-
+    rms = np.sqrt((errMx.data ** 2).sum() / ndata) if sp.issparse(errMx) else np.sqrt(np.sum(errMx ** 2) / ndata)
     return rms, errMx
