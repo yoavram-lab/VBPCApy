@@ -10,19 +10,49 @@
 # X: The input data matrix.
 # ncomp: The number of principal components to compute.
 # kwargs: Stands for "keyword arguments". It allows you to pass optional parameters as a dictionary.
+import pdb
+
+
 import numpy as np
+import scipy.sparse as sp 
 from scipy.io import savemat
 import scipy.linalg
 import scipy.io
 from scipy.sparse import issparse, csr_matrix
 import numpy as np
 from scipy.io import loadmat
-from scipy.linalg import orth  # Use orth from scipy.linalg
+from scipy.linalg import orth  
 import matplotlib.pyplot as plt
 import time
+from scipy.linalg import subspace_angles
+import sys
+sys.path.append('../add_m_cols')
+from add_m_cols import add_m_cols 
 
-# from argschk import argschk
-# from rmempty import rmempty
+sys.path.append('../add_m_rows')
+from add_m_rows import add_m_rows 
+
+sys.path.append('../argschk')
+from argschk import argschk
+
+sys.path.append('../cf_full')
+from cf_full import cf_full
+
+sys.path.append('../converg_check')
+from converg_check import converg_check
+
+sys.path.append('../compute_rms')
+from compute_rms import compute_rms 
+
+sys.path.append('../miscomb')
+from miscomb import miscomb
+
+sys.path.append('../rmempty')
+from rmempty import rmempty
+
+sys.path.append("../subtract_mu")
+from subtract_mu_from_sparse import subtract_mu_from_sparse
+
 
 
 
@@ -63,11 +93,11 @@ def pca_full(X, ncomp, **kwargs):
     else:
         raise ValueError(f"Wrong value if the argument 'algorithm': {algorithmVal}")
 
+    Xprobe = opts['xprobe']
     n1x, n2x = X.shape
-    X, Xprobe, Ir, Ic, opts.init = rmempty(X, Xprobe, opts.init, opts.verbose)
+    X, Xprobe, Ir, Ic, opts['init'] = rmempty(X, Xprobe, opts['init'], opts['verbose'])
     n1, n2 = X.shape
-
-    [n1x,n2x] = X.shape()
+    [n1x,n2x] = X.shape
 
     # Handle the case where X is sparse
     if issparse(X):
@@ -110,9 +140,8 @@ def pca_full(X, ncomp, **kwargs):
         obscombj = {}
 
     A, S, Mu, V, Av, Sv, Muv = init_parms(opts["init"], n1, n2, ncomp, nobscomb, Isv)
-
     if use_prior:
-        Va = 1000 * no.ones(1, ncomp)
+        Va = 1000 * np.ones(1, ncomp)
         Vmu = 1000
     else:
         Va = np.full(ncomp, np.inf)
@@ -122,18 +151,17 @@ def pca_full(X, ncomp, **kwargs):
         Muv = np.array([])
         Av = []
 
-    if not opts.bias:
+    if not opts['bias']:
         Muv = np.array([])
         Vmu = 0
-
-    if np.size(Mu) > 0:
+    
+    if np.size(Mu) == 0:
         if opts['bias']:
             Mu = np.sum(X, axis=1) / Nobs_i  # Sum over rows and divide by Nobs_i
         else:
             Mu = np.zeros((n1, 1))
 
-    X, Xprobe = subtract_mu(Mu, X, M, Xprobr, Mprobe, opts['bias'])
-
+    X, Xprobe = subtract_mu(Mu, X, M, Xprobe, Mprobe, opts['bias'])
     rms, errMx = compute_rms(X, A, S, M, ndata) #still need to find the cpp file computr_rms refers too and test it
     prms, _ = compute_rms(Xprobe, A, S, Mprobe, nprobe)
     
@@ -182,7 +210,6 @@ def pca_full(X, ncomp, **kwargs):
             Mu = th * (Mu + dMu)
             dMu = Mu - Mu_old
             X, Xprobe = subtract_mu(dMu, X, M, Xprobe, Mprobe, update_bias=True)
-
         # Update S
         if not Isv:
             for j in range(n2):
@@ -232,7 +259,10 @@ def pca_full(X, ncomp, **kwargs):
                 else:
                     Phi = Phi + Sv[j_idx]
             invPhi = np.linalg.inv(Phi)
+            print("Shape of X[i, :]:", X[i, :].shape)
             A[i, :] = X[i, :] @ S_i.T @ invPhi
+            
+
             if Av:
                 Av[i] = V * invPhi
 
@@ -277,7 +307,7 @@ def pca_full(X, ncomp, **kwargs):
         lc['prms'].append(prms)
         lc['time'].append(t)
 
-        if opts['cfstop'].size > 0:
+        if np.size(opts['cfstop']) > 0:
             cost = cf_full(X, A, S, Mu, V, Av, Sv, Isv, Muv, Va, Vmu, M, sXv, ndata)
             lc['cost'].append(cost)
 
@@ -387,24 +417,43 @@ def subtract_mu(Mu, X, M, Xprobe=None, Mprobe=None, update_bias=True):
     - X_new: Updated data matrix after subtraction.
     - Xprobe_new: Updated probe matrix after subtraction (if provided).
     """
+
     n2 = X.shape[1]
 
     if not update_bias:
         return X, Xprobe
 
-    if issparse(X):
-        # Ensure that Xprobe is also sparse if provided
-        X = subtract_mu_from_sparse(X, Mu)
+    if sp.isspmatrix(X):
+        # Extract components from sparse matrix X
+        data = X.data
+        indices = X.indices
+        indptr = X.indptr
+        shape = X.shape
+
+        # Call the C++ function with unpacked components
+        X_data = subtract_mu_from_sparse(data, indices, indptr, shape, Mu)
+
+        # Reassemble the sparse matrix with the updated data
+        X = sp.csr_matrix((X_data, indices, indptr), shape=shape)
+
         if Xprobe is not None and Xprobe.size > 0:
-            Xprobe = subtract_mu_from_sparse(Xprobe, Mu)
+            data_probe = Xprobe.data
+            indices_probe = Xprobe.indices
+            indptr_probe = Xprobe.indptr
+            shape_probe = Xprobe.shape
+
+            Xprobe_data = subtract_mu_from_sparse(data_probe, indices_probe, indptr_probe, shape_probe, Mu)
+            Xprobe = sp.csr_matrix((Xprobe_data, indices_probe, indptr_probe), shape=shape_probe)
     else:
-        X = X - np.multiply(np.tile(Mu, (1, n2)), M)
+        print("Mu is :", Mu)
+        print("M is", M)
+        # X = X - (Mu[:, np.newaxis] * M.astype(int))
+        # Explicitly reshape Mu to align correctly with M for element-wise multiplication
+        X = X - (Mu.reshape(-1, 1) * M.astype(int))
         if Xprobe is not None and Xprobe.size > 0 and Mprobe is not None:
-            Xprobe = Xprobe - np.multiply(np.tile(Mu, (1, Xprobe.shape[1])), Mprobe)
+            Xprobe = Xprobe - (Mu[:, np.newaxis] * Mprobe)
 
     return X, Xprobe
-
-
 ##############################################################################################
 
 def rotate_to_pca(A, Av, S, Sv, Isv, obscombj, update_bias):

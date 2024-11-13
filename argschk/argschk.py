@@ -3,7 +3,6 @@
 # Case-Insensitive Parameter Matching
 
 def argschk(defopts, **kwargs):
-
     wrnmsg = ""
     opts = defopts.copy()
     opts_in = kwargs

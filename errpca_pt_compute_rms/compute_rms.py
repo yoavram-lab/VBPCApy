@@ -6,7 +6,6 @@ def compute_rms(X, A, S, M, ndata, numCPU=1):
     if X.size == 0:
         return np.nan, []  # Equivalent to MATLAB's empty array
     
-    print("befor is sparse")
     if sp.issparse(X):
         # Prepare arguments for errpca_pt
         X_data = X.data.astype(np.float64)
@@ -14,25 +13,9 @@ def compute_rms(X, A, S, M, ndata, numCPU=1):
         X_indptr = X.indptr.astype(np.int32)
         A = np.array(A, dtype=np.float64)
         S = np.array(S, dtype=np.float64)
-        print("inside is sparse")
-        # Print arguments before calling errpca_pt
-        print("Arguments sent to errpca_pt:")
-        print("X_data:", X_data)
-        print("X_indices:", X_indices)
-        print("X_indptr:", X_indptr)
-        print("A:", A)
-        print("S:", S)
-        print("numCPU:", numCPU)
 
         # Call errpca_pt and get result
         errMx_dict = errpca_pt(X_data, X_indices, X_indptr, A, S, numCPU)
-
-        # Print returned data from errpca_pt
-        print("Returned from errpca_pt:")
-        print("errMx data:", errMx_dict['data'])
-        print("errMx indices:", errMx_dict['indices'])
-        print("errMx indptr:", errMx_dict['indptr'])
-        print("errMx shape:", errMx_dict['shape'])
 
         # Reconstruct errMx from the dictionary
         errMx = sp.csr_matrix(
