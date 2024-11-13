@@ -23,7 +23,7 @@ namespace py = pybind11;
 #define EPS 1e-15
 
 // Function to subtract Mu from sparse matrix X based on row indices
-py::array_t<double> SUBTRACT_MU(py::array_t<double> mxX_data_array,
+py::array_t<double> subtract_mu_from_sparse(py::array_t<double> mxX_data_array,
                                 py::array_t<int> mxX_indices_array,
                                 py::array_t<int> mxX_indptr_array,
                                 py::tuple mxX_shape,
@@ -88,6 +88,6 @@ py::array_t<double> SUBTRACT_MU(py::array_t<double> mxX_data_array,
 PYBIND11_MODULE(subtract_mu_from_sparse, m)
 {
     m.doc() = "Subtract Mu from sparse matrix X using C++ and pybind11";
-    m.def("SUBTRACT_MU", &SUBTRACT_MU, "Subtract Mu from sparse matrix X",
+    m.def("subtract_mu_from_sparse", &subtract_mu_from_sparse, "Subtract Mu from sparse matrix X",
           py::arg("data"), py::arg("indices"), py::arg("indptr"), py::arg("shape"), py::arg("Mu"));
 }

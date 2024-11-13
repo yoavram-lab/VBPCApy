@@ -15,7 +15,7 @@ class get_pybind_include(object):
 ext_modules = [
     Extension(
         'subtract_mu_from_sparse',          # Name of the Python module
-        ['SUBTRACT_MU.cpp'],                # Source file
+        ['subtract_mu_from_sparse.cpp'],                # Source file
         include_dirs=[
             get_pybind_include(),            # Path to pybind11 headers
             get_pybind_include(user=True)
