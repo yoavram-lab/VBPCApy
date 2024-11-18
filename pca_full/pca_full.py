@@ -53,9 +53,6 @@ from rmempty import rmempty
 sys.path.append("../subtract_mu")
 from subtract_mu_from_sparse import subtract_mu_from_sparse
 
-
-
-
 def pca_full(X, ncomp, **kwargs):
 
     opts = { 'init':'random',
@@ -157,7 +154,8 @@ def pca_full(X, ncomp, **kwargs):
     
     if np.size(Mu) == 0:
         if opts['bias']:
-            Mu = np.sum(X, axis=1) / Nobs_i  # Sum over rows and divide by Nobs_i
+            # Mu = np.sum(X, axis=1) / Nobs_i  # Sum over rows and divide by Nobs_i
+            Mu = (np.sum(X, axis=1) / Nobs_i).reshape(-1, 1)  # Shape: (n1, 1)
         else:
             Mu = np.zeros((n1, 1))
 
@@ -202,14 +200,20 @@ def pca_full(X, ncomp, **kwargs):
             Va = (Va + 2 * hpVa) / (n1 + 2 * hpVb)
 
         if opts['bias']:
-            dMu = np.sum(errMx, axis=1) / Nobs_i
+            dMu = np.sum(errMx, axis=1) / Nobs_i  # Shape: (n1,)
             if Muv.size > 0:
-                Muv = V / (Nobs_i + V / Vmu)
-            th = 1 / (1 + V / (Nobs_i * Vmu))
+                Muv = V / (Nobs_i + V / Vmu)  # Shape: (n1,)
+            th = 1 / (1 + V / (Nobs_i * Vmu))  # Shape: (n1,)
+            th = th.reshape(-1, 1)  # Shape: (n1, 1)
+            
+            # Reshape dMu to (n1, 1)
+            dMu = dMu.reshape(-1, 1)  # Shape: (n1, 1)
+            
             Mu_old = Mu.copy()
-            Mu = th * (Mu + dMu)
-            dMu = Mu - Mu_old
+            Mu = th * (Mu + dMu)  # Element-wise multiplication: (n1,1) * (n1,1) = (n1,1)
+            dMu = Mu - Mu_old  # Shape: (n1,1)
             X, Xprobe = subtract_mu(dMu, X, M, Xprobe, Mprobe, update_bias=True)
+
         # Update S
         if not Isv:
             for j in range(n2):
@@ -249,7 +253,7 @@ def pca_full(X, ncomp, **kwargs):
 
         # Update A
         if opts['verbose'] == 2:
-            print('                                              \r', end='')
+            print('\r', end='')
         for i in range(n1):
             S_i = (M[i, :][np.newaxis, :]) * S
             Phi = S_i @ S_i.T + np.diag(V / Va)
@@ -259,7 +263,6 @@ def pca_full(X, ncomp, **kwargs):
                 else:
                     Phi = Phi + Sv[j_idx]
             invPhi = np.linalg.inv(Phi)
-            print("Shape of X[i, :]:", X[i, :].shape)
             A[i, :] = X[i, :] @ S_i.T @ invPhi
             
 
@@ -269,10 +272,10 @@ def pca_full(X, ncomp, **kwargs):
             print_progress(opts['verbose'], i + 1, n1, 'Updating A:')
         if opts['verbose'] == 2:
             print('\r', end='')
-
+    
         rms, errMx = compute_rms(X, A, S, M, ndata)
         prms = compute_rms(Xprobe, A, S, Mprobe, nprobe) if nprobe > 0 else np.nan
-
+        
         # Update V
         sXv = 0
         if not Isv:
@@ -294,7 +297,6 @@ def pca_full(X, ncomp, **kwargs):
                     s_j = S[:, j].reshape(-1, 1)  # Shape (ncomp, 1)
                     sXv += (s_j.T @ Av[i] @ s_j).item() + np.sum(Sv[Isv[j]] * Av[i])
         
-
         if Muv.size > 0:
             sXv += np.sum(Muv[IX])
 
@@ -307,16 +309,30 @@ def pca_full(X, ncomp, **kwargs):
         lc['prms'].append(prms)
         lc['time'].append(t)
 
+        # print("av is ", Av)
+        # print("X is ", X)
+        # print("A is ", A)
+        # print("S is ", S)
+        # print("Mu is ", Mu)
+        # print("V is ", V)
+        # print("Sv is ", Sv)
+        # print("Isv is ", Isv)
+        # print("Muv is ", Muv)
+        # print("Va is ", Va)
+        # print("Vmu is ", Vmu)
+        # print("M is ", M)
+        # print("sXv is ", sXv)
+        # print("ndata is ", ndata)
         if np.size(opts['cfstop']) > 0:
-            cost = cf_full(X, A, S, Mu, V, Av, Sv, Isv, Muv, Va, Vmu, M, sXv, ndata)
+            cost, cost_x, cost_a, cost_mu, cost_s = cf_full(X, A, S, Mu, V, Av, Sv, Isv, Muv, Va, Vmu, M, sXv, ndata)
             lc['cost'].append(cost)
 
         display_progress(dsph, lc)
-        angles = subspace_angle(A, Aold)
+        angles = subspace_angles(A, Aold)
         angleA = np.max(angles)
         print_step(opts['verbose'], lc, angleA)
 
-        convmsg = convergence_check(opts, lc, angleA)
+        convmsg = converg_check(opts, lc, angleA)
         if convmsg:
             if use_prior and iter <= opts['niter_broadprior']:
                 # if the prior has never been updated: do nothing
@@ -399,41 +415,22 @@ def pca_full(X, ncomp, **kwargs):
     return result
 
 ##############################################################################################
+
 def subtract_mu(Mu, X, M, Xprobe=None, Mprobe=None, update_bias=True):
-    """
-    Subtracts the bias vector Mu from the data matrix X. If X is sparse,
-    uses the SUBTRACT_MU function from the compiled module. Otherwise,
-    performs element-wise subtraction.
-
-    Parameters:
-    - Mu: (n1,) bias vector.
-    - X: (n1, n2) data matrix (sparse or dense).
-    - M: (n1, n2) mask matrix.
-    - Xprobe: (n1, n2_probe) probe matrix (optional).
-    - Mprobe: (n1, n2_probe) probe mask matrix (optional).
-    - update_bias: bool flag to determine whether to update X and Xprobe.
-
-    Returns:
-    - X_new: Updated data matrix after subtraction.
-    - Xprobe_new: Updated probe matrix after subtraction (if provided).
-    """
-
     n2 = X.shape[1]
 
     if not update_bias:
         return X, Xprobe
 
     if sp.isspmatrix(X):
-        # Extract components from sparse matrix X
+        # Handle sparse case
         data = X.data
         indices = X.indices
         indptr = X.indptr
         shape = X.shape
 
-        # Call the C++ function with unpacked components
         X_data = subtract_mu_from_sparse(data, indices, indptr, shape, Mu)
 
-        # Reassemble the sparse matrix with the updated data
         X = sp.csr_matrix((X_data, indices, indptr), shape=shape)
 
         if Xprobe is not None and Xprobe.size > 0:
@@ -445,15 +442,13 @@ def subtract_mu(Mu, X, M, Xprobe=None, Mprobe=None, update_bias=True):
             Xprobe_data = subtract_mu_from_sparse(data_probe, indices_probe, indptr_probe, shape_probe, Mu)
             Xprobe = sp.csr_matrix((Xprobe_data, indices_probe, indptr_probe), shape=shape_probe)
     else:
-        print("Mu is :", Mu)
-        print("M is", M)
-        # X = X - (Mu[:, np.newaxis] * M.astype(int))
-        # Explicitly reshape Mu to align correctly with M for element-wise multiplication
-        X = X - (Mu.reshape(-1, 1) * M.astype(int))
+        # Explicitly ensure Mu is (n1,1)
+        X = X - (Mu * M.astype(int))  # Mu is (n1,1), M is (n1, n2), broadcasting to (n1,n2)
         if Xprobe is not None and Xprobe.size > 0 and Mprobe is not None:
-            Xprobe = Xprobe - (Mu[:, np.newaxis] * Mprobe)
+            Xprobe = Xprobe - (Mu * Mprobe)  # Similarly handled
 
     return X, Xprobe
+
 ##############################################################################################
 
 def rotate_to_pca(A, Av, S, Sv, Isv, obscombj, update_bias):
@@ -636,7 +631,7 @@ import numpy as np
 def print_step(verbose, lc, a_angle):
     if not verbose:
         return
-
+    
     iter = len(lc['rms']) - 1
     steptime = lc['time'][-1] - lc['time'][-2]
 
@@ -656,13 +651,14 @@ def print_step(verbose, lc, a_angle):
 
 def print_progress_bar(verbose, string):
     if verbose == 2:
-        print(string)
+        print(f"print_progress_bar: {string}")
         # print("\n|                                                  |\r|")
 
 ##############################################################################################
 
 def print_progress(verbose, i, n, string):
     if verbose == 2:
+        print("print_progress")
         print(f"\r{string} {i}/{n}", end='')
 
 ##############################################################################################
