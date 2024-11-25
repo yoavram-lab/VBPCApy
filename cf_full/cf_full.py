@@ -1,24 +1,23 @@
+#Computes the total cost and its components (data, mean, coefficients, and latent variables) for a probabilistic PCA model using input matrices and priors.
+#Gets observed data (X), factor matrices (A, S), means (Mu), variances (V, Va, Vmu), optional covariances (Av, Sv), missing data masks (M, sXv), and auxiliary parameters.
+#Returns the total cost and individual cost components: data cost (cost_x), mean cost (cost_mu), coefficient cost (cost_a), and latent variable cost (cost_s).
+
+
 import sys
 from pathlib import Path
 
-# # Define the path to the directory containing compute_rms.py
 path_to_compute_rms = Path("../errpca_pt_compute_rms")
-
-# Add this path to sys.path
 sys.path.append(str(path_to_compute_rms))
 
 import numpy as np
 from numpy.linalg import slogdet
 from scipy.sparse import issparse, csr_matrix
-# from errpca_pt_compute_rms import errpca_pt_compute_rms 
 from compute_rms import compute_rms 
-
 
 def cf_full(X, A, S, Mu, V, Av=None, Sv=None, Isv=None, Muv=None, Va=None, Vmu=None, M=None, sXv=None, ndata=None):
     n1, n2 = X.shape
     ncomp = A.shape[1]
 
-    # Handle M, sXv, ndata if not provided
     if M is None:
         M = ~np.isnan(X)
         X = np.where(M, X, 0)

@@ -1,17 +1,7 @@
+#Evaluates multiple stopping criteria during an optimization process and returns a message if any condition is met.
+#Input: Options dictionary (opts), convergence logs (lc), subspace angle (angleA), and optional slowing-down iteration (sd_iter).
+#Output: A message (convmsg) indicating if a stopping criterion is met.
 def converg_check(opts, lc, angleA, sd_iter=None):
-    """
-    Checks convergence criteria and generates a message for display.
-
-    Parameters:
-    - opts: Dictionary containing options for convergence checks (e.g., minangle, earlystop, rmsstop, cfstop).
-    - lc: Dictionary with lists for convergence parameters, including 'prms', 'rms', and 'cost'.
-    - angleA: Float representing the angle between subspaces.
-    - sd_iter: Optional integer for checking if a slowing-down stop is required (defaults to None).
-
-    Returns:
-    - convmsg: String message indicating the convergence status.
-    """
-
     convmsg = ""
 
     # Check angle convergence criterion

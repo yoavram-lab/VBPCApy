@@ -1,3 +1,7 @@
+#Removes empty rows and columns (entirely zeros or NaNs) from matrices and updates related initialization structures.
+#Gets input matrix (X), optional matrix (Xprobe), initialization dictionary (init), and verbosity level (verbose).
+#Returns the cleaned matrices (X, Xprobe), indices of non-empty rows (Ir) and columns (Ic), and the updated initialization dictionary (init).
+
 import numpy as np
 from scipy import sparse
 

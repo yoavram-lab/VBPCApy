@@ -1,3 +1,7 @@
+#Computes the root mean square (RMS) error and the error matrix for a probabilistic PCA model, handling both dense and sparse input matrices.
+#Gets observed data matrix (X), factor matrices (A, S), mask for missing data (M), number of data points (ndata), and optional CPU count (numCPU).
+#Returns the RMS error (rms) and the error matrix (errMx), which is sparse if the input is sparse.
+
 import numpy as np
 import scipy.sparse as sp
 from errpca_pt import errpca_pt
@@ -14,7 +18,6 @@ def compute_rms(X, A, S, M, ndata, numCPU=1):
         A = np.array(A, dtype=np.float64)
         S = np.array(S, dtype=np.float64)
 
-        # Call errpca_pt and get result
         errMx_dict = errpca_pt(X_data, X_indices, X_indptr, A, S, numCPU)
 
         # Reconstruct errMx from the dictionary

@@ -1,4 +1,6 @@
-// errpca_pt.cpp
+//Computes a sparse matrix of reconstruction errors for probabilistic PCA using the sparse structure of X and optionally multi-threading for efficiency.
+//Gets CSR components of matrix X (data, indices, indptr), factor matrices (A, S), and an optional number of CPUs for parallel computation.
+//Returns a dictionary containing the CSR components of the error matrix (data, indices, indptr) and its shape.
 
 #include <pybind11/pybind11.h>
 #include <pybind11/numpy.h>

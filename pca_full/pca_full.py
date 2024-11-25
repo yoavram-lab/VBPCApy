@@ -1,15 +1,7 @@
-# return dictionary with A, S, Mu, V, cv, hp, lc
-# A: Likely represents a matrix of principal components (loadings).# A is the liner transition matrix - Josh
-# S: Another output matrix, possibly the transformed data in the new PCA space (scores). # this is the matrix of prinicipal components
-# Mu: The mean values of the data. # this is the bias, like the y intecept in a linear regression, but for a matrix
-# V: Variance, possibly of the noise.
-# cv: Posterior covariances (likely a structure with details for A and S). # as well as Mu
-# hp: Hyperparameters (related to prior distributions).
-# lc: Learning curves (metrics for performance over iterations).
+#Performs probabilistic PCA (principal component analysis) on input data with missing values, supporting various algorithms and priors.
+#Gets input data matrix (X), number of components (ncomp), and optional keyword arguments for configurations and options.
+#Returns a dictionary containing trained parameters (`A`, `S`, `Mu`, `V`, etc.), convergence logs (`lc`), and other auxiliary results.
 
-# X: The input data matrix.
-# ncomp: The number of principal components to compute.
-# kwargs: Stands for "keyword arguments". It allows you to pass optional parameters as a dictionary.
 import pdb
 
 import pandas as pd
@@ -54,7 +46,6 @@ sys.path.append("../subtract_mu")
 from subtract_mu_from_sparse import subtract_mu_from_sparse
 
 def pca_full(X, ncomp, **kwargs):
-    # print(f"NaN count in X1:", np.isnan(X).sum())
 
     opts = { 'init':'random',
     'maxiters':1000,
@@ -66,8 +57,8 @@ def pca_full(X, ncomp, **kwargs):
     'algorithm':'vb',
     'niter_broadprior':100,
     'earlystop':0,
-    'rmsstop':np.array([100, 1e-4, 1e-3]), # () means no rms stop criteria
-    'cfstop':np.array([]), # () means no cost stop criteria
+    'rmsstop':np.array([100, 1e-4, 1e-3]),
+    'cfstop':np.array([]), # 
     'verbose':1,
     'xprobe':np.array([]),
     'rotate2pca':1,
@@ -93,16 +84,14 @@ def pca_full(X, ncomp, **kwargs):
 
     Xprobe = opts['xprobe']
     n1x, n2x = X.shape
-    # print(f"NaN count in X2", np.isnan(X).sum())
     X, Xprobe, Ir, Ic, opts['init'] = rmempty(X, Xprobe, opts['init'], opts['verbose'])
-    # print(f"NaN count in X3:", np.isnan(X).sum())
 
     n1, n2 = X.shape
     [n1x,n2x] = X.shape
 
     # Handle the case where X is sparse
     if issparse(X):
-        M = (X != 0).astype(float)  # Equivalent to spones(X)
+        M = (X != 0).astype(float)
         Mprobe = (Xprobe != 0).astype(float)
     else:
         M = ~np.isnan(X)
@@ -110,25 +99,21 @@ def pca_full(X, ncomp, **kwargs):
     
         X[X == 0] = np.finfo(float).eps  # Replace zeros with a small number
         Xprobe[Xprobe == 0] = np.finfo(float).eps
-        # print(f"NaN count in X4:", np.isnan(X).sum())
         X[np.isnan(X)] = 0  # Replace NaNs with 0
-        # print(f"NaN count in X5:", np.isnan(X).sum())
         Xprobe[np.isnan(Xprobe)] = 0
     
     # Compute the number of observed (non-missing) values in each row of X
     Nobs_i = np.sum(M, axis=1)
-    
-    # Total number of observed data points
     ndata = np.sum(Nobs_i)
     
     # Compute the number of observed values in the probe data (Xprobe)
     if issparse(Mprobe):
-        nprobe = Mprobe.count_nonzero()  # Use count_nonzero for sparse matrices
+        nprobe = Mprobe.count_nonzero() 
     else:
         nprobe = np.count_nonzero(Mprobe)
     # If no observed values in Xprobe, set it to empty and disable early stopping
     if nprobe == 0:
-        Xprobe = np.array([])  # Set Xprobe to an empty array
+        Xprobe = np.array([])
         opts['earlystop'] = 0
 
     IX, JX = np.nonzero(X)
@@ -163,15 +148,14 @@ def pca_full(X, ncomp, **kwargs):
             Mu = (np.sum(X, axis=1) / Nobs_i).reshape(-1, 1)  # Shape: (n1, 1)
         else:
             Mu = np.zeros((n1, 1))
-    # print(f"NaN count in X6:", np.isnan(X).sum())
+
 
     X, Xprobe = subtract_mu(Mu, X, M, Xprobe, Mprobe, opts['bias'])
-    # print(f"NaN count in X7:", np.isnan(X).sum())
 
-    rms, errMx = compute_rms(X, A, S, M, ndata) #still need to find the cpp file computr_rms refers too and test it
-    # print(f"NaN count in X8:", np.isnan(X).sum())
+
+    rms, errMx = compute_rms(X, A, S, M, ndata)
     prms, _ = compute_rms(Xprobe, A, S, Mprobe, nprobe)
-    # print(f"NaN count in X9:", np.isnan(X).sum())
+
     
     lc = {
         'rms': [rms],
@@ -194,8 +178,6 @@ def pca_full(X, ncomp, **kwargs):
     tic = time.time()
 
     for iter in range(1, opts['maxiters'] + 1):
-
-        # The prior is not updated at the beginning of learning to avoid killing sources
         if use_prior and iter > opts['niter_broadprior']:
             # Update Va and Vmu
             if opts['bias']:
@@ -220,11 +202,9 @@ def pca_full(X, ncomp, **kwargs):
             dMu = dMu.reshape(-1, 1)  # Shape: (n1, 1)
             
             Mu_old = Mu.copy()
-            Mu = th * (Mu + dMu)  # Element-wise multiplication: (n1,1) * (n1,1) = (n1,1)
+            Mu = th * (Mu + dMu)
             dMu = Mu - Mu_old  # Shape: (n1,1)
-            # print(f"NaN count in X10:", np.isnan(X).sum())
             X, Xprobe = subtract_mu(dMu, X, M, Xprobe, Mprobe, update_bias=True)
-            # print(f"NaN count in X11:", np.isnan(X).sum())
 
         # Update S
         if not Isv:
@@ -260,9 +240,7 @@ def pca_full(X, ncomp, **kwargs):
         if opts['rotate2pca']:
             dMu, A, Av, S, Sv = rotate_to_pca(A, Av, S, Sv, Isv, obscombj, opts['bias'])
             if opts['bias']:
-                # print(f"NaN count in X12:", np.isnan(X).sum())
                 X, Xprobe = subtract_mu(dMu, X, M, Xprobe, Mprobe, update_bias=True)
-                # print(f"NaN count in X13:", np.isnan(X).sum())
                 Mu = Mu + dMu
 
         # Update A
@@ -323,20 +301,6 @@ def pca_full(X, ncomp, **kwargs):
         lc['prms'].append(prms)
         lc['time'].append(t)
 
-        # print("av is ", Av)
-        # print("X is ", X)
-        # print("A is ", A)
-        # print("S is ", S)
-        # print("Mu is ", Mu)
-        # print("V is ", V)
-        # print("Sv is ", Sv)
-        # print("Isv is ", Isv)
-        # print("Muv is ", Muv)
-        # print("Va is ", Va)
-        # print("Vmu is ", Vmu)
-        # print("M is ", M)
-        # print("sXv is ", sXv)
-        # print("ndata is ", ndata)
         if np.size(opts['cfstop']) > 0:
             cost, cost_x, cost_a, cost_mu, cost_s = cf_full(X, A, S, Mu, V, Av, Sv, Isv, Muv, Va, Vmu, M, sXv, ndata)
             lc['cost'].append(cost)
@@ -349,7 +313,6 @@ def pca_full(X, ncomp, **kwargs):
         convmsg = converg_check(opts, lc, angleA)
         if convmsg:
             if use_prior and iter <= opts['niter_broadprior']:
-                # if the prior has never been updated: do nothing
                 pass
             elif opts['verbose']:
                 print(f'{convmsg}')
@@ -361,8 +324,6 @@ def pca_full(X, ncomp, **kwargs):
             time_autosave = current_time
             if opts['verbose'] == 2:
                 print('Saving ... ', end='')
-            # Save parameters (assuming save_parameters is a helper function)
-            # save_parameters(opts['filename'], A, S, Mu, V, Av, Muv, Sv, Isv, Va, Vmu, lc, Ir, Ic, n1x, n2x, n1, n2
             try:
                     savemat(opts['filename'], {
                         'A': A,
@@ -429,6 +390,9 @@ def pca_full(X, ncomp, **kwargs):
     return result
 
 ##############################################################################################
+#Subtracts the row-wise mean (`Mu`) from a data matrix (`X`) and optionally from a probe matrix (`Xprobe`), while handling sparse matrices efficiently.
+#Gets a mean vector (`Mu`), data matrix (`X`), missing data mask (`M`), optional probe matrix (`Xprobe`), probe mask (`Mprobe`), and a bias update flag (`update_bias`).
+#Returns the modified data matrix (`X`) and probe matrix (`Xprobe`) with the mean subtracted.
 
 def subtract_mu(Mu, X, M, Xprobe=None, Mprobe=None, update_bias=True):
     n2 = X.shape[1]
@@ -456,14 +420,16 @@ def subtract_mu(Mu, X, M, Xprobe=None, Mprobe=None, update_bias=True):
             Xprobe_data = subtract_mu_from_sparse(data_probe, indices_probe, indptr_probe, shape_probe, Mu)
             Xprobe = sp.csr_matrix((Xprobe_data, indices_probe, indptr_probe), shape=shape_probe)
     else:
-        # Explicitly ensure Mu is (n1,1)
-        X = X - (Mu * M.astype(int))  # Mu is (n1,1), M is (n1, n2), broadcasting to (n1,n2)
+        X = X - (Mu * M.astype(int)) 
         if Xprobe is not None and Xprobe.size > 0 and Mprobe is not None:
             Xprobe = Xprobe - (Mu * Mprobe)  # Similarly handled
 
     return X, Xprobe
 
 ##############################################################################################
+#Aligns factor matrices (`A` and `S`) to the PCA solution by performing eigen decomposition on covariance matrices and applying rotations, optionally adjusting bias.
+#Gets loading matrix (`A`), loading covariance (`Av`), component matrix (`S`), component covariance (`Sv`), indices of covariance matrices (`Isv`), observation combinations (`obscombj`), and a bias update flag (`update_bias`).
+#Returns the adjusted bias (`dMu`), rotated loading matrix (`A`), rotated loading covariance (`Av`), rotated component matrix (`S`), and rotated component covariance (`Sv`).
 
 def rotate_to_pca(A, Av, S, Sv, Isv, obscombj, update_bias):
     n1 = A.shape[0]
@@ -521,8 +487,7 @@ def rotate_to_pca(A, Av, S, Sv, Isv, obscombj, update_bias):
     # Adjust R calculation using D_inv
     epsilon = 1e-10
     D_diag = np.sqrt(np.diag(D))
-    D_inv = np.diag(np.where(D_diag > epsilon, 1 / D_diag, 0))  # Invert only where values are above epsilon
-    # D_inv = np.diag(1 / np.sqrt(np.diag(D)))  # Handle inverses directly
+    D_inv = np.diag(np.where(D_diag > epsilon, 1 / D_diag, 0)) 
     R = VA.T @ D_inv @ VS.T
 
     S = R @ S
@@ -533,45 +498,26 @@ def rotate_to_pca(A, Av, S, Sv, Isv, obscombj, update_bias):
     return dMu, A, Av, S, Sv
 
 ##############################################################################################
+#Initializes the parameters (`A`, `S`, `Mu`, etc.) for probabilistic PCA based on a provided initialization method or file, ensuring defaults for missing values.
+#Gets the initialization method or file (`init`), dimensions of the data (`n1`, `n2`), number of components (`ncomp`), number of observation combinations (`nobscomb`), and indices of covariance matrices (`Isv`).
+#Returns initialized parameters: loading matrix (`A`), component matrix (`S`), mean vector (`Mu`), variance scalar (`V`), loading covariance (`Av`), component covariance (`Sv`), and mean covariance (`Muv`).
 
-def init_parms(init, n1, n2, ncomp, nobscomb, Isv):
-    """
-    Initialize parameters based on the input.
-
-    Parameters:
-    - init: str or dict
-        If str, specifies 'random' or a filename to load parameters from.
-        If dict, contains initialization parameters.
-    - n1, n2, ncomp, nobscomb: int
-        Dimensions for initializing matrices.
-    - Isv: array-like
-        Index array used for Sv initialization.
-
-    Returns:
-    - A, S, Mu, V, Av, Sv, Muv: Initialized parameters.
-    """
-    
-    # Handle the 'init' input
+def init_parms(init, n1, n2, ncomp, nobscomb, Isv):    
     if isinstance(init, str):
         if init.lower() == 'random':
             init = {}
         else:
             # Load parameters from a .mat file
             mat_data = loadmat(init)
-            # Convert MATLAB struct to Python dict (assuming 'init' is the variable name)
-            # Adjust 'init' to the actual variable name in the .mat file if different
             init = mat_data.get('init', {})
     
-    # If 'init' is a dictionary (similar to MATLAB struct)
+    # If 'init' is a dictionary
     if isinstance(init, dict):
-        # Initialize A
         if 'A' in init:
             A = init['A']
         else:
-            # Generate a random matrix and orthogonalize it
             A = orth(np.random.randn(n1, ncomp))
         
-        # Initialize Av
         if 'Av' in init and init['Av'] is not None and init['Av'].size != 0:
             if isinstance(init['Av'], list):
                 Av = init['Av']
@@ -582,20 +528,12 @@ def init_parms(init, n1, n2, ncomp, nobscomb, Isv):
         else:
             # Default Av as list of identity matrices
             Av = [np.eye(ncomp) for _ in range(n1)]
-        
-        # Initialize Mu
+
         Mu = init.get('Mu', np.array([])) 
-        
-        # Initialize Muv
         Muv = init.get('Muv', np.ones((n1, 1)))
-        
-        # Initialize V
         V = init.get('V', 1)
-        
-        # Initialize S
         S = init.get('S', np.random.randn(ncomp, n2))
         
-        # Initialize Sv
         if 'Sv' in init and init['Sv'] is not None and np.size(init['Sv']) > 0:
             if nobscomb < n2:
                 # Get unique elements and their first indices
@@ -620,7 +558,6 @@ def init_parms(init, n1, n2, ncomp, nobscomb, Isv):
                 else:
                     Sv = []
         else:
-            # Default Sv as list of identity matrices
             Sv = [np.eye(ncomp) for _ in range(nobscomb)]
     else:
         # If 'init' is neither str nor dict, raise an error
@@ -629,6 +566,10 @@ def init_parms(init, n1, n2, ncomp, nobscomb, Isv):
     return A, S, Mu, V, Av, Sv, Muv
 
 ##############################################################################################
+#Print_first_step
+#Prints the initial step's root mean square (RMS) error and probe RMS error if verbosity is enabled.
+#Gets a verbosity flag (`verbose`), initial RMS error (`rms`), and initial probe RMS error (`prms`).
+#Returns nothing; outputs formatted step details to the console if `verbose` is True.
 
 def print_first_step(verbose, rms, prms):
     if not verbose:
@@ -641,6 +582,10 @@ def print_first_step(verbose, rms, prms):
 import numpy as np
 
 ##############################################################################################
+#Print_step
+#Logs the current iteration's metrics, including cost, RMS error, probe RMS error, and subspace angle, if verbosity is enabled.
+#Gets a verbosity flag (`verbose`), log container (`lc`) with metrics, and subspace angle (`a_angle`).
+#Returns nothing; outputs formatted details of the current step to the console if `verbose` is True.
 
 def print_step(verbose, lc, a_angle):
     if not verbose:
@@ -662,6 +607,10 @@ def print_step(verbose, lc, a_angle):
         print(f" ({steptime:.0e} sec)")
 
 ##############################################################################################
+#Print_progress_bar
+#Displays a progress bar message if verbosity level is set to 2.
+#Gets a verbosity level (`verbose`) and a descriptive message (`string`).
+#Returns nothing; outputs the provided message to the console if `verbose` equals 2.
 
 def print_progress_bar(verbose, string):
     if verbose == 2:
@@ -669,6 +618,10 @@ def print_progress_bar(verbose, string):
         # print("\n|                                                  |\r|")
 
 ##############################################################################################
+#Print_progress
+#Displays the progress of an iterative process if verbosity level is set to 2.
+#Gets a verbosity level (`verbose`), current iteration index (`i`), total iterations (`n`), and a descriptive message (`string`).
+#Returns nothing; outputs the progress message to the console if `verbose` equals 2.
 
 def print_progress(verbose, i, n, string):
     if verbose == 2:
@@ -676,18 +629,12 @@ def print_progress(verbose, i, n, string):
         print(f"\r{string} {i}/{n}", end='')
 
 ##############################################################################################
+#Display_init
+#Initializes and displays plots for tracking RMS training and test errors during an iterative process.
+#Gets a display flag (`display`) and a log container (`lc`) with RMS training and test errors.
+#Returns a dictionary (`dsph`) containing display flags and plot handles for interactive updates.
 
 def display_init(display, lc):
-    """
-    Initializes the display for plotting RMS errors.
-
-    Parameters:
-    - display (bool): Flag to determine whether to initialize and display plots.
-    - lc (dict): Logging structure containing 'rms' and 'prms' lists or arrays.
-
-    Returns:
-    - dsph (dict): Display structure containing display flags and plot handles.
-    """
     dsph = {'display': display}
 
     if not dsph['display']:
@@ -730,6 +677,10 @@ def display_init(display, lc):
 
     
 ##############################################################################################
+#Display_progress
+#Updates the plots for RMS training and test errors during an iterative process if display is enabled.
+#Gets a display dictionary (`dsph`) with plot handles and a log container (`lc`) with updated RMS data.
+#Returns nothing; updates the plots in real-time if `dsph['display']` is True.
 
 def display_progress(dsph, lc):
     if dsph['display']:

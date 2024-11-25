@@ -1,14 +1,6 @@
-// SUBTRACT_MU.cpp
-//
-// X = SUBTRACT_MU(X, Mu) subtracts bias term Mu from sparse data
-// matrix X.
-//
-// Equivalent Matlab code:
-//   M = spones(X);
-//   X = X - repmat(Mu,1,size(X,2)).*M;
-//
-// This software is provided "as is", without warranty of any kind.
-// Alexander Ilin, Tapani Raiko
+//Subtracts a mean vector (`Mu`) from the rows of a sparse matrix (`X`) while preserving its sparse structure.
+//Gets CSR components of the sparse matrix (`data`, `indices`, `indptr`, and `shape`) and the mean vector (`Mu`).
+//Returns a modified data array with the mean subtracted, replacing exact zeros with a small constant (`EPS`) for stability.
 
 #include <math.h>
 #include <string.h>
