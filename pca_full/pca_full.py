@@ -12,7 +12,7 @@
 # kwargs: Stands for "keyword arguments". It allows you to pass optional parameters as a dictionary.
 import pdb
 
-
+import pandas as pd
 import numpy as np
 import scipy.sparse as sp 
 from scipy.io import savemat
@@ -41,7 +41,7 @@ from cf_full import cf_full
 sys.path.append('../converg_check')
 from converg_check import converg_check
 
-sys.path.append('../compute_rms')
+sys.path.append('../errpca_pt_compute_rms')
 from compute_rms import compute_rms 
 
 sys.path.append('../miscomb')
@@ -54,6 +54,7 @@ sys.path.append("../subtract_mu")
 from subtract_mu_from_sparse import subtract_mu_from_sparse
 
 def pca_full(X, ncomp, **kwargs):
+    # print(f"NaN count in X1:", np.isnan(X).sum())
 
     opts = { 'init':'random',
     'maxiters':1000,
@@ -92,7 +93,10 @@ def pca_full(X, ncomp, **kwargs):
 
     Xprobe = opts['xprobe']
     n1x, n2x = X.shape
+    # print(f"NaN count in X2", np.isnan(X).sum())
     X, Xprobe, Ir, Ic, opts['init'] = rmempty(X, Xprobe, opts['init'], opts['verbose'])
+    # print(f"NaN count in X3:", np.isnan(X).sum())
+
     n1, n2 = X.shape
     [n1x,n2x] = X.shape
 
@@ -106,8 +110,9 @@ def pca_full(X, ncomp, **kwargs):
     
         X[X == 0] = np.finfo(float).eps  # Replace zeros with a small number
         Xprobe[Xprobe == 0] = np.finfo(float).eps
-    
+        # print(f"NaN count in X4:", np.isnan(X).sum())
         X[np.isnan(X)] = 0  # Replace NaNs with 0
+        # print(f"NaN count in X5:", np.isnan(X).sum())
         Xprobe[np.isnan(Xprobe)] = 0
     
     # Compute the number of observed (non-missing) values in each row of X
@@ -158,10 +163,15 @@ def pca_full(X, ncomp, **kwargs):
             Mu = (np.sum(X, axis=1) / Nobs_i).reshape(-1, 1)  # Shape: (n1, 1)
         else:
             Mu = np.zeros((n1, 1))
+    # print(f"NaN count in X6:", np.isnan(X).sum())
 
     X, Xprobe = subtract_mu(Mu, X, M, Xprobe, Mprobe, opts['bias'])
+    # print(f"NaN count in X7:", np.isnan(X).sum())
+
     rms, errMx = compute_rms(X, A, S, M, ndata) #still need to find the cpp file computr_rms refers too and test it
+    # print(f"NaN count in X8:", np.isnan(X).sum())
     prms, _ = compute_rms(Xprobe, A, S, Mprobe, nprobe)
+    # print(f"NaN count in X9:", np.isnan(X).sum())
     
     lc = {
         'rms': [rms],
@@ -212,7 +222,9 @@ def pca_full(X, ncomp, **kwargs):
             Mu_old = Mu.copy()
             Mu = th * (Mu + dMu)  # Element-wise multiplication: (n1,1) * (n1,1) = (n1,1)
             dMu = Mu - Mu_old  # Shape: (n1,1)
+            # print(f"NaN count in X10:", np.isnan(X).sum())
             X, Xprobe = subtract_mu(dMu, X, M, Xprobe, Mprobe, update_bias=True)
+            # print(f"NaN count in X11:", np.isnan(X).sum())
 
         # Update S
         if not Isv:
@@ -248,7 +260,9 @@ def pca_full(X, ncomp, **kwargs):
         if opts['rotate2pca']:
             dMu, A, Av, S, Sv = rotate_to_pca(A, Av, S, Sv, Isv, obscombj, opts['bias'])
             if opts['bias']:
+                # print(f"NaN count in X12:", np.isnan(X).sum())
                 X, Xprobe = subtract_mu(dMu, X, M, Xprobe, Mprobe, update_bias=True)
+                # print(f"NaN count in X13:", np.isnan(X).sum())
                 Mu = Mu + dMu
 
         # Update A
