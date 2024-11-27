@@ -10,3 +10,9 @@ __pycache__/
 *.dll
 *.exe
 *.dylib
+
+build/
+dist/
+*.out
+*.o
+
