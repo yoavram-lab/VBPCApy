@@ -1,9 +1,0 @@
-Metadata-Version: 2.1
-Name: subtract_mu_from_sparse
-Version: 0.0.1
-Summary: Subtract Mu from a sparse matrix X using C++ and pybind11
-Author: Your Name
-Author-email: your.email@example.com
-Requires-Dist: pybind11
-Requires-Dist: numpy
-Requires-Dist: scipy
