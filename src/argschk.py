@@ -1,6 +1,7 @@
 #Merges user-provided options (kwargs) with default options (defopts), normalizing keys to lowercase and warning about unknown parameters.
 #Gets default options (defopts) as a dictionary and additional keyword arguments (kwargs) as user-provided options.
 #Returns A merged options dictionary (opts) and a warning message (wrnmsg) for unknown parameters, if any.
+
 def argschk(defopts, **kwargs):
     wrnmsg = ""
     opts = defopts.copy()

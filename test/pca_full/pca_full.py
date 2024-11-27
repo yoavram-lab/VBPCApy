@@ -3,7 +3,7 @@
 #Returns a dictionary containing trained parameters (`A`, `S`, `Mu`, `V`, etc.), convergence logs (`lc`), and other auxiliary results.
 
 import pdb
-
+from numba import njit
 import pandas as pd
 import numpy as np
 import scipy.sparse as sp 
@@ -44,7 +44,7 @@ from rmempty import rmempty
 
 sys.path.append("../subtract_mu")
 from subtract_mu_from_sparse import subtract_mu_from_sparse
-
+@njit
 def pca_full(X, ncomp, **kwargs):
 
     opts = { 'init':'random',
