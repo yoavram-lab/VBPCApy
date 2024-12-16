@@ -8,11 +8,11 @@ from pathlib import Path
 
 path_to_compute_rms = Path("../errpca_pt_compute_rms")
 sys.path.append(str(path_to_compute_rms))
+from compute_rms import compute_rms 
 
 import numpy as np
 from numpy.linalg import slogdet
 from scipy.sparse import issparse, csr_matrix
-from compute_rms import compute_rms 
 
 def cf_full(X, A, S, Mu, V, Av=None, Sv=None, Isv=None, Muv=None, Va=None, Vmu=None, M=None, sXv=None, ndata=None):
     n1, n2 = X.shape

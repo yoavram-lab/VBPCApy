@@ -4,9 +4,7 @@
 
 import numpy as np
 from scipy import sparse
-from numba import jit
 
-@jit
 def rmempty(X, Xprobe, init, verbose):
 
     if verbose == 2:

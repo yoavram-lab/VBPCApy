@@ -3,7 +3,6 @@
 #Returns a dictionary containing trained parameters (`A`, `S`, `Mu`, `V`, etc.), convergence logs (`lc`), and other auxiliary results.
 
 import pdb
-
 import pandas as pd
 import numpy as np
 import scipy.sparse as sp 
@@ -17,14 +16,32 @@ from scipy.linalg import orth
 import matplotlib.pyplot as plt
 import time
 from scipy.linalg import subspace_angles
+import sys
+sys.path.append('../add_m_cols')
 from add_m_cols import add_m_cols 
+
+sys.path.append('../add_m_rows')
 from add_m_rows import add_m_rows 
+
+sys.path.append('../argschk')
 from argschk import argschk
+
+sys.path.append('../cf_full')
 from cf_full import cf_full
+
+sys.path.append('../converg_check')
 from converg_check import converg_check
+
+sys.path.append('../errpca_pt_compute_rms')
 from compute_rms import compute_rms 
+
+sys.path.append('../miscomb')
 from miscomb import miscomb
+
+sys.path.append('../rmempty')
 from rmempty import rmempty
+
+sys.path.append("../subtract_mu")
 from subtract_mu_from_sparse import subtract_mu_from_sparse
 
 def pca_full(X, ncomp, **kwargs):
@@ -110,7 +127,7 @@ def pca_full(X, ncomp, **kwargs):
 
     A, S, Mu, V, Av, Sv, Muv = init_parms(opts["init"], n1, n2, ncomp, nobscomb, Isv)
     if use_prior:
-        Va = 1000 * np.ones(1, ncomp)
+        Va = 1000 * np.ones((1, ncomp))
         Vmu = 1000
     else:
         Va = np.full(ncomp, np.inf)
@@ -568,25 +585,57 @@ import numpy as np
 #Logs the current iteration's metrics, including cost, RMS error, probe RMS error, and subspace angle, if verbosity is enabled.
 #Gets a verbosity flag (`verbose`), log container (`lc`) with metrics, and subspace angle (`a_angle`).
 #Returns nothing; outputs formatted details of the current step to the console if `verbose` is True.
-
 def print_step(verbose, lc, a_angle):
     if not verbose:
         return
-    
+
     iter = len(lc['rms']) - 1
     steptime = lc['time'][-1] - lc['time'][-2]
 
     print(f"Step {iter}: ", end='')
-    if not np.isnan(lc['cost'][-1]):
-        print(f"cost = {lc['cost'][-1]:.6f}, ", end='')
-    print(f"rms = {lc['rms'][-1]:.6f}", end='')
-    if not np.isnan(lc['prms'][-1]):
-        print(f" ({lc['prms'][-1]:.6f})", end='')
-    print(f", angle = {a_angle:.2e}", end='')
-    if steptime > 1:
-        print(f" ({round(steptime)} sec)")
+
+
+    cost_last = lc['cost'][-1]
+    if isinstance(cost_last, np.ndarray):
+        if cost_last.size == 1:
+            cost_val = cost_last.item()
+        else:
+            cost_val = cost_last[0]
     else:
-        print(f" ({steptime:.0e} sec)")
+        cost_val = cost_last
+
+    if not np.isnan(cost_val):
+        print(f"cost = {cost_val:.6f}, ", end='')
+
+
+    rms_last = lc['rms'][-1]
+    if isinstance(rms_last, np.ndarray):
+        if rms_last.size == 1:
+            rms_val = rms_last.item()
+        else:
+            rms_val = rms_last[0]
+    else:
+        rms_val = rms_last
+
+    print(f"rms = {rms_val:.6f}", end='')
+
+
+    if 'prms' in lc and len(lc['prms']) > 0:
+        prms_last = lc['prms'][-1]
+        if isinstance(prms_last, np.ndarray):
+            if prms_last.size == 1:
+                prms_val = prms_last.item()
+            else:
+                prms_val = prms_last[0]
+        else:
+            prms_val = prms_last
+
+        if not np.isnan(prms_val):
+            print(f", prms = {prms_val:.6f}")
+        else:
+            print()
+    else:
+        print()
 
 ##############################################################################################
 #Print_progress_bar
