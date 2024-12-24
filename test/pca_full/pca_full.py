@@ -45,7 +45,7 @@ sys.path.append("../subtract_mu")
 from subtract_mu_from_sparse import subtract_mu_from_sparse
 
 def pca_full(X, ncomp, **kwargs):
-
+    
     opts = { 'init':'random',
     'maxiters':1000,
     'bias':1,
@@ -59,7 +59,7 @@ def pca_full(X, ncomp, **kwargs):
     'rmsstop':np.array([100, 1e-4, 1e-3]),
     'cfstop':np.array([]), # 
     'verbose':1,
-    'xprobe':np.array([]),
+    'xprobe':None,
     'rotate2pca':1,
     'display':0 }
 
@@ -82,6 +82,7 @@ def pca_full(X, ncomp, **kwargs):
         raise ValueError(f"Wrong value if the argument 'algorithm': {algorithmVal}")
 
     Xprobe = opts['xprobe']
+    
     n1x, n2x = X.shape
     X, Xprobe, Ir, Ic, opts['init'] = rmempty(X, Xprobe, opts['init'], opts['verbose'])
 
@@ -91,15 +92,26 @@ def pca_full(X, ncomp, **kwargs):
     # Handle the case where X is sparse
     if issparse(X):
         M = (X != 0).astype(float)
-        Mprobe = (Xprobe != 0).astype(float)
+        if Xprobe is not None:
+            Mprobe = (Xprobe != 0).astype(float)
+        else:
+            Mprobe = None
+            
     else:
         M = ~np.isnan(X)
-        Mprobe = ~np.isnan(Xprobe)
-    
+        if Xprobe is not None:
+            Mprobe = ~np.isnan(Xprobe)
+        else:
+            Mprobe = None
+
         X[X == 0] = np.finfo(float).eps  # Replace zeros with a small number
-        Xprobe[Xprobe == 0] = np.finfo(float).eps
+        
+        if Xprobe is not None:
+            Xprobe[Xprobe == 0] = np.finfo(float).eps
+            Xprobe[np.isnan(Xprobe)] = 0
+            
         X[np.isnan(X)] = 0  # Replace NaNs with 0
-        Xprobe[np.isnan(Xprobe)] = 0
+        
     
     # Compute the number of observed (non-missing) values in each row of X
     Nobs_i = np.sum(M, axis=1)
@@ -126,6 +138,7 @@ def pca_full(X, ncomp, **kwargs):
         obscombj = {}
 
     A, S, Mu, V, Av, Sv, Muv = init_parms(opts["init"], n1, n2, ncomp, nobscomb, Isv)
+  
     if use_prior:
         Va = 1000 * np.ones((1, ncomp))
         Vmu = 1000
@@ -143,13 +156,14 @@ def pca_full(X, ncomp, **kwargs):
     
     if np.size(Mu) == 0:
         if opts['bias']:
-            # Mu = np.sum(X, axis=1) / Nobs_i  # Sum over rows and divide by Nobs_i
             Mu = (np.sum(X, axis=1) / Nobs_i).reshape(-1, 1)  # Shape: (n1, 1)
         else:
             Mu = np.zeros((n1, 1))
 
 
     X, Xprobe = subtract_mu(Mu, X, M, Xprobe, Mprobe, opts['bias'])
+    # if flag:
+    #     print(f"[DEBUG] After subtract_mu - X shape: {X.shape}, Mu shape: {Mu.shape}")
 
 
     rms, errMx = compute_rms(X, A, S, M, ndata)
@@ -216,7 +230,6 @@ def pca_full(X, ncomp, **kwargs):
                 invPsi = np.linalg.inv(Psi)
                 S[:, j] = invPsi @ A_j.T @ X[:, j]
                 Sv[j] = V * invPsi
-
                 print_progress(opts['verbose'], j + 1, n2, 'Updating S:')
         else:
             for k in range(nobscomb):
@@ -255,7 +268,6 @@ def pca_full(X, ncomp, **kwargs):
                     Phi = Phi + Sv[j_idx]
             invPhi = np.linalg.inv(Phi)
             A[i, :] = X[i, :] @ S_i.T @ invPhi
-            
 
             if Av:
                 Av[i] = V * invPhi
@@ -266,7 +278,8 @@ def pca_full(X, ncomp, **kwargs):
     
         rms, errMx = compute_rms(X, A, S, M, ndata)
         prms = compute_rms(Xprobe, A, S, Mprobe, nprobe) if nprobe > 0 else np.nan
-        
+
+
         # Update V
         sXv = 0
         if not Isv:
@@ -385,6 +398,7 @@ def pca_full(X, ncomp, **kwargs):
             'Vmu': Vmu
         }
     }
+
 
     return result
 

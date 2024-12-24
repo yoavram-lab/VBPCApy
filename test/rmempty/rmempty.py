@@ -14,6 +14,7 @@ def rmempty(X, Xprobe, init, verbose):
     if sparse.issparse(X):
         Ic = np.where(np.array(X.sum(axis=0)).flatten() != 0)[0]
         Ir = np.where(np.array(X.sum(axis=1)).flatten() != 0)[0]
+
     else:
         Ic = np.where(np.sum(~np.isnan(X), axis=0) > 0)[0]
         Ir = np.where(np.sum(~np.isnan(X), axis=1) > 0)[0]
