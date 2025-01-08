@@ -5,7 +5,7 @@
 import numpy as np
 from scipy import sparse
 
-def rmempty(flag, X, Xprobe, init, verbose):
+def rmempty(X, Xprobe, init, verbose):
 
     if verbose == 2:
         print("Checking for empty rows or columns...")

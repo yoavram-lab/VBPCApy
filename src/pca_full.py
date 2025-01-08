@@ -17,34 +17,18 @@ import matplotlib.pyplot as plt
 import time
 from scipy.linalg import subspace_angles
 import sys
-sys.path.append('../add_m_cols')
+
 from add_m_cols import add_m_cols 
-
-sys.path.append('../add_m_rows')
 from add_m_rows import add_m_rows 
-
-sys.path.append('../argschk')
 from argschk import argschk
-
-sys.path.append('../cf_full')
 from cf_full import cf_full
-
-sys.path.append('../converg_check')
 from converg_check import converg_check
-
-sys.path.append('../errpca_pt_compute_rms')
 from compute_rms import compute_rms 
-
-sys.path.append('../miscomb')
 from miscomb import miscomb
-
-sys.path.append('../rmempty')
 from rmempty import rmempty
-
-sys.path.append("../subtract_mu")
 from subtract_mu_from_sparse import subtract_mu_from_sparse
 
-def pca_full(flag, X, ncomp, **kwargs):
+def pca_full(X, ncomp, **kwargs):
     
     opts = { 'init':'random',
     'maxiters':1000,
@@ -84,7 +68,7 @@ def pca_full(flag, X, ncomp, **kwargs):
     Xprobe = opts['xprobe']
     
     n1x, n2x = X.shape
-    X, Xprobe, Ir, Ic, opts['init'] = rmempty(flag, X, Xprobe, opts['init'], opts['verbose'])
+    X, Xprobe, Ir, Ic, opts['init'] = rmempty(X, Xprobe, opts['init'], opts['verbose'])
 
     n1, n2 = X.shape
     [n1x,n2x] = X.shape
@@ -138,8 +122,6 @@ def pca_full(flag, X, ncomp, **kwargs):
         obscombj = {}
 
     A, S, Mu, V, Av, Sv, Muv = init_parms(opts["init"], n1, n2, ncomp, nobscomb, Isv)
-    # if flag:
-    #     print(f"[DEBUG] Initialized - A shape: {A.shape}, S shape: {S.shape}, Mu shape: {Mu.shape}")
 
     if use_prior:
         Va = 1000 * np.ones((1, ncomp))
@@ -164,9 +146,6 @@ def pca_full(flag, X, ncomp, **kwargs):
 
 
     X, Xprobe = subtract_mu(Mu, X, M, Xprobe, Mprobe, opts['bias'])
-    # if flag:
-    #     print(f"[DEBUG] After subtract_mu - X shape: {X.shape}, Mu shape: {Mu.shape}")
-
 
     rms, errMx = compute_rms(X, A, S, M, ndata)
     prms, _ = compute_rms(Xprobe, A, S, Mprobe, nprobe)
