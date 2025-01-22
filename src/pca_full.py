@@ -17,35 +17,19 @@ import matplotlib.pyplot as plt
 import time
 from scipy.linalg import subspace_angles
 import sys
-sys.path.append('../add_m_cols')
+
 from add_m_cols import add_m_cols 
-
-sys.path.append('../add_m_rows')
 from add_m_rows import add_m_rows 
-
-sys.path.append('../argschk')
 from argschk import argschk
-
-sys.path.append('../cf_full')
 from cf_full import cf_full
-
-sys.path.append('../converg_check')
 from converg_check import converg_check
-
-sys.path.append('../errpca_pt_compute_rms')
 from compute_rms import compute_rms 
-
-sys.path.append('../miscomb')
 from miscomb import miscomb
-
-sys.path.append('../rmempty')
 from rmempty import rmempty
-
-sys.path.append("../subtract_mu")
 from subtract_mu_from_sparse import subtract_mu_from_sparse
 
-def pca_full(flag, X, ncomp, **kwargs):
-    
+def pca_full(X, ncomp, **kwargs):
+    print("in pca full", flush=True)
     opts = { 'init':'random',
     'maxiters':1000,
     'bias':1,
@@ -84,7 +68,7 @@ def pca_full(flag, X, ncomp, **kwargs):
     Xprobe = opts['xprobe']
     
     n1x, n2x = X.shape
-    X, Xprobe, Ir, Ic, opts['init'] = rmempty(flag, X, Xprobe, opts['init'], opts['verbose'])
+    X, Xprobe, Ir, Ic, opts['init'] = rmempty(X, Xprobe, opts['init'], opts['verbose'])
 
     n1, n2 = X.shape
     [n1x,n2x] = X.shape
@@ -138,8 +122,6 @@ def pca_full(flag, X, ncomp, **kwargs):
         obscombj = {}
 
     A, S, Mu, V, Av, Sv, Muv = init_parms(opts["init"], n1, n2, ncomp, nobscomb, Isv)
-    # if flag:
-    #     print(f"[DEBUG] Initialized - A shape: {A.shape}, S shape: {S.shape}, Mu shape: {Mu.shape}")
 
     if use_prior:
         Va = 1000 * np.ones((1, ncomp))
@@ -164,9 +146,6 @@ def pca_full(flag, X, ncomp, **kwargs):
 
 
     X, Xprobe = subtract_mu(Mu, X, M, Xprobe, Mprobe, opts['bias'])
-    # if flag:
-    #     print(f"[DEBUG] After subtract_mu - X shape: {X.shape}, Mu shape: {Mu.shape}")
-
 
     rms, errMx = compute_rms(X, A, S, M, ndata)
     prms, _ = compute_rms(Xprobe, A, S, Mprobe, nprobe)
@@ -192,7 +171,9 @@ def pca_full(flag, X, ncomp, **kwargs):
     time_autosave = time_start
     tic = time.time()
 
+    total = max(range(1, opts['maxiters'] + 1));
     for iter in range(1, opts['maxiters'] + 1):
+        print(f"iteration {iter} out of {total}")
         if use_prior and iter > opts['niter_broadprior']:
             # Update Va and Vmu
             if opts['bias']:
@@ -222,8 +203,10 @@ def pca_full(flag, X, ncomp, **kwargs):
             X, Xprobe = subtract_mu(dMu, X, M, Xprobe, Mprobe, update_bias=True)
 
         # Update S
+        print("update S", flush=True)
         if not Isv:
             for j in range(n2):
+                # print(j, "out of ", range(n2), flush=True)
                 A_j = (M[:, j][:, np.newaxis]) * A
                 Psi = A_j.T @ A_j + np.diag(np.full(ncomp, V))
                 if Av:
@@ -246,11 +229,12 @@ def pca_full(flag, X, ncomp, **kwargs):
                 tmp = invPsi @ A_j.T
                 for j_idx in obscombj[k]:
                     S[:, j_idx] = tmp @ X[:, j_idx]
-
+                    
                 print_progress(opts['verbose'], k + 1, nobscomb, 'Updating S:')
+        
         if opts['verbose'] == 2:
             print('\r', end='')
-
+        
         if opts['rotate2pca']:
             dMu, A, Av, S, Sv = rotate_to_pca(A, Av, S, Sv, Isv, obscombj, opts['bias'])
             if opts['bias']:
@@ -258,6 +242,7 @@ def pca_full(flag, X, ncomp, **kwargs):
                 Mu = Mu + dMu
 
         # Update A
+        print("Update A", flush=True)
         if opts['verbose'] == 2:
             print('\r', end='')
         for i in range(n1):
@@ -283,8 +268,11 @@ def pca_full(flag, X, ncomp, **kwargs):
 
 
         # Update V
+        print("Update V", flush=True)
         sXv = 0
         if not Isv:
+            # print("1", flush=True)
+
             for r in range(ndata):
                 i = IX[r]
                 j = JX[r]
@@ -410,6 +398,7 @@ def pca_full(flag, X, ncomp, **kwargs):
 #Returns the modified data matrix (`X`) and probe matrix (`Xprobe`) with the mean subtracted.
 
 def subtract_mu(Mu, X, M, Xprobe=None, Mprobe=None, update_bias=True):
+    print("in subtract mu", flush=True)
     n2 = X.shape[1]
 
     if not update_bias:
@@ -447,6 +436,7 @@ def subtract_mu(Mu, X, M, Xprobe=None, Mprobe=None, update_bias=True):
 #Returns the adjusted bias (`dMu`), rotated loading matrix (`A`), rotated loading covariance (`Av`), rotated component matrix (`S`), and rotated component covariance (`Sv`).
 
 def rotate_to_pca(A, Av, S, Sv, Isv, obscombj, update_bias):
+    print("in rotate to pca", flush=True)
     n1 = A.shape[0]
     n2 = S.shape[1]
 
@@ -517,7 +507,8 @@ def rotate_to_pca(A, Av, S, Sv, Isv, obscombj, update_bias):
 #Gets the initialization method or file (`init`), dimensions of the data (`n1`, `n2`), number of components (`ncomp`), number of observation combinations (`nobscomb`), and indices of covariance matrices (`Isv`).
 #Returns initialized parameters: loading matrix (`A`), component matrix (`S`), mean vector (`Mu`), variance scalar (`V`), loading covariance (`Av`), component covariance (`Sv`), and mean covariance (`Muv`).
 
-def init_parms(init, n1, n2, ncomp, nobscomb, Isv):    
+def init_parms(init, n1, n2, ncomp, nobscomb, Isv):
+    print("in init_parms", flush=True)
     if isinstance(init, str):
         if init.lower() == 'random':
             init = {}
@@ -661,7 +652,7 @@ def print_step(verbose, lc, a_angle):
 
 def print_progress_bar(verbose, string):
     if verbose == 2:
-        print(f"print_progress_bar: {string}")
+        print(f"print_progress_bar: {string}", flush=True)
         # print("\n|                                                  |\r|")
 
 ##############################################################################################
@@ -672,7 +663,7 @@ def print_progress_bar(verbose, string):
 
 def print_progress(verbose, i, n, string):
     if verbose == 2:
-        print("print_progress")
+        print("print_progress", flush=True)
         print(f"\r{string} {i}/{n}", end='')
 
 ##############################################################################################
