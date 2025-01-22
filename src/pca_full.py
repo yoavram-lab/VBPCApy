@@ -29,7 +29,9 @@ from rmempty import rmempty
 from subtract_mu_from_sparse import subtract_mu_from_sparse
 
 def pca_full(X, ncomp, **kwargs):
+
     print("in pca full", flush=True)
+
     opts = { 'init':'random',
     'maxiters':1000,
     'bias':1,
