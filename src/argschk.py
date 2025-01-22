@@ -3,6 +3,7 @@
 #Returns A merged options dictionary (opts) and a warning message (wrnmsg) for unknown parameters, if any.
 
 def argschk(defopts, **kwargs):
+    print("in argschk", flush=True)
     wrnmsg = ""
     opts = defopts.copy()
     opts_in = kwargs

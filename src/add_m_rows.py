@@ -5,6 +5,7 @@
 import numpy as np
 
 def add_m_rows(A, Av, Ir, n1x, Va=None):
+    print("in add m rows", flush=True)
     # Determine the number of components (ncomp)
     if A.ndim >= 2:
         ncomp = A.shape[1]

@@ -25,7 +25,7 @@ ext_modules = [
         include_dirs=[
             get_pybind_include(),
             get_pybind_include(user=True),
-            '/opt/homebrew/opt/eigen/include/eigen3'  # Update this path based on your Eigen installation
+            'eigen/eigen-3.4.0'  # Update this path based on your Eigen installation
         ],
         language='c++',
         extra_compile_args=['-O3', '-std=c++14'],

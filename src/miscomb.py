@@ -5,7 +5,7 @@
 import numpy as np
 
 def miscomb(M, verbose):
-
+    print("in miscomb", flush=True)
     n2 = M.shape[1]
 
     if verbose:

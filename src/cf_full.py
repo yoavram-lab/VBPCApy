@@ -15,6 +15,8 @@ from scipy.sparse import issparse, csr_matrix
 from compute_rms import compute_rms 
 
 def cf_full(X, A, S, Mu, V, Av=None, Sv=None, Isv=None, Muv=None, Va=None, Vmu=None, M=None, sXv=None, ndata=None):
+    print("in cf full", flush=True)
+    
     n1, n2 = X.shape
     ncomp = A.shape[1]
 
@@ -25,7 +27,6 @@ def cf_full(X, A, S, Mu, V, Av=None, Sv=None, Isv=None, Muv=None, Va=None, Vmu=N
     if sXv is None:
         IX, JX = np.where(M)
         ndata = len(IX)
-
         rms,errMx = compute_rms( X, A, S, M, ndata );
 
         # Initialize sXv based on rms
@@ -41,6 +42,7 @@ def cf_full(X, A, S, Mu, V, Av=None, Sv=None, Isv=None, Muv=None, Va=None, Vmu=N
                     s_j = S[:, j]
                     av_i = Av[i]
                     sXv += s_j.T @ av_i @ s_j + np.sum(sv_j * av_i)
+        
         else:
             for r in range(ndata):
                 i = IX[r]
@@ -58,7 +60,6 @@ def cf_full(X, A, S, Mu, V, Av=None, Sv=None, Isv=None, Muv=None, Va=None, Vmu=N
 
     # Determine whether to use priors based on Va
     use_prior = Va is not None and not np.any(np.isinf(Va))
-
     cost_x = 0.5 / V * sXv + 0.5 * ndata * np.log(2 * np.pi * V)
     cost_mu = 0.0
     cost_a = 0.0
@@ -90,7 +91,6 @@ def cf_full(X, A, S, Mu, V, Av=None, Sv=None, Isv=None, Muv=None, Va=None, Vmu=N
                     cost_a -= 0.5 * logdet
                 else:
                     cost_a -= 0.5 * (-np.inf)
-
     cost_s = 0.5 * np.sum(S ** 2)
 
     if Sv is not None and len(Sv) > 0:
@@ -113,7 +113,8 @@ def cf_full(X, A, S, Mu, V, Av=None, Sv=None, Isv=None, Muv=None, Va=None, Vmu=N
                         cost_s += trace_svj - 0.5 * logdet_svj
                     else:
                         cost_s += trace_svj - 0.5 * (-np.inf)
+
     cost_s -= (ncomp * n2) / 2
     cost = cost_mu + cost_a + cost_x + cost_s
- 
+
     return cost, cost_x, cost_a, cost_mu, cost_s

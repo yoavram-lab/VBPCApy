@@ -5,7 +5,7 @@
 import numpy as np
 
 def add_m_cols(S, Sv, Ic, n2x, Isv=None):
-
+    print("in add m cols", flush=True)
     ncomp = S.shape[0]
 
     # Compute Ic2 as the set difference between all columns and Ic

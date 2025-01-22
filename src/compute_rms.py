@@ -7,6 +7,7 @@ import scipy.sparse as sp
 from errpca_pt import errpca_pt
 
 def compute_rms(X, A, S, M, ndata, numCPU=1):
+    print("in compute rms", flush=True)
     if X.size == 0:
         return np.nan, []  # Equivalent to MATLAB's empty array
     

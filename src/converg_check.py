@@ -2,6 +2,7 @@
 #Input: Options dictionary (opts), convergence logs (lc), subspace angle (angleA), and optional slowing-down iteration (sd_iter).
 #Output: A message (convmsg) indicating if a stopping criterion is met.
 def converg_check(opts, lc, angleA, sd_iter=None):
+    print("in converg check", flush=True)
     convmsg = ""
 
     # Check angle convergence criterion
