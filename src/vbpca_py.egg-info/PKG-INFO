@@ -1,0 +1,11 @@
+Metadata-Version: 2.2
+Name: vbpca_py
+Version: 0.1.0
+Summary: A Python package for performing probabilistic PCA with support for missing data.
+Author: Shany
+Author-email: Shany <shany215.sn@gmail.com>
+Requires-Dist: numpy>=1.21.0
+Requires-Dist: pandas>=1.3.0
+Requires-Dist: scipy>=1.7.0
+Requires-Dist: matplotlib>=3.4.0
+Dynamic: author

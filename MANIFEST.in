@@ -1,0 +1,2 @@
+exclude test/Full_Tests/*
+recursive-include src/vbpca_py/eigen *
