@@ -8,7 +8,6 @@ from datetime import datetime
 import matplotlib.pyplot as plt
 import numpy as np
 import scipy.sparse as sp
-from argschk import argschk
 from cf_full import cf_full
 from compute_rms import compute_rms
 from converg_check import converg_check
@@ -20,6 +19,7 @@ from scipy.sparse import issparse
 from subtract_mu_from_sparse import subtract_mu_from_sparse
 
 from ._expand import _add_m_cols, _add_m_rows
+from ._options import _options
 
 
 def pca_full(X, ncomp, **kwargs):
@@ -46,7 +46,7 @@ def pca_full(X, ncomp, **kwargs):
     }
     print(f"{datetime.now().isoformat()} - Starting section 4")
 
-    opts, wrnmsg = argschk(opts, **kwargs)
+    opts, wrnmsg = _options(opts, **kwargs)
     print(f"{datetime.now().isoformat()} - Starting section 5")
 
     if wrnmsg:
