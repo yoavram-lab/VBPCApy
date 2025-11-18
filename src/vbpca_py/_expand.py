@@ -6,6 +6,51 @@ that were removed by ``rmempty``. Indices are **0-based** throughout.
 
 import numpy as np
 
+# ============================================================
+# Common index / shape validation errors
+# ============================================================
+
+ERR_KEPT_INDICES_1D = "kept_indices must be a 1D array or list of integer indices."
+
+ERR_KEPT_INDICES_RANGE = "kept_indices contains values outside the valid range."
+
+ERR_SCORES_2D = "scores must be a 2D array of shape (n_components, n_kept_cols)."
+
+ERR_SCORES_KEPT_MISMATCH = "Number of kept columns does not match scores.shape[1]."
+
+ERR_COVS_LIST_LENGTH = (
+    "In per-column covariance mode, score_covs must have "
+    "length equal to the number of kept columns."
+)
+
+ERR_COV_INDICES_1D = "score_cov_indices must be a 1D array or list."
+
+ERR_COV_INDICES_LENGTH = (
+    "score_cov_indices length must match the number of kept columns."
+)
+
+ERR_COV_INDICES_RANGE = (
+    "score_cov_indices contains an index out of range for score_covs."
+)
+
+ERR_DIAG_COV_1D = "Diagonal covariance mode requires a 1D array of length n_components."
+
+ERR_ROWS_2D = "rows must be a 2D array."
+
+ERR_ROWS_KEPT_MISMATCH = "Number of kept rows does not match rows.shape[0]."
+
+ERR_ROW_VARIANCES_LENGTH = (
+    "row_variances must be scalar or length equal to number of components."
+)
+
+ERR_ROW_COV_LIST_LENGTH = (
+    "When row_covs is a list, its length must equal the number of kept rows."
+)
+
+ERR_ROW_COV_ARRAY_SHAPE = (
+    "When row_covs is an array, it must have shape (n_kept_rows, n_components)."
+)
+
 
 def _compute_kept_and_missing_indices(
     kept_indices: np.ndarray | list[int],
@@ -23,10 +68,10 @@ def _compute_kept_and_missing_indices(
     """
     kept_idx = np.asarray(kept_indices, dtype=int)
     if kept_idx.ndim != 1:
-        raise ValueError("kept_indices must be a 1D array or list of indices.")
+        raise ValueError(ERR_KEPT_INDICES_1D)
 
     if np.any(kept_idx < 0) or np.any(kept_idx >= n_total):
-        raise ValueError("kept_indices contains indices out of range [0, n_total).")
+        raise ValueError(ERR_KEPT_INDICES_RANGE)
 
     all_idx = np.arange(n_total, dtype=int)
     mask_kept = np.zeros(n_total, dtype=bool)
@@ -84,9 +129,7 @@ def _add_m_cols(
     """
     scores = np.asarray(scores)
     if scores.ndim != 2:
-        raise ValueError(
-            "scores must be a 2D array of shape (n_components, n_kept_cols)."
-        )
+        raise ValueError(ERR_SCORES_2D)
 
     n_components, n_kept_cols = scores.shape
 
@@ -95,10 +138,7 @@ def _add_m_cols(
     )
 
     if kept_cols_idx.size != n_kept_cols:
-        raise ValueError(
-            f"Number of kept columns in kept_cols ({kept_cols_idx.size}) must "
-            f"match scores.shape[1] ({n_kept_cols})."
-        )
+        raise ValueError(ERR_SCORES_KEPT_MISMATCH)
 
     # Expand scores to full width with zeros for missing columns.
     expanded_scores = np.zeros((n_components, n_total_cols), dtype=scores.dtype)
@@ -111,11 +151,7 @@ def _add_m_cols(
             # Per-column covariance mode: score_covs assumed to have length
             # n_kept_cols, one covariance per kept column.
             if len(score_covs) != n_kept_cols:
-                raise ValueError(
-                    "In per-column covariance mode (empty score_cov_indices), "
-                    "score_covs must have length equal to the number of kept "
-                    "columns."
-                )
+                raise ValueError(ERR_COVS_LIST_LENGTH)
 
             expanded_score_covs: list[np.ndarray] = [None] * n_total_cols  # type: ignore[assignment]
             # Assign learned covariances to their original positions.
@@ -135,10 +171,7 @@ def _add_m_cols(
                 score_cov_indices_arr.ndim != 1
                 or score_cov_indices_arr.size != n_kept_cols
             ):
-                raise ValueError(
-                    "score_cov_indices must be a 1D array/list whose length "
-                    "equals the number of kept columns when provided."
-                )
+                raise ValueError(ERR_COV_INDICES_LENGTH)
 
             expanded_score_covs = list(score_covs)
             # Append identity covariance for newly added columns.
@@ -153,19 +186,14 @@ def _add_m_cols(
             for j, col in enumerate(kept_cols_idx):
                 idx = int(score_cov_indices_arr[j])
                 if idx < 0 or idx >= len(score_covs):
-                    raise ValueError(
-                        "score_cov_indices contains index out of range for score_covs."
-                    )
+                    raise ValueError(ERR_COV_INDICES_RANGE)
                 expanded_score_cov_indices[col] = idx
 
     else:
         # Diagonal covariance mode: score_covs is a 1D array of length n_components.
         score_covs_arr = np.asarray(score_covs)
         if score_covs_arr.ndim != 1 or score_covs_arr.shape[0] != n_components:
-            raise ValueError(
-                "In diagonal covariance mode, score_covs must be a 1D array "
-                "of length equal to n_components."
-            )
+            raise ValueError(ERR_DIAG_COV_1D)
 
         expanded_score_covs = np.ones(
             (n_components, n_total_cols), dtype=score_covs_arr.dtype
@@ -224,7 +252,7 @@ def _add_m_rows(
     """
     rows = np.asarray(rows)
     if rows.ndim != 2:
-        raise ValueError("rows must be a 2D array.")
+        raise ValueError(ERR_ROWS_2D)
 
     n_kept_rows, n_components = rows.shape
 
@@ -233,10 +261,7 @@ def _add_m_rows(
     )
 
     if kept_rows_idx.size != n_kept_rows:
-        raise ValueError(
-            f"Number of kept rows in kept_rows ({kept_rows_idx.size}) must "
-            f"match rows.shape[0] ({n_kept_rows})."
-        )
+        raise ValueError(ERR_ROWS_KEPT_MISMATCH)
 
     # Handle row_variances and its broadcasting.
     if n_components > 0:
@@ -247,10 +272,7 @@ def _add_m_rows(
             if variances.size == 1:
                 variances = np.full(n_components, variances.item(), dtype=float)
             elif variances.size != n_components:
-                raise ValueError(
-                    "Length of row_variances must be 1 or equal to the "
-                    "number of components."
-                )
+                raise ValueError(ERR_ROW_VARIANCES_LENGTH)
     else:
         variances = np.array([], dtype=float)
 
@@ -267,15 +289,17 @@ def _add_m_rows(
 
         expanded_rows[kept_rows_idx, :] = rows
 
+    # Decide if we have covariance information to expand.
+    has_covs = row_covs is not None and (
+        not isinstance(row_covs, (list, tuple)) or len(row_covs) > 0
+    )
+
     # Handle expanded_row_covs.
-    if row_covs and n_components > 0:
+    if has_covs and n_components > 0:
         if isinstance(row_covs, list):
             # Per-row covariance matrices.
             if len(row_covs) != n_kept_rows:
-                raise ValueError(
-                    "When row_covs is a list, its length must equal "
-                    "the number of kept rows."
-                )
+                raise ValueError(ERR_ROW_COV_LIST_LENGTH)
 
             expanded_row_covs: list[np.ndarray] = [None] * n_total_rows  # type: ignore[assignment]
             # Assign existing covariances to kept rows.
@@ -290,10 +314,7 @@ def _add_m_rows(
             # Array-like covariances: treat as diagonal variances per row.
             row_covs_arr = np.asarray(row_covs)
             if row_covs_arr.ndim != 2 or row_covs_arr.shape[1] != n_components:
-                raise ValueError(
-                    "When row_covs is an array, it must have shape "
-                    "(n_kept_rows, n_components)."
-                )
+                raise ValueError(ERR_ROW_COV_ARRAY_SHAPE)
 
             expanded_row_covs = np.tile(variances, (n_total_rows, 1))
             expanded_row_covs[kept_rows_idx, :] = row_covs_arr

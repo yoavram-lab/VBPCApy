@@ -1,13 +1,9 @@
+# VPBCApy/__init__.py
+
+"""Top-level package marker for the VPBCApy repository.
+
+This file is intentionally minimal so that importing `VPBCApy` has no
+side effects (and does not depend on the src layout).
 """
-vpbcapy.
 
-Python translation of Illin & Raiko (2010) Variational Bayesian PCA,
-with support for missing data, unique-pattern covariance structures,
-and C++-accelerated sparse mean subtraction.
-"""
-
-from .pca_full import pca_full
-
-__all__ = [
-    "pca_full",
-]
+__all__: list[str] = []
