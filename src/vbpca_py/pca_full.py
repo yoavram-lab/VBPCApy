@@ -8,8 +8,6 @@ from datetime import datetime
 import matplotlib.pyplot as plt
 import numpy as np
 import scipy.sparse as sp
-from _add_m_cols import _add_m_cols
-from add_m_rows import add_m_rows
 from argschk import argschk
 from cf_full import cf_full
 from compute_rms import compute_rms
@@ -20,6 +18,8 @@ from scipy.io import loadmat, savemat
 from scipy.linalg import orth, subspace_angles
 from scipy.sparse import issparse
 from subtract_mu_from_sparse import subtract_mu_from_sparse
+
+from ._expand import _add_m_cols, _add_m_rows
 
 
 def pca_full(X, ncomp, **kwargs):
@@ -372,8 +372,8 @@ def pca_full(X, ncomp, **kwargs):
             Mu = Mu + dMu
     print(f"{datetime.now().isoformat()} - Starting section 29")
     if n1 < n1x:
-        A, Av = add_m_rows(A, Av, Ir, n1x, Va)
-        Mu, Muv = add_m_rows(Mu, Muv, Ir, n1x, Vmu)
+        A, Av = _add_m_rows(A, Av, Ir, n1x, Va)
+        Mu, Muv = _add_m_rows(Mu, Muv, Ir, n1x, Vmu)
     if n2 < n2x:
         S, Sv, Isv = _add_m_cols(S, Sv, Ic, n2x, Isv)
 
