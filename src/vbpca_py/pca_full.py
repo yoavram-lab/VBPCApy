@@ -11,7 +11,6 @@ import scipy.sparse as sp
 from cf_full import cf_full
 from compute_rms import compute_rms
 from converg_check import converg_check
-from miscomb import miscomb
 from rmempty import rmempty
 from scipy.io import loadmat, savemat
 from scipy.linalg import orth, subspace_angles
@@ -19,6 +18,7 @@ from scipy.sparse import issparse
 from subtract_mu_from_sparse import subtract_mu_from_sparse
 
 from ._expand import _add_m_cols, _add_m_rows
+from ._missing import _missing_patterns
 from ._options import _options
 
 
@@ -117,7 +117,7 @@ def pca_full(X, ncomp, **kwargs):
 
     # Compute indices Isv: Sv[Isv[j]] gives Sv for j, j=1...n2
     if opts["uniquesv"]:
-        nobscomb, obscombj, Isv = miscomb(M, opts["verbose"])
+        nobscomb, obscombj, Isv = _missing_patterns(M, opts["verbose"])
     else:
         nobscomb = n2
         Isv = []
