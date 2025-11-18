@@ -1,4 +1,5 @@
 MANIFEST.in
+README.md
 pyproject.toml
 setup.py
 src/vbpca_py/add_m_cols.py

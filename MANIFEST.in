@@ -1,7 +1,23 @@
-# MANIFEST.in file
+# MANIFEST.in for vbpca_py
 
-# Include all source files in the src directory
-recursive-include src *
+# -----------------------------
+# Core source files (Python + C++)
+# -----------------------------
+recursive-include src *.py *.pyi *.cpp *.hpp *.h
 
-# Exclude test files if necessary
-exclude test/Full_Tests/*
+# -----------------------------
+# Top-level metadata
+# -----------------------------
+include pyproject.toml
+include README.md
+include LICENSE
+include MANIFEST.in
+
+# -----------------------------
+# Tests
+# -----------------------------
+# Include all lightweight tests
+recursive-include tests *.py
+
+# Exclude heavy/full tests from the sdist
+recursive-exclude tests/Full_Tests *

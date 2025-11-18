@@ -1,26 +1,77 @@
-# Ignore Python cache and compiled files
+########################################
+# Python build / cache artifacts
+########################################
+
 __pycache__/
 *.py[cod]
+*.pyo
+*.pyd
 
-# Ignore Jupyter Notebook checkpoints
-.ipynb_checkpoints/
-
-# Ignore other temporary or compiled files
+# Cython / pybind11 outputs
 *.so
 *.dll
-*.exe
 *.dylib
+*.o
+*.out
+
+########################################
+# Build and distribution directories
+########################################
 
 build/
 dist/
-*.out
-*.o
+*.egg-info/
+*.egg
+.eggs/
 
-src/Untitled.ipynb
-src/eigen-3.4.0.tar.gz
+########################################
+# Jupyter Notebook artifacts
+########################################
+
+.ipynb_checkpoints/
+*.ipynb
+
+########################################
+# Local development clutter
+########################################
+
+# Virtual environments
+.env/
+.venv/
+venv/
+env/
+
+# IDE/project settings
+.vscode/
+.idea/
+
+########################################
+# Eigen / third-party source bundles
+########################################
+
+# If Eigen gets copied/extracted into src/
 src/eigen/
-test/Full_Tests/OHT.py
-test/Full_Tests/OHspecial_transformed_iso_data.parquet
-test/Full_Tests/OHspecial_transformed_iso_data1.parquet
-test/errpca_pt_compute_rms/eigen/
+src/eigen-*.tar.gz
 
+# In-test Eigen copies
+tests/**/eigen/
+
+########################################
+# Project-specific exclusions
+########################################
+
+# Remove stray notebook
+src/Untitled.ipynb
+
+# Heavy full tests
+tests/Full_Tests/OHT.py
+tests/Full_Tests/OHspecial_transformed_iso_data.parquet
+tests/Full_Tests/OHspecial_transformed_iso_data1.parquet
+
+########################################
+# Benchmark artifacts (if any)
+########################################
+
+.prof/
+.cache/
+pytest_cache/

@@ -4,59 +4,71 @@ import pybind11
 from setuptools import Extension, find_packages, setup
 
 
-# Helper function to get the include paths for pybind11
-def get_pybind_include():
+def get_pybind_include() -> str:
+    """Return the pybind11 include directory."""
     return pybind11.get_include()
 
 
-# Dynamically determine the Eigen include path
-def get_eigen_include_path():
-    # Check CONDA_PREFIX environment variable set by Conda/Mamba
+def get_eigen_include_path() -> str:
+    """Return the Eigen include directory.
+
+    Priority order:
+    1. EIGEN_INCLUDE_DIR env var
+    2. $CONDA_PREFIX/include/eigen3 (Conda/Mamba)
+    3. /usr/local/include/eigen3 (fallback)
+    """
+    # 1. Explicit override
+    env_path = os.environ.get("EIGEN_INCLUDE_DIR")
+    if env_path and os.path.exists(env_path):
+        return env_path
+
+    # 2. Conda/Mamba
     conda_prefix = os.environ.get("CONDA_PREFIX")
     if conda_prefix:
-        # Assumes Conda installs to <CONDA_PREFIX>/include/eigen3
         potential_path = os.path.join(conda_prefix, "include", "eigen3")
         if os.path.exists(potential_path):
             return potential_path
 
-    # Fallback paths (e.g., standard system paths, Homebrew default on macOS)
-    # You can add more fallbacks here as needed for other systems
+    # 3. Fallback
     return "/usr/local/include/eigen3"
 
 
-# Define the C++ extensions
 ext_modules = [
     Extension(
-        "vbpca_py.errpca_pt",  # Module name
-        ["src/vbpca_py/errpca_pt.cpp"],  # Source file
+        name="vbpca_py.errpca_pt",
+        sources=["src/vbpca_py/errpca_pt.cpp"],
         include_dirs=[
-            get_pybind_include(),  # pybind11 include path
-            get_eigen_include_path(),  # Dynamically found Eigen path
+            get_pybind_include(),
+            get_eigen_include_path(),
         ],
         language="c++",
-        extra_compile_args=["-O3", "-std=c++14"],  # Optimization and C++ standard
+        extra_compile_args=["-O3", "-std=c++14"],
     ),
     Extension(
-        "vbpca_py.subtract_mu_from_sparse",  # Module name
-        ["src/vbpca_py/subtract_mu_from_sparse.cpp"],  # Source file
+        name="vbpca_py.subtract_mu_from_sparse",
+        sources=["src/vbpca_py/subtract_mu_from_sparse.cpp"],
         include_dirs=[
-            get_pybind_include()  # pybind11 include path
+            get_pybind_include(),
         ],
         language="c++",
-        extra_compile_args=["-O3", "-std=c++11"],  # Optimization and C++ standard
+        extra_compile_args=["-O3", "-std=c++11"],
     ),
 ]
 
-# Setup configuration
 setup(
     name="vbpca_py",
     version="0.1.0",
-    description="A Python package with C++ extensions for PCA",
-    author="Shany",
-    author_email="shany215.sn@gmail.com",
-    packages=find_packages(where="src"),  # Locate Python packages under "src"
-    package_dir={"": "src"},  # Set the root directory for the packages
-    ext_modules=ext_modules,  # Add the C++ extensions
-    install_requires=["pybind11", "numpy", "scipy"],
-    zip_safe=False,  # Avoid setuptools packaging the project into .egg files
+    description="Variational Bayesian PCA (Illin & Raiko 2010) with support for missing data.",
+    author="Shany Naim and Joshua Macdonald",
+    author_email="shany215.sn@gmail.com, jmacdo16@jh.edu",
+    package_dir={"": "src"},
+    packages=find_packages(where="src"),
+    ext_modules=ext_modules,
+    install_requires=[
+        "numpy",
+        "scipy",
+    ],
+    python_requires=">=3.11",
+    zip_safe=False,
+    include_package_data=True,
 )
