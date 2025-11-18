@@ -1,2 +1,7 @@
+# MANIFEST.in file
+
+# Include all source files in the src directory
+recursive-include src *
+
+# Exclude test files if necessary
 exclude test/Full_Tests/*
-recursive-include src/vbpca_py/eigen *
