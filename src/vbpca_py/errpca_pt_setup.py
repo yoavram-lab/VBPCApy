@@ -1,46 +1,44 @@
-# setup.py
+# errpca_pt_setup.py
+"""
+Build script for the errpca_pt C++ extension.
 
-from setuptools import setup, Extension
-import pybind11
-from setuptools.command.build_ext import build_ext
+Usage (from the directory containing this file and errpca_pt.cpp):
 
-class get_pybind_include(object):
-    """Helper class to determine the pybind11 include path.
+    python errpca_pt_setup.py build_ext --inplace
 
-    The purpose of this class is to postpone importing pybind11
-    until it is actually installed, so that the ``get_include()``
-    method can be invoked.
-    """
+This will produce a Python extension module named `errpca_pt` that can be
+imported as:
 
-    def __init__(self, user=False):
-        self.user = user
+    from errpca_pt import errpca_pt
+"""
 
-    def __str__(self):
-        return pybind11.get_include(self.user)
+from __future__ import annotations
+
+from pathlib import Path
+
+from setuptools import setup
+from pybind11.setup_helpers import Pybind11Extension, build_ext
+
+# Path to Eigen headers (adjust if you move Eigen)
+ROOT_DIR = Path(__file__).resolve().parent
+EIGEN_DIR = ROOT_DIR / "eigen" / "eigen-3.4.0"
 
 ext_modules = [
-    Extension(
-        'errpca_pt',
-        ['errpca_pt.cpp'],
-        include_dirs=[
-            get_pybind_include(),
-            get_pybind_include(user=True),
-            'eigen/eigen-3.4.0'  # Update this path based on your Eigen installation
-        ],
-        language='c++',
-        extra_compile_args=['-O3', '-std=c++14'],
-        extra_link_args=[]
+    Pybind11Extension(
+        "errpca_pt",
+        ["errpca_pt.cpp"],
+        include_dirs=[str(EIGEN_DIR)],
+        cxx_std=14,          # C++14 is sufficient for this code
+        extra_compile_args=["-O3"],
     ),
 ]
 
 setup(
-    name='errpca_pt',
-    version='0.1',
-    author='Your Name',
-    author_email='your.email@example.com',
-    description='ERRPCA_PT: Compute sparse matrix of reconstruction errors',
+    name="errpca_pt",
+    version="0.1.0",
+    description="Compute sparse matrix of reconstruction errors (X - A*S) using CSR sparsity.",
     ext_modules=ext_modules,
-    install_requires=['pybind11', 'numpy', 'scipy'],
-    cmdclass={'build_ext': build_ext},
+    cmdclass={"build_ext": build_ext},
     zip_safe=False,
 )
+
