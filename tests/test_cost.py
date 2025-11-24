@@ -245,3 +245,76 @@ def test_cost_shape_errors() -> None:
     s = np.zeros((2, 3))
     with pytest.raises(ValueError, match=r"S columns must match X columns."):
         compute_full_cost(x, a, s, params)
+
+
+def test_cost_loading_nondiagonal_covariances() -> None:
+    """Loading prior with non-diagonal Av to exercise full KL(A) branch."""
+    rng = np.random.default_rng(123)
+
+    # Small random A, no data contribution (x and s zero)
+    x = np.zeros((3, 3))
+    a = rng.standard_normal((3, 2))  # n_features = 3, n_components = 2
+    s = np.zeros((2, 3))
+    mu = np.zeros(3)
+    noise_variance = 1.0
+
+    # Non-diagonal, positive-definite covariance matrices for A
+    base = np.array([[0.6, 0.2], [0.2, 0.4]])
+    # One covariance per feature (row of A)
+    av0 = base.copy()
+    av1 = base * 1.5
+    av2 = base * 2.0
+    loading_covariances = [av0, av1, av2]
+
+    # Simple finite loading priors (one per component)
+    loading_priors = np.array([1.0, 0.5])
+
+    params = CostParams(
+        mu=mu,
+        noise_variance=noise_variance,
+        loading_covariances=loading_covariances,
+        loading_priors=loading_priors,
+    )
+
+    _, _, cost_a, _, _ = compute_full_cost(x, a, s, params)
+
+    # We don't assert an exact closed-form here (the KL is messy),
+    # but we do expect:
+    # - finiteness
+    # - strict positivity (non-zero A, finite prior/Av => KL > 0)
+    assert np.isfinite(cost_a)
+    assert cost_a > 0.0
+
+
+def test_cost_mask_ignores_unobserved_entries() -> None:
+    """Changing X outside the mask should not affect the data term."""
+    rng = np.random.default_rng(42)
+
+    # Small dense X, random A and S
+    x = rng.standard_normal((3, 4))
+    a = rng.standard_normal((3, 2))
+    s = rng.standard_normal((2, 4))
+    mu = np.zeros(3)
+    noise_variance = 1.0
+
+    # Random mask: about half of entries observed
+    mask = rng.random(x.shape) < 0.5
+
+    params = CostParams(
+        mu=mu,
+        noise_variance=noise_variance,
+        mask=mask,
+        loading_priors=None,
+    )
+
+    # First cost with original X
+    _, cost_x1, *_ = compute_full_cost(x, a, s, params)
+
+    # Create a modified X that differs ONLY where mask is False
+    x_modified = x.copy()
+    x_modified[~mask] += 10.0  # big change in unobserved entries
+
+    _, cost_x2, *_ = compute_full_cost(x_modified, a, s, params)
+
+    # Data term must be invariant to changes outside mask
+    assert _close(cost_x1, cost_x2, tol=1e-10)

@@ -7,18 +7,18 @@ from datetime import datetime
 
 import matplotlib.pyplot as plt
 import numpy as np
-from converg_check import converg_check  # this one
-from rmempty import rmempty  # this one
 from scipy.io import loadmat, savemat
 from scipy.linalg import orth, subspace_angles
 from scipy.sparse import issparse
 
+from ._converge import convergence_check
 from ._cost import compute_full_cost
 from ._expand import _add_m_cols, _add_m_rows
 from ._mean import subtract_mu
 from ._missing import _missing_patterns
 from ._options import _options
 from ._rms import compute_rms
+from ._rotate import rotate_to_pca
 
 
 def pca_full(X, ncomp, **kwargs):
@@ -320,7 +320,7 @@ def pca_full(X, ncomp, **kwargs):
         angleA = np.max(angles)
         print_step(opts["verbose"], lc, angleA)
         print(f"{datetime.now().isoformat()} - Starting section 26")
-        convmsg = converg_check(opts, lc, angleA)
+        convmsg = convergence_check(opts, lc, angleA)
         if convmsg:
             if use_prior and iter <= opts["niter_broadprior"]:
                 pass
@@ -394,80 +394,6 @@ def pca_full(X, ncomp, **kwargs):
 
     print(f"{datetime.now().isoformat()} - Starting section 30")
     return result
-
-
-##############################################################################################
-# Aligns factor matrices (`A` and `S`) to the PCA solution by performing eigen decomposition on covariance matrices and applying rotations, optionally adjusting bias.
-# Gets loading matrix (`A`), loading covariance (`Av`), component matrix (`S`), component covariance (`Sv`), indices of covariance matrices (`Isv`), observation combinations (`obscombj`), and a bias update flag (`update_bias`).
-# Returns the adjusted bias (`dMu`), rotated loading matrix (`A`), rotated loading covariance (`Av`), rotated component matrix (`S`), and rotated component covariance (`Sv`).
-
-
-def rotate_to_pca(A, Av, S, Sv, Isv, obscombj, update_bias):
-    print("in rotate to pca", flush=True)
-    n1 = A.shape[0]
-    n2 = S.shape[1]
-
-    if update_bias:
-        mS = np.mean(S, axis=1, keepdims=True)
-        dMu = A @ mS
-        S = S - mS
-    else:
-        dMu = 0
-
-    covS = S @ S.T
-
-    if len(Isv) == 0:
-        for j in range(n2):
-            covS += Sv[j]
-    else:
-        nobscomb = len(obscombj)
-        for j in range(nobscomb):
-            covS += len(obscombj[j]) * Sv[j]
-
-    covS /= n2
-
-    eigvals, VS = np.linalg.eigh(covS)
-
-    # Construct D and RA as in MATLAB
-    D = np.diag(eigvals)
-    sqrt_D = np.sqrt(D)  # Square root of diagonal elements
-
-    RA = VS @ sqrt_D
-    A = A @ RA
-
-    covA = A.T @ A
-
-    if Av:
-        for i in range(n1):
-            Av[i] = RA.T @ Av[i] @ RA
-            covA += Av[i]
-
-    covA /= n1
-
-    eigvals, VA = np.linalg.eigh(covA)
-
-    I = np.argsort(-eigvals)
-    eigvals = eigvals[I]
-    VA = VA[:, I]
-
-    A = A @ VA
-
-    if Av:
-        for i in range(n1):
-            Av[i] = VA.T @ Av[i] @ VA
-
-    # Adjust R calculation using D_inv
-    epsilon = 1e-10
-    D_diag = np.sqrt(np.diag(D))
-    D_inv = np.diag(np.where(D_diag > epsilon, 1 / D_diag, 0))
-    R = VA.T @ D_inv @ VS.T
-
-    S = R @ S
-
-    for j in range(len(Sv)):
-        Sv[j] = R @ Sv[j] @ R.T
-
-    return dMu, A, Av, S, Sv
 
 
 ##############################################################################################
