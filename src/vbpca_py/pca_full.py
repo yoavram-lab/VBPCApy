@@ -7,16 +7,15 @@ from datetime import datetime
 
 import matplotlib.pyplot as plt
 import numpy as np
-import scipy.sparse as sp
 from converg_check import converg_check  # this one
 from rmempty import rmempty  # this one
 from scipy.io import loadmat, savemat
 from scipy.linalg import orth, subspace_angles
 from scipy.sparse import issparse
-from subtract_mu_from_sparse import subtract_mu_from_sparse  # this one
 
 from ._cost import compute_full_cost
 from ._expand import _add_m_cols, _add_m_rows
+from ._mean import subtract_mu
 from ._missing import _missing_patterns
 from ._options import _options
 from ._rms import compute_rms
@@ -395,50 +394,6 @@ def pca_full(X, ncomp, **kwargs):
 
     print(f"{datetime.now().isoformat()} - Starting section 30")
     return result
-
-
-##############################################################################################
-# Subtracts the row-wise mean (`Mu`) from a data matrix (`X`) and optionally from a probe matrix (`Xprobe`), while handling sparse matrices efficiently.
-# Gets a mean vector (`Mu`), data matrix (`X`), missing data mask (`M`), optional probe matrix (`Xprobe`), probe mask (`Mprobe`), and a bias update flag (`update_bias`).
-# Returns the modified data matrix (`X`) and probe matrix (`Xprobe`) with the mean subtracted.
-
-
-def subtract_mu(Mu, X, M, Xprobe=None, Mprobe=None, update_bias=True):
-    print("in subtract mu", flush=True)
-    n2 = X.shape[1]
-
-    if not update_bias:
-        return X, Xprobe
-
-    if sp.isspmatrix(X):
-        # Handle sparse case
-        data = X.data
-        indices = X.indices
-        indptr = X.indptr
-        shape = X.shape
-
-        X_data = subtract_mu_from_sparse(data, indices, indptr, shape, Mu)
-
-        X = sp.csr_matrix((X_data, indices, indptr), shape=shape)
-
-        if Xprobe is not None and Xprobe.size > 0:
-            data_probe = Xprobe.data
-            indices_probe = Xprobe.indices
-            indptr_probe = Xprobe.indptr
-            shape_probe = Xprobe.shape
-
-            Xprobe_data = subtract_mu_from_sparse(
-                data_probe, indices_probe, indptr_probe, shape_probe, Mu
-            )
-            Xprobe = sp.csr_matrix(
-                (Xprobe_data, indices_probe, indptr_probe), shape=shape_probe
-            )
-    else:
-        X = X - (Mu * M.astype(int))
-        if Xprobe is not None and Xprobe.size > 0 and Mprobe is not None:
-            Xprobe = Xprobe - (Mu * Mprobe)  # Similarly handled
-
-    return X, Xprobe
 
 
 ##############################################################################################
