@@ -8,10 +8,9 @@ from datetime import datetime
 import matplotlib.pyplot as plt
 import numpy as np
 import scipy.sparse as sp
-from cf_full import cf_full
-from compute_rms import compute_rms
-from converg_check import converg_check
-from rmempty import rmempty
+from cf_full import cf_full  # this one
+from converg_check import converg_check  # this one
+from rmempty import rmempty  # this one
 from scipy.io import loadmat, savemat
 from scipy.linalg import orth, subspace_angles
 from scipy.sparse import issparse
@@ -20,6 +19,7 @@ from subtract_mu_from_sparse import subtract_mu_from_sparse
 from ._expand import _add_m_cols, _add_m_rows
 from ._missing import _missing_patterns
 from ._options import _options
+from ._rms import compute_rms
 
 
 def pca_full(X, ncomp, **kwargs):
