@@ -8,14 +8,14 @@ from datetime import datetime
 import matplotlib.pyplot as plt
 import numpy as np
 import scipy.sparse as sp
-from cf_full import cf_full  # this one
 from converg_check import converg_check  # this one
 from rmempty import rmempty  # this one
 from scipy.io import loadmat, savemat
 from scipy.linalg import orth, subspace_angles
 from scipy.sparse import issparse
-from subtract_mu_from_sparse import subtract_mu_from_sparse
+from subtract_mu_from_sparse import subtract_mu_from_sparse  # this one
 
+from ._cost import compute_full_cost
 from ._expand import _add_m_cols, _add_m_rows
 from ._missing import _missing_patterns
 from ._options import _options
@@ -311,7 +311,7 @@ def pca_full(X, ncomp, **kwargs):
 
         print(f"{datetime.now().isoformat()} - Starting section 24")
         if np.size(opts["cfstop"]) > 0:
-            cost, cost_x, cost_a, cost_mu, cost_s = cf_full(
+            cost, cost_x, cost_a, cost_mu, cost_s = compute_full_cost(
                 X, A, S, Mu, V, Av, Sv, Isv, Muv, Va, Vmu, M, sXv, ndata
             )
             lc["cost"].append(cost)
