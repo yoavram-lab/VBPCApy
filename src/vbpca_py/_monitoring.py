@@ -511,3 +511,35 @@ def display_progress(
     ax2.autoscale_view()
 
     plt.draw()
+
+
+# to do -> edit code below this point to be ruff complinat
+
+
+def _initial_monitoring(
+    X: Matrix,
+    Xprobe: Matrix | None,
+    M: Matrix,
+    ndata: float,
+    nprobe: int,
+    A: np.ndarray,
+    S: np.ndarray,
+    opts: Mapping[str, object],
+) -> tuple[float, np.ndarray, float, dict[str, list[float]], dict[str, Any]]:
+    """Compute initial RMS / probe RMS and set up logging / display."""
+    rms, errMx = compute_rms(X, A, S, M, ndata)
+    if nprobe > 0 and Xprobe is not None:
+        prms, _ = compute_rms(Xprobe, A, S, M, nprobe)
+    else:
+        prms = float("nan")
+
+    lc: dict[str, list[float]] = {
+        "rms": [float(rms)],
+        "prms": [float(prms)],
+        "time": [0.0],
+        "cost": [float("nan")],
+    }
+
+    dsph = display_init(int(opts["display"]), lc)
+    log_first_step(int(opts["verbose"]), float(rms), float(prms))
+    return float(rms), errMx, float(prms), lc, dsph

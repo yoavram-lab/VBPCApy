@@ -8,6 +8,10 @@ This module tests:
 - Pattern-sharing behavior for score covariances
 """
 
+from __future__ import annotations
+
+import re
+
 import numpy as np
 import pytest
 from numpy.testing import assert_allclose
@@ -116,7 +120,7 @@ def test_av_shape_error() -> None:
     shapes = InitShapes(5, 4, 3, 4)
     init_dict = {"Av": np.ones((5, 5))}  # invalid
 
-    with pytest.raises(ValueError, match=ERR_AV_SHAPE):
+    with pytest.raises(ValueError, match=re.escape(ERR_AV_SHAPE)):
         init_params(init_dict, shapes, score_pattern_index=None, rng=_rng())
 
 
@@ -130,7 +134,7 @@ def test_muv_shape_error() -> None:
     shapes = InitShapes(5, 4, 3, 4)
     init_dict = {"Muv": np.ones((5, 2))}  # invalid
 
-    with pytest.raises(ValueError, match=ERR_MUV_SHAPE):
+    with pytest.raises(ValueError, match=re.escape(ERR_MUV_SHAPE)):
         init_params(init_dict, shapes, score_pattern_index=None, rng=_rng())
 
 
@@ -143,7 +147,7 @@ def test_init_invalid_type() -> None:
     """Test that an invalid init type raises a ValueError."""
     shapes = InitShapes(5, 4, 3, 4)
 
-    with pytest.raises(ValueError, match=ERR_INIT_TYPE):
+    with pytest.raises(ValueError, match=re.escape(ERR_INIT_TYPE)):
         init_params(12345, shapes, score_pattern_index=None, rng=_rng())
 
 
@@ -199,7 +203,7 @@ def test_sv_pattern_missing_isv_raises() -> None:
 
     init_dict = {"Sv": np.ones((2, 5))}
 
-    with pytest.raises(ValueError, match=ERR_SV_PATTERN_INDEX):
+    with pytest.raises(ValueError, match=re.escape(ERR_SV_PATTERN_INDEX)):
         init_params(init_dict, shapes, score_pattern_index=None, rng=_rng())
 
 
@@ -211,7 +215,7 @@ def test_sv_pattern_missing_isv_raises() -> None:
 def test_log_first_step(caplog: pytest.LogCaptureFixture) -> None:
     """Test log_first_step output."""
     caplog.set_level("INFO")
-    log_first_step(True, rms=0.5, prms=0.25)
+    log_first_step(1, rms=0.5, prms=0.25)
     assert "Step 0" in caplog.text
     assert "0.500000" in caplog.text
     assert "0.250000" in caplog.text
@@ -221,7 +225,7 @@ def test_log_step(caplog: pytest.LogCaptureFixture) -> None:
     """Test log_step output."""
     caplog.set_level("INFO")
     lc = {"cost": [1.23], "rms": [0.8], "prms": [0.7]}
-    log_step(True, lc, angle_a=0.33)
+    log_step(1, lc, angle_a=0.33)
     assert "Step 0" in caplog.text
     assert "cost = 1.230000" in caplog.text
     assert "rms = 0.800000" in caplog.text
@@ -241,14 +245,14 @@ def test_log_progress(caplog: pytest.LogCaptureFixture) -> None:
 # ------------------------------------------------------------------------------
 
 
-def test_display_init_no_matplotlib(monkeypatch) -> None:
+def test_display_init_no_matplotlib(monkeypatch: pytest.MonkeyPatch) -> None:
     """Test display initialization when matplotlib is not available."""
     # Force matplotlib to be unavailable
     from vbpca_py import _monitoring as mon
 
     monkeypatch.setattr(mon, "plt", None)
 
-    dsph = display_init(True, {"rms": [1, 2], "prms": [3, 4]})
+    dsph = display_init(1, {"rms": [1, 2], "prms": [3, 4]})
     assert dsph == {"display": True}  # only display flag is returned
 
 
@@ -256,12 +260,12 @@ def test_display_init_with_matplotlib() -> None:
     """Test display initialization when matplotlib is available."""
     # Only assert that handles exist, *not* pixel values.
     try:
-        import matplotlib.pyplot as plt  # noqa: F401
+        import matplotlib.pyplot as plt  # noqa: F401, PLC0415
     except ImportError:
         pytest.skip("matplotlib not installed")
 
     lc = {"rms": [1, 2, 3], "prms": [2, 4, 6]}
-    dsph = display_init(True, lc)
+    dsph = display_init(1, lc)
 
     assert dsph["display"] is True
     assert "fig" in dsph
@@ -269,14 +273,13 @@ def test_display_init_with_matplotlib() -> None:
     assert "prms" in dsph
 
 
-def test_display_progress_smoke(monkeypatch) -> None:
+def test_display_progress_smoke() -> None:
     """Test display progress when matplotlib is available."""
-    # Smoke test: should not crash
     try:
         import matplotlib.pyplot as plt  # noqa: F401, PLC0415
     except ImportError:
         pytest.skip("matplotlib not installed")
 
     lc = {"rms": [1, 2, 3], "prms": [2, 4, 6]}
-    dsph = display_init(True, lc)
+    dsph = display_init(1, lc)
     display_progress(dsph, lc)

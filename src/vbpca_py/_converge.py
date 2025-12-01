@@ -1,11 +1,51 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
 import numpy as np
+from scipy.linalg import subspace_angles
+from scipy.sparse import issparse, spmatrix
+
+from ._cost import CostParams, compute_full_cost
+from ._monitoring import display_progress
+
+Array = np.ndarray
+Sparse = spmatrix
+Matrix = Array | Sparse
+
+
+@dataclass
+class ConvergenceState:
+    """State used when logging and checking convergence criteria.
+
+    This helper is mostly about monitoring and could be moved to
+    :mod:`vbpca_py._monitoring` if you prefer to keep all logging logic
+    in one place.
+    """
+
+    opts: MutableMapping[str, object]
+    x_data: Matrix
+    a: np.ndarray
+    s: np.ndarray
+    mu: np.ndarray
+    noise_var: float
+    va: np.ndarray
+    av: list[np.ndarray]
+    vmu: float
+    muv: np.ndarray
+    sv: list[np.ndarray]
+    pattern_index: np.ndarray | None
+    mask: Matrix
+    s_xv: float
+    n_data: float
+    time_start: float
+    lc: dict[str, list[float]]
+    a_old: np.ndarray
+    dsph: dict[str, object]
 
 
 def convergence_check(
@@ -135,3 +175,51 @@ def convergence_check(
         )
 
     return ""
+
+
+def _log_and_check_convergence(
+    state: ConvergenceState,
+    rms: float,
+    prms: float,
+) -> tuple[dict[str, list[float]], float, str, np.ndarray]:
+    """Update learning curves, compute cost (if requested), and check convergence."""
+    verbose = int(state.opts["verbose"])
+    elapsed = time.time() - state.time_start
+    state.lc["rms"].append(float(rms))
+    state.lc["prms"].append(float(prms))
+    state.lc["time"].append(float(elapsed))
+
+    if np.size(state.opts["cfstop"]) > 0:
+        mask_arr = (
+            state.mask.toarray().astype(bool)  # type: ignore[union-attr]
+            if issparse(state.mask)
+            else state.mask.astype(bool)
+        )
+
+        params = CostParams(
+            mu=state.mu.ravel(),
+            noise_variance=float(state.noise_var),
+            loading_priors=state.va,
+            loading_covariances=state.av if state.av else None,
+            mu_prior_variance=float(state.vmu),
+            mu_variances=state.muv.ravel() if state.muv.size > 0 else None,
+            score_covariances=state.sv,
+            score_pattern_index=state.pattern_index,
+            mask=mask_arr,
+            s_xv=float(state.s_xv),
+            n_data=int(state.n_data),
+        )
+        cost, *_ = compute_full_cost(state.x_data, state.a, state.s, params)
+        state.lc["cost"].append(float(cost))
+    else:
+        state.lc["cost"].append(float("nan"))
+
+    display_progress(state.dsph, state.lc)
+
+    angles = subspace_angles(state.a, state.a_old)
+    angle_a = float(np.max(angles))
+    log_step(verbose, state.lc, angle_a)
+
+    convmsg = convergence_check(state.opts, state.lc, angle_a)
+    a_old_new = state.a.copy()
+    return state.lc, angle_a, convmsg, a_old_new

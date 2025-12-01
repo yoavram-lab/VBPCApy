@@ -18,9 +18,7 @@ def test_dense_no_empty_rows_or_columns() -> None:
         "Sv": [np.eye(2), np.eye(2)],
     }
 
-    x_out, x_probe_out, ir, ic, init_out = remove_empty_entries(
-        x, x_probe, init, verbose=0
-    )
+    x_out, x_probe_out, ir, ic, init_out = remove_empty_entries(x, x_probe, init)
 
     # Indices should cover all rows/cols
     assert np.array_equal(ir, np.array([0, 1]))
@@ -69,9 +67,7 @@ def test_dense_remove_empty_rows_and_columns() -> None:
         "Sv": list(sv),
     }
 
-    x_out, x_probe_out, ir, ic, init_out = remove_empty_entries(
-        x, x_probe, init, verbose=0
-    )
+    x_out, x_probe_out, ir, ic, init_out = remove_empty_entries(x, x_probe, init)
 
     # We expect to keep rows 0 and 2, and columns 0 and 2.
     assert np.array_equal(ir, np.array([0, 2]))
@@ -134,9 +130,7 @@ def test_sparse_remove_empty_rows_and_columns() -> None:
     av_orig = list(init["Av"])
     sv_orig = list(init["Sv"])
 
-    x_out, x_probe_out, ir, ic, init_out = remove_empty_entries(
-        x, x_probe, init, verbose=0
-    )
+    x_out, x_probe_out, ir, ic, init_out = remove_empty_entries(x, x_probe, init)
 
     # Keep rows 0 and 2, columns 0 and 3
     assert np.array_equal(ir, np.array([0, 2]))
@@ -170,7 +164,7 @@ def test_init_non_dict_is_passed_through() -> None:
     x_probe = None
     init = 42  # arbitrary non-dict
 
-    _, _, ir, ic, init_out = remove_empty_entries(x, x_probe, init, verbose=0)
+    _, _, ir, ic, init_out = remove_empty_entries(x, x_probe, init)
 
     # Here both rows and both cols have at least one non-NaN entry.
     assert np.array_equal(ir, np.array([0, 1]))
@@ -184,9 +178,7 @@ def test_x_probe_none_is_preserved() -> None:
     x_probe = None
     init = None
 
-    x_out, x_probe_out, ir, ic, init_out = remove_empty_entries(
-        x, x_probe, init, verbose=0
-    )
+    x_out, x_probe_out, ir, ic, init_out = remove_empty_entries(x, x_probe, init)
 
     # Row 1 is empty, col 0 has only NaN, so we keep only the (0,1) entry.
     assert np.array_equal(ir, np.array([0]))

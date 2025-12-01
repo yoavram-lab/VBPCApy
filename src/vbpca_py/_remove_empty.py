@@ -65,26 +65,35 @@ def _slice_matrix_like(
     slice_rows = ir.size < n_rows_orig
     slice_cols = ic.size < n_cols_orig
 
+    # Nothing to slice
     if not slice_rows and not slice_cols:
         return mat
 
-    if sp.isspmatrix(mat):
-        if slice_rows and slice_cols:
-            return mat[ir[:, None], ic]  # type: ignore[index]
-        if slice_rows:
-            return mat[ir, :]  # type: ignore[index]
-        if slice_cols:
-            return mat[:, ic]  # type: ignore[index]
-        return mat
+    result: Matrix
 
+    if sp.isspmatrix(mat):
+        # For sparse matrices, preserve sparsity:
+        # - using ir[:, None] & ic for row+col selection
+        #   keeps CSR instead of densifying.
+        if slice_rows and slice_cols:
+            result = mat[ir[:, None], ic]  # type: ignore[index]
+        elif slice_rows:
+            result = mat[ir, :]  # type: ignore[index]
+        elif slice_cols:
+            result = mat[:, ic]  # type: ignore[index]
+        else:  # safety fallback, though logically unreachable
+            result = mat
     # Dense ndarray
-    if slice_rows and slice_cols:
-        return mat[np.ix_(ir, ic)]
-    if slice_rows:
-        return mat[ir, :]
-    if slice_cols:
-        return mat[:, ic]
-    return mat
+    elif slice_rows and slice_cols:
+        result = mat[np.ix_(ir, ic)]
+    elif slice_rows:
+        result = mat[ir, :]
+    elif slice_cols:
+        result = mat[:, ic]
+    else:  # safety fallback
+        result = mat
+
+    return result
 
 
 def _update_init_dict(
@@ -133,7 +142,6 @@ def remove_empty_entries(
     x: Matrix,
     x_probe: Matrix | None,
     init: InitType,
-    verbose: int = 0,
 ) -> tuple[Matrix, Matrix | None, np.ndarray, np.ndarray, InitType]:
     """Remove rows and columns that are entirely empty and update ``init``.
 
@@ -144,8 +152,6 @@ def remove_empty_entries(
             Optional probe matrix sliced identically to ``x``.
         init:
             Optional initialization dictionary to update.
-        verbose:
-            If non-zero, prints summary of removed rows/columns.
 
     Returns:
         x_out, x_probe_out, ir, ic, init_out
@@ -157,20 +163,11 @@ def remove_empty_entries(
 
     # Fast path: nothing to remove
     if ir.size == n_rows_orig and ic.size == n_cols_orig:
-        if verbose:
-            print("No empty rows or columns")
         return x, x_probe, ir, ic, init
 
     # Slice data
     x_out = _slice_matrix_like(x, ir, ic, n_rows_orig, n_cols_orig)
     x_probe_out = _slice_matrix_like(x_probe, ir, ic, n_rows_orig, n_cols_orig)
-
-    # Report
-    if verbose:
-        print(
-            f"{n_rows_orig - ir.size} empty rows and "
-            f"{n_cols_orig - ic.size} empty columns removed"
-        )
 
     # Update init dictionary
     init_out = _update_init_dict(init, ir, ic, n_rows_orig, n_cols_orig)

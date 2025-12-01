@@ -1,37 +1,338 @@
-# Performs probabilistic PCA (principal component analysis) on input data with missing values, supporting various algorithms and priors.
-# Gets input data matrix (X), number of components (ncomp), and optional keyword arguments for configurations and options.
-# Returns a dictionary containing trained parameters (`A`, `S`, `Mu`, `V`, etc.), convergence logs (`lc`), and other auxiliary results.
+# src/vbpca_py/pca_full.py
 
+from __future__ import annotations
+
+import logging
 import time
-from datetime import datetime
+from typing import TYPE_CHECKING, Any
 
-import matplotlib.pyplot as plt
 import numpy as np
-from scipy.io import loadmat, savemat
-from scipy.linalg import orth, subspace_angles
-from scipy.sparse import issparse
 
-from ._converge import convergence_check
-from ._cost import compute_full_cost
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+from scipy.sparse import spmatrix
+
 from ._expand import _add_m_cols, _add_m_rows
-from ._mean import subtract_mu
-from ._missing import _missing_patterns
+from ._monitoring import (
+    _initial_monitoring,
+)
 from ._options import _options
-from ._rms import compute_rms
-from ._rotate import rotate_to_pca
+
+logger = logging.getLogger(__name__)
+
+Array = np.ndarray
+Sparse = spmatrix
+Matrix = Array | Sparse
 
 
-def pca_full(X, ncomp, **kwargs):
-    print("in pca full", flush=True)
-    print(f"{datetime.now().isoformat()} - Starting section 3")
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
 
-    opts = {
+
+def pca_full(x: Matrix, n_components: int, **kwargs: object) -> dict[str, Any]:
+    """Variational Bayesian PCA with full posterior covariances (VBPCA).
+
+    This is an idiomatic Python translation of Ilin & Raiko's PCA_FULL
+    (JMLR 2010). It supports dense and sparse inputs with missing values,
+    MAP/VB/PPCA variants, and optional uniqueness of score covariances.
+
+    Parameters
+    ----------
+    x :
+        Data matrix of shape (n_features, n_samples). May be a NumPy
+        array (with NaNs marking missing values) or a SciPy sparse
+        matrix with only observed values stored (zeros are treated as
+        missing unless explicitly set to eps by the caller).
+    n_components :
+        Number of latent components.
+
+    Other Parameters (via **kwargs)
+    --------------------------------
+    init : {"random", dict, str}, optional
+        Initialization. "random" uses random orthogonal loadings;
+        a dict is passed to the initializer; a string is treated as a
+        MATLAB .mat filename (if supported by your init code).
+    maxiters : int, optional
+        Maximum number of iterations (default 1000).
+    algorithm : {"vb", "map", "ppca"}, optional
+        Inference scheme: variational Bayes (default), MAP, or PPCA.
+    bias : bool, optional
+        Whether to estimate a bias/mean term (default True).
+    uniquesv : bool, optional
+        Whether to compute only unique covariance matrices for scores.
+    xprobe : array-like, optional
+        Probe/validation data of the same shape as x.
+    rotate2pca : bool, optional
+        If True, apply rotation towards PCA basis each iteration.
+        If False, rotate once at the end.
+    verbose : int, optional
+        Verbosity level for logging (0, 1, or 2).
+    display : int, optional
+        If non-zero and matplotlib is available, show RMS plots.
+    autosave : float, optional
+        Accepted for compatibility but ignored (no .mat autosaving).
+    filename : str, optional
+        Accepted for compatibility but ignored.
+    niter_broadprior : int, optional
+        Number of iterations before hyperprior updates.
+
+    Returns:
+    -------
+    result : dict
+        Dictionary with keys:
+        - "A", "S", "Mu", "V", "Av", "Sv", "Isv", "Muv"
+        - "Va", "Vmu", "lc"
+        - "cv": {"A", "S", "Isv", "Mu"}
+        - "hp": {"Va", "Vmu"}
+    """
+    opts = _build_options(kwargs)
+    use_prior, use_postvar = _select_algorithm(opts)
+
+    X, Xprobe, n1x, n2x, Ir, Ic = _prepare_data(x, opts)
+    M, Mprobe, Nobs_i, ndata, nprobe = _build_masks_and_counts(X, Xprobe, opts)
+    IX, JX = _observed_indices(X)
+
+    n1, n2 = X.shape
+    nobscomb, obscombj, Isv_use = _missing_patterns_info(M, opts, n2)
+
+    (
+        A,
+        S,
+        Mu,
+        V,
+        Av,
+        Sv,
+        Muv,
+        Va,
+        Vmu,
+        X,
+        Xprobe,
+    ) = _initialize_parameters(
+        X=X,
+        Xprobe=Xprobe,
+        M=M,
+        Nobs_i=Nobs_i,
+        n1=n1,
+        n2=n2,
+        n_components=n_components,
+        nobscomb=nobscomb,
+        Isv_use=Isv_use,
+        use_prior=use_prior,
+        use_postvar=use_postvar,
+        opts=opts,
+    )
+
+    # Initial RMS / logging state
+    rms, errMx, prms, lc, dsph = _initial_monitoring(
+        X, Xprobe, M, ndata, nprobe, A, S, opts
+    )
+    Aold = A.copy()
+
+    # Hyperparams for Va, Vmu, V
+    hpVa = 0.001
+    hpVb = 0.001
+    hpV = 0.001
+
+    time_start = time.time()
+    verbose = int(opts["verbose"])
+    rotate_each_iter = int(opts["rotate2pca"])
+    eye_components = np.eye(n_components, dtype=float)
+
+    # ------------------------------------------------------------------
+    # Main EM / VB loop
+    # ------------------------------------------------------------------
+    for iteration in range(1, int(opts["maxiters"]) + 1):
+        Va, Vmu = _update_hyperpriors(
+            iteration=iteration,
+            use_prior=use_prior,
+            niter_broadprior=int(opts["niter_broadprior"]),
+            bias=bool(opts["bias"]),
+            Mu=Mu,
+            Muv=Muv,
+            A=A,
+            Av=Av,
+            n1=n1,
+            hpVa=hpVa,
+            hpVb=hpVb,
+            Va=Va,
+            Vmu=Vmu,
+        )
+
+        Mu, Muv, X, Xprobe = _update_bias(
+            bias=bool(opts["bias"]),
+            Mu=Mu,
+            Muv=Muv,
+            V=V,
+            Vmu=Vmu,
+            Nobs_i=Nobs_i,
+            errMx=errMx,
+            X=X,
+            Xprobe=Xprobe,
+            M=M,
+            Mprobe=Mprobe,
+        )
+
+        A, S, Sv = _update_scores(
+            X=X,
+            M=M,
+            A=A,
+            S=S,
+            Av=Av,
+            Sv=Sv,
+            Isv_use=Isv_use,
+            obscombj=obscombj,
+            V=V,
+            eye_components=eye_components,
+            verbose=verbose,
+        )
+
+        if rotate_each_iter:
+            A, Av, S, Sv, Mu, X, Xprobe = _maybe_rotate(
+                A=A,
+                Av=Av,
+                S=S,
+                Sv=Sv,
+                Isv_use=Isv_use,
+                obscombj=obscombj,
+                bias=bool(opts["bias"]),
+                X=X,
+                Xprobe=Xprobe,
+                M=M,
+                Mprobe=Mprobe,
+            )
+
+        A, Av = _update_loadings(
+            X=X,
+            M=M,
+            S=S,
+            Av=Av,
+            Sv=Sv,
+            Isv_use=Isv_use,
+            Va=Va,
+            V=V,
+            verbose=verbose,
+        )
+
+        rms, prms, errMx = _recompute_rms(
+            X=X,
+            Xprobe=Xprobe,
+            M=M,
+            Mprobe=Mprobe,
+            ndata=ndata,
+            nprobe=nprobe,
+            A=A,
+            S=S,
+        )
+
+        V, sXv = _update_noise_variance(
+            V=V,
+            A=A,
+            S=S,
+            Av=Av,
+            Sv=Sv,
+            Muv=Muv,
+            rms=rms,
+            IX=IX,
+            JX=JX,
+            Isv_use=Isv_use,
+            ndata=ndata,
+        )
+
+        lc, angleA, convmsg, Aold = _log_and_check_convergence(
+            opts=opts,
+            X=X,
+            A=A,
+            S=S,
+            Mu=Mu,
+            V=V,
+            Va=Va,
+            Av=Av,
+            Vmu=Vmu,
+            Muv=Muv,
+            Sv=Sv,
+            Isv_use=Isv_use,
+            M=M,
+            sXv=sXv,
+            ndata=ndata,
+            time_start=time_start,
+            lc=lc,
+            rms=rms,
+            prms=prms,
+            Aold=Aold,
+            dsph=dsph,
+        )
+
+        if convmsg:
+            if use_prior and iteration <= int(opts["niter_broadprior"]):
+                # Prior never updated: ignore convergence and continue
+                pass
+            else:
+                if verbose:
+                    logger.info("%s", convmsg)
+                break
+
+    # ------------------------------------------------------------------
+    # Final PCA rotation (if not rotated during iterations)
+    # ------------------------------------------------------------------
+    if not rotate_each_iter:
+        A, Av, S, Sv, Mu = _final_rotation(
+            A=A,
+            Av=Av,
+            S=S,
+            Sv=Sv,
+            Mu=Mu,
+            Isv_use=Isv_use,
+            obscombj=obscombj,
+            bias=bool(opts["bias"]),
+        )
+
+    # ------------------------------------------------------------------
+    # Restore removed rows/columns (add missing rows/cols back)
+    # ------------------------------------------------------------------
+    if n1 < n1x:
+        A, Av = _add_m_rows(A, Av, Ir, n1x, Va)
+        Mu, Muv = _add_m_rows(Mu, Muv, Ir, n1x, Vmu)
+    if n2 < n2x:
+        S, Sv, Isv_use = _add_m_cols(S, Sv, Ic, n2x, Isv_use)
+
+    # ------------------------------------------------------------------
+    # Pack result
+    # ------------------------------------------------------------------
+    result: dict[str, Any] = {
+        "A": A,
+        "S": S,
+        "Mu": Mu,
+        "V": float(V),
+        "Av": Av,
+        "Sv": Sv,
+        "Isv": Isv_use,
+        "Muv": Muv,
+        "Va": Va,
+        "Vmu": float(Vmu),
+        "lc": lc,
+        # Posterior covariances / variances, grouped:
+        "cv": {"A": Av, "S": Sv, "Isv": Isv_use, "Mu": Muv},
+        "hp": {"Va": Va, "Vmu": float(Vmu)},
+    }
+
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Helper functions
+# ---------------------------------------------------------------------------
+
+
+def _build_options(kwargs: Mapping[str, object]) -> dict[str, object]:
+    """Merge user kwargs with defaults using _options (case-insensitive)."""
+    opts_default: dict[str, object] = {
         "init": "random",
         "maxiters": 1000,
         "bias": 1,
         "uniquesv": 0,
-        "autosave": 600,
-        "filename": "pca_f_autosave",
+        "autosave": 600,  # accepted but ignored
+        "filename": "pca_f_autosave",  # accepted but ignored
         "minangle": 1e-8,
         "algorithm": "vb",
         "niter_broadprior": 100,
@@ -43,590 +344,20 @@ def pca_full(X, ncomp, **kwargs):
         "rotate2pca": 1,
         "display": 0,
     }
-    print(f"{datetime.now().isoformat()} - Starting section 4")
 
-    opts, wrnmsg = _options(opts, **kwargs)
-    print(f"{datetime.now().isoformat()} - Starting section 5")
-
+    opts, wrnmsg = _options(opts_default, **kwargs)
     if wrnmsg:
-        print(f"warning: {wrnmsg}")
-
-    algorithmVal = opts["algorithm"]
-    if algorithmVal == "ppca":
-        use_prior = False
-        use_postvar = False
-    elif algorithmVal == "map":
-        use_prior = True
-        use_postvar = False
-    elif algorithmVal == "vb":
-        use_prior = True
-        use_postvar = True
-    else:
-        raise ValueError(f"Wrong value if the argument 'algorithm': {algorithmVal}")
-
-    Xprobe = opts["xprobe"]
-    print(f"{datetime.now().isoformat()} - Starting section 6")
-
-    n1x, n2x = X.shape
-    X, Xprobe, Ir, Ic, opts["init"] = rmempty(X, Xprobe, opts["init"], opts["verbose"])
-    print(f"{datetime.now().isoformat()} - Starting section 7")
-
-    n1, n2 = X.shape
-    [n1x, n2x] = X.shape
-
-    # Handle the case where X is sparse
-    if issparse(X):
-        M = (X != 0).astype(float)
-        if Xprobe is not None:
-            Mprobe = (Xprobe != 0).astype(float)
-        else:
-            Mprobe = None
-
-    else:
-        M = ~np.isnan(X)
-        if Xprobe is not None:
-            Mprobe = ~np.isnan(Xprobe)
-        else:
-            Mprobe = None
-
-        X[X == 0] = np.finfo(float).eps  # Replace zeros with a small number
-
-        if Xprobe is not None:
-            Xprobe[Xprobe == 0] = np.finfo(float).eps
-            Xprobe[np.isnan(Xprobe)] = 0
-
-        X[np.isnan(X)] = 0  # Replace NaNs with 0
-
-    # Compute the number of observed (non-missing) values in each row of X
-    Nobs_i = np.sum(M, axis=1)
-    ndata = np.sum(Nobs_i)
-
-    # Compute the number of observed values in the probe data (Xprobe)
-    if issparse(Mprobe):
-        nprobe = Mprobe.count_nonzero()
-    else:
-        nprobe = np.count_nonzero(Mprobe)
-    # If no observed values in Xprobe, set it to empty and disable early stopping
-    if nprobe == 0:
-        Xprobe = np.array([])
-        opts["earlystop"] = 0
-
-    IX, JX = np.nonzero(X)
-    print(f"{datetime.now().isoformat()} - Starting section 8")
-
-    # Compute indices Isv: Sv[Isv[j]] gives Sv for j, j=1...n2
-    if opts["uniquesv"]:
-        nobscomb, obscombj, Isv = _missing_patterns(M, opts["verbose"])
-    else:
-        nobscomb = n2
-        Isv = []
-        obscombj = {}
-    print(f"{datetime.now().isoformat()} - Starting section 9")
-
-    A, S, Mu, V, Av, Sv, Muv = init_parms(opts["init"], n1, n2, ncomp, nobscomb, Isv)
-    print(f"{datetime.now().isoformat()} - Starting section 10")
-
-    if use_prior:
-        Va = 1000 * np.ones((1, ncomp))
-        Vmu = 1000
-    else:
-        Va = np.full(ncomp, np.inf)
-        Vmu = np.inf
-
-    if not use_postvar:
-        Muv = np.array([])
-        Av = []
-
-    if not opts["bias"]:
-        Muv = np.array([])
-        Vmu = 0
-
-    if np.size(Mu) == 0:
-        if opts["bias"]:
-            Mu = (np.sum(X, axis=1) / Nobs_i).reshape(-1, 1)  # Shape: (n1, 1)
-        else:
-            Mu = np.zeros((n1, 1))
-
-    print(f"{datetime.now().isoformat()} - Starting section 11")
-
-    X, Xprobe = subtract_mu(Mu, X, M, Xprobe, Mprobe, opts["bias"])
-    print(f"{datetime.now().isoformat()} - Starting section 12")
-
-    rms, errMx = compute_rms(X, A, S, M, ndata)
-    print(f"{datetime.now().isoformat()} - Starting section 13")
-    prms, _ = compute_rms(Xprobe, A, S, Mprobe, nprobe)
-    print(f"{datetime.now().isoformat()} - Starting section 14")
-
-    lc = {"rms": [rms], "prms": [prms], "time": [0], "cost": [np.nan]}
-
-    dsph = display_init(opts["display"], lc)
-    print_first_step(opts["verbose"], rms, prms)
-    Aold = A.copy()
-
-    # Parameters of the prior for variance parameters
-    hpVa = 0.001
-    hpVb = 0.001
-    hpV = 0.001
-
-    time_start = time.time()
-    time_autosave = time_start
-    tic = time.time()
-
-    print(f"{datetime.now().isoformat()} - Starting section 15")
-    total = max(range(1, opts["maxiters"] + 1))
-    for iter in range(1, opts["maxiters"] + 1):
-        print(f"iteration {iter} out of {total}")
-        if use_prior and iter > opts["niter_broadprior"]:
-            # Update Va and Vmu
-            if opts["bias"]:
-                Vmu = np.sum(Mu**2)
-                if Muv.size > 0:
-                    Vmu = Vmu + np.sum(Muv)
-                Vmu = (Vmu + 2 * hpVa) / (n1 + 2 * hpVb)
-            Va = np.sum(A**2, axis=0)
-            if Av:
-                for i in range(n1):
-                    Va = Va + np.diag(Av[i])
-            Va = (Va + 2 * hpVa) / (n1 + 2 * hpVb)
-
-        if opts["bias"]:
-            dMu = np.sum(errMx, axis=1) / Nobs_i  # Shape: (n1,)
-            if Muv.size > 0:
-                Muv = V / (Nobs_i + V / Vmu)  # Shape: (n1,)
-            th = 1 / (1 + V / (Nobs_i * Vmu))  # Shape: (n1,)
-            th = th.reshape(-1, 1)  # Shape: (n1, 1)
-
-            # Reshape dMu to (n1, 1)
-            dMu = dMu.reshape(-1, 1)  # Shape: (n1, 1)
-
-            Mu_old = Mu.copy()
-            Mu = th * (Mu + dMu)
-            dMu = Mu - Mu_old  # Shape: (n1,1)
-            X, Xprobe = subtract_mu(dMu, X, M, Xprobe, Mprobe, update_bias=True)
-
-        print(f"{datetime.now().isoformat()} - Starting section 17")
-        # Update S
-        print("update S", flush=True)
-        if not Isv:
-            for j in range(n2):
-                # print(j, "out of ", range(n2), flush=True)
-                A_j = (M[:, j][:, np.newaxis]) * A
-                Psi = A_j.T @ A_j + np.diag(np.full(ncomp, V))
-                if Av:
-                    for i in np.where(M[:, j])[0]:
-                        Psi = Psi + Av[i]
-                invPsi = np.linalg.inv(Psi)
-                S[:, j] = invPsi @ A_j.T @ X[:, j]
-                Sv[j] = V * invPsi
-                print_progress(opts["verbose"], j + 1, n2, "Updating S:")
-        else:
-            for k in range(nobscomb):
-                j = obscombj[k][0]
-                A_j = (M[:, j][:, np.newaxis]) * A
-                Psi = A_j.T @ A_j + np.diag(np.full(ncomp, V))
-                if Av:
-                    for i in np.where(M[:, j])[0]:
-                        Psi = Psi + Av[i]
-                invPsi = np.linalg.inv(Psi)
-                Sv[k] = V * invPsi
-                tmp = invPsi @ A_j.T
-                for j_idx in obscombj[k]:
-                    S[:, j_idx] = tmp @ X[:, j_idx]
-
-                print_progress(opts["verbose"], k + 1, nobscomb, "Updating S:")
-        print(f"{datetime.now().isoformat()} - Starting section 18")
-
-        if opts["verbose"] == 2:
-            print("\r", end="")
-
-        print(f"{datetime.now().isoformat()} - Starting section 19")
-        if opts["rotate2pca"]:
-            dMu, A, Av, S, Sv = rotate_to_pca(A, Av, S, Sv, Isv, obscombj, opts["bias"])
-            print(f"{datetime.now().isoformat()} - Starting section 20")
-            if opts["bias"]:
-                X, Xprobe = subtract_mu(dMu, X, M, Xprobe, Mprobe, update_bias=True)
-                Mu = Mu + dMu
-        print(f"{datetime.now().isoformat()} - Starting section 21")
-        # Update A
-        print("Update A", flush=True)
-        if opts["verbose"] == 2:
-            print("\r", end="")
-        for i in range(n1):
-            S_i = (M[i, :][np.newaxis, :]) * S
-            Phi = S_i @ S_i.T + np.diag(V / Va)
-            for j_idx in np.where(M[i, :])[0]:
-                if Isv:
-                    Phi = Phi + Sv[Isv[j_idx]]
-                else:
-                    Phi = Phi + Sv[j_idx]
-            invPhi = np.linalg.inv(Phi)
-            A[i, :] = X[i, :] @ S_i.T @ invPhi
-
-            if Av:
-                Av[i] = V * invPhi
-
-            print_progress(opts["verbose"], i + 1, n1, "Updating A:")
-        if opts["verbose"] == 2:
-            print("\r", end="")
-
-        rms, errMx = compute_rms(X, A, S, M, ndata)
-        prms = compute_rms(Xprobe, A, S, Mprobe, nprobe) if nprobe > 0 else np.nan
-
-        print(f"{datetime.now().isoformat()} - Starting section 22")
-        # Update V
-        print("Update V", flush=True)
-        sXv = 0
-        print(f"iterations number: {max(range(ndata))}")
-        if not Isv:
-            for r in range(ndata):
-                i = IX[r]
-                j = JX[r]
-                a_i = A[i, :].reshape(1, -1)  # Shape (1, ncomp)
-                sXv += (a_i @ Sv[j] @ a_i.T).item()
-                if Av:
-                    s_j = S[:, j].reshape(-1, 1)  # Shape (ncomp, 1)
-                    sXv += (s_j.T @ Av[i] @ s_j).item() + np.sum(Sv[j] * Av[i])
-        else:
-            for r in range(ndata):
-                i = IX[r]
-                j = JX[r]
-                a_i = A[i, :].reshape(1, -1)  # Shape (1, ncomp)
-                sXv += (a_i @ Sv[Isv[j]] @ a_i.T).item()
-                if Av:
-                    s_j = S[:, j].reshape(-1, 1)  # Shape (ncomp, 1)
-                    sXv += (s_j.T @ Av[i] @ s_j).item() + np.sum(Sv[Isv[j]] * Av[i])
-        print(f"{datetime.now().isoformat()} - Starting section 23")
-        if Muv.size > 0:
-            sXv += np.sum(Muv[IX])
-
-        sXv = sXv + (rms**2) * ndata
-
-        V = (sXv + 2 * hpV) / (ndata + 2 * hpV)
-
-        t = time.time() - tic
-        lc["rms"].append(rms)
-        lc["prms"].append(prms)
-        lc["time"].append(t)
-
-        print(f"{datetime.now().isoformat()} - Starting section 24")
-        if np.size(opts["cfstop"]) > 0:
-            cost, cost_x, cost_a, cost_mu, cost_s = compute_full_cost(
-                X, A, S, Mu, V, Av, Sv, Isv, Muv, Va, Vmu, M, sXv, ndata
-            )
-            lc["cost"].append(cost)
-        print(f"{datetime.now().isoformat()} - Starting section 25")
-        display_progress(dsph, lc)
-        angles = subspace_angles(A, Aold)
-        angleA = np.max(angles)
-        print_step(opts["verbose"], lc, angleA)
-        print(f"{datetime.now().isoformat()} - Starting section 26")
-        convmsg = convergence_check(opts, lc, angleA)
-        if convmsg:
-            if use_prior and iter <= opts["niter_broadprior"]:
-                pass
-            elif opts["verbose"]:
-                print(f"{convmsg}")
-            break
-        Aold = A.copy()
-        print(f"{datetime.now().isoformat()} - Starting section 27")
-        current_time = time.time()
-        if (current_time - time_autosave) > opts["autosave"]:
-            time_autosave = current_time
-            if opts["verbose"] == 2:
-                print("Saving ... ", end="")
-            try:
-                savemat(
-                    opts["filename"],
-                    {
-                        "A": A,
-                        "S": S,
-                        "Mu": Mu,
-                        "V": V,
-                        "Av": Av,
-                        "Muv": Muv,
-                        "Sv": Sv,
-                        "Isv": Isv,
-                        "Va": Va,
-                        "Vmu": Vmu,
-                        "lc": lc,
-                        "Ir": Ir,
-                        "Ic": Ic,
-                        "n1x": n1x,
-                        "n2x": n2x,
-                        "n1": n1,
-                        "n2": n2,
-                    },
-                )
-                if opts["verbose"] == 2:
-                    print("done")
-            except Exception as e:
-                if opts["verbose"]:
-                    print(f"Error saving to {opts['filename']}: {e}")
-
-    print(f"{datetime.now().isoformat()} - Starting section 28")
-    # Finally rotate to the PCA solution
-    if not opts["rotate2pca"]:
-        dMu, A, Av, S, Sv = rotate_to_pca(A, Av, S, Sv, Isv, obscombj, opts["bias"])
-        if opts["bias"]:
-            Mu = Mu + dMu
-    print(f"{datetime.now().isoformat()} - Starting section 29")
-    if n1 < n1x:
-        A, Av = _add_m_rows(A, Av, Ir, n1x, Va)
-        Mu, Muv = _add_m_rows(Mu, Muv, Ir, n1x, Vmu)
-    if n2 < n2x:
-        S, Sv, Isv = _add_m_cols(S, Sv, Ic, n2x, Isv)
-
-    result = {
-        "A": A,
-        "S": S,
-        "Mu": Mu,
-        "V": V,
-        "Av": Av,
-        "Sv": Sv,
-        "Isv": Isv,
-        "Muv": Muv,
-        "Va": Va,
-        "Vmu": Vmu,
-        "lc": lc,
-        "cv": {"A": Av, "S": Sv, "Isv": Isv, "Mu": Muv},
-        "hp": {"Va": Va, "Vmu": Vmu},
-    }
-
-    print(f"{datetime.now().isoformat()} - Starting section 30")
-    return result
-
-
-##############################################################################################
-# Initializes the parameters (`A`, `S`, `Mu`, etc.) for probabilistic PCA based on a provided initialization method or file, ensuring defaults for missing values.
-# Gets the initialization method or file (`init`), dimensions of the data (`n1`, `n2`), number of components (`ncomp`), number of observation combinations (`nobscomb`), and indices of covariance matrices (`Isv`).
-# Returns initialized parameters: loading matrix (`A`), component matrix (`S`), mean vector (`Mu`), variance scalar (`V`), loading covariance (`Av`), component covariance (`Sv`), and mean covariance (`Muv`).
-
-
-def init_parms(init, n1, n2, ncomp, nobscomb, Isv):
-    print("in init_parms", flush=True)
-    if isinstance(init, str):
-        if init.lower() == "random":
-            init = {}
-        else:
-            # Load parameters from a .mat file
-            mat_data = loadmat(init)
-            init = mat_data.get("init", {})
-
-    # If 'init' is a dictionary
-    if isinstance(init, dict):
-        if "A" in init:
-            A = init["A"]
-        else:
-            A = orth(np.random.randn(n1, ncomp))
-
-        if "Av" in init and init["Av"] is not None and init["Av"].size != 0:
-            if isinstance(init["Av"], list):
-                Av = init["Av"]
-            else:
-                Av = []
-                for i in range(n1):
-                    Av.append(np.diag(init["Av"][i, :]))
-        else:
-            # Default Av as list of identity matrices
-            Av = [np.eye(ncomp) for _ in range(n1)]
-
-        Mu = init.get("Mu", np.array([]))
-        Muv = init.get("Muv", np.ones((n1, 1)))
-        V = init.get("V", 1)
-        S = init.get("S", np.random.randn(ncomp, n2))
-
-        if "Sv" in init and init["Sv"] is not None and np.size(init["Sv"]) > 0:
-            if nobscomb < n2:
-                # Get unique elements and their first indices
-                B, I = np.unique(Isv, return_index=True)
-                if not isinstance(init["Sv"], list):
-                    Sv = []
-                    for j in range(nobscomb):
-                        Sv.append(np.diag(init["Sv"][:, Isv[I[j]]]))
-                elif init.get("Isv"):
-                    Sv = [init["Sv"][i] for i in init["Isv"][I]]
-                else:
-                    Sv = [init["Sv"][Isv[I[j]]] for j in range(nobscomb)]
-            elif not isinstance(init["Sv"], list):
-                Sv = []
-                for j in range(n2):
-                    Sv.append(np.diag(init["Sv"][:, j]))
-            elif init.get("Isv"):
-                Sv = [init["Sv"][i] for i in init["Isv"]]
-            elif len(init["Sv"]) == n2:
-                Sv = init["Sv"]
-            else:
-                Sv = []
-        else:
-            Sv = [np.eye(ncomp) for _ in range(nobscomb)]
-    else:
-        # If 'init' is neither str nor dict, raise an error
-        raise ValueError("init must be either a string or a dictionary.")
-
-    return A, S, Mu, V, Av, Sv, Muv
-
-
-##############################################################################################
-# Print_first_step
-# Prints the initial step's root mean square (RMS) error and probe RMS error if verbosity is enabled.
-# Gets a verbosity flag (`verbose`), initial RMS error (`rms`), and initial probe RMS error (`prms`).
-# Returns nothing; outputs formatted step details to the console if `verbose` is True.
-
-
-def print_first_step(verbose, rms, prms):
-    if not verbose:
-        return
-
-    print(f"Step 0: rms = {rms:.6f}")
-    if not np.isnan(prms):
-        print(f" ({prms:.6f})")
-
-
-##############################################################################################
-# Print_step
-# Logs the current iteration's metrics, including cost, RMS error, probe RMS error, and subspace angle, if verbosity is enabled.
-# Gets a verbosity flag (`verbose`), log container (`lc`) with metrics, and subspace angle (`a_angle`).
-# Returns nothing; outputs formatted details of the current step to the console if `verbose` is True.
-def print_step(verbose, lc, a_angle):
-    if not verbose:
-        return
-
-    iter = len(lc["rms"]) - 1
-    steptime = lc["time"][-1] - lc["time"][-2]
-
-    print(f"Step {iter}: ", end="")
-
-    cost_last = lc["cost"][-1]
-    if isinstance(cost_last, np.ndarray):
-        if cost_last.size == 1:
-            cost_val = cost_last.item()
-        else:
-            cost_val = cost_last[0]
-    else:
-        cost_val = cost_last
-
-    if not np.isnan(cost_val):
-        print(f"cost = {cost_val:.6f}, ", end="")
-
-    rms_last = lc["rms"][-1]
-    if isinstance(rms_last, np.ndarray):
-        if rms_last.size == 1:
-            rms_val = rms_last.item()
-        else:
-            rms_val = rms_last[0]
-    else:
-        rms_val = rms_last
-
-    print(f"rms = {rms_val:.6f}", end="")
-
-    if "prms" in lc and len(lc["prms"]) > 0:
-        prms_last = lc["prms"][-1]
-        if isinstance(prms_last, np.ndarray):
-            if prms_last.size == 1:
-                prms_val = prms_last.item()
-            else:
-                prms_val = prms_last[0]
-        else:
-            prms_val = prms_last
-
-        if not np.isnan(prms_val):
-            print(f", prms = {prms_val:.6f}")
-        else:
-            print()
-    else:
-        print()
-
-
-##############################################################################################
-# Print_progress_bar
-# Displays a progress bar message if verbosity level is set to 2.
-# Gets a verbosity level (`verbose`) and a descriptive message (`string`).
-# Returns nothing; outputs the provided message to the console if `verbose` equals 2.
-
-
-def print_progress_bar(verbose, string):
-    if verbose == 2:
-        print(f"print_progress_bar: {string}", flush=True)
-        # print("\n|                                                  |\r|")
-
-
-##############################################################################################
-# Print_progress
-# Displays the progress of an iterative process if verbosity level is set to 2.
-# Gets a verbosity level (`verbose`), current iteration index (`i`), total iterations (`n`), and a descriptive message (`string`).
-# Returns nothing; outputs the progress message to the console if `verbose` equals 2.
-
-
-def print_progress(verbose, i, n, string):
-    if verbose == 2:
-        print("print_progress", flush=True)
-        print(f"\r{string} {i}/{n}", end="")
-
-
-##############################################################################################
-# Display_init
-# Initializes and displays plots for tracking RMS training and test errors during an iterative process.
-# Gets a display flag (`display`) and a log container (`lc`) with RMS training and test errors.
-# Returns a dictionary (`dsph`) containing display flags and plot handles for interactive updates.
-
-
-def display_init(display, lc):
-    dsph = {"display": display}
-
-    if not dsph["display"]:
-        return dsph
-
-    # Create a new figure with 2 subplots (2 rows, 1 column)
-    dsph["fig"], axes = plt.subplots(2, 1, figsize=(8, 6))
-
-    # First Subplot: RMS Training Error
-    ax1 = axes[0]
-    steps_rms = np.arange(len(lc["rms"]))  # Generate step indices [0, 1, 2, ...]
-    (line_rms,) = ax1.plot(steps_rms, lc["rms"], label="RMS Training Error")
-    ax1.set_title("RMS Training Error")
-    ax1.set_xlabel("Step")
-    ax1.set_ylabel("RMS Error")
-    ax1.legend()
-    ax1.grid(True)
-
-    # Second Subplot: RMS Test Error
-    ax2 = axes[1]
-    steps_prms = np.arange(len(lc["prms"]))  # Generate step indices [0, 1, 2, ...]
-    (line_prms,) = ax2.plot(
-        steps_prms, lc["prms"], label="RMS Test Error", color="orange"
-    )
-    ax2.set_title("RMS Test Error")
-    ax2.set_xlabel("Step")
-    ax2.set_ylabel("RMS Error")
-    ax2.legend()
-    ax2.grid(True)
-
-    # Adjust layout for better spacing
-    plt.tight_layout()
-
-    # Force the plots to render
-    plt.draw()
-
-    # Store plot handles in the dsph dictionary
-    dsph["rms"] = line_rms
-    dsph["prms"] = line_prms
-
-    return dsph
-
-
-##############################################################################################
-# Display_progress
-# Updates the plots for RMS training and test errors during an iterative process if display is enabled.
-# Gets a display dictionary (`dsph`) with plot handles and a log container (`lc`) with updated RMS data.
-# Returns nothing; updates the plots in real-time if `dsph['display']` is True.
-
-
-def display_progress(dsph, lc):
-    if dsph["display"]:
-        dsph["rms"].set_xdata(np.arange(len(lc["rms"])))
-        dsph["rms"].set_ydata(lc["rms"])
-        dsph["prms"].set_xdata(np.arange(len(lc["prms"])))
-        dsph["prms"].set_ydata(lc["prms"])
-        import matplotlib.pyplot as plt
-
-        plt.draw()
+        logger.warning("pca_full options warning: %s", wrnmsg)
+    return opts
+
+
+def _select_algorithm(opts: Mapping[str, object]) -> tuple[bool, bool]:
+    """Decode algorithm mode into (use_prior, use_postvar)."""
+    algorithm = str(opts["algorithm"]).lower()
+    if algorithm == "ppca":
+        return False, False
+    if algorithm == "map":
+        return True, False
+    if algorithm == "vb":
+        return True, True
+    raise ValueError(f"Wrong value of the argument 'algorithm': {opts['algorithm']}")

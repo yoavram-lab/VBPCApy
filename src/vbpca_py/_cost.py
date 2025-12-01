@@ -21,7 +21,7 @@ import numpy as np
 import scipy.sparse as sp
 from numpy.linalg import slogdet
 
-from ._rms import compute_rms
+from ._rms import RmsConfig, compute_rms
 
 # ============================================================
 # Common validation error messages
@@ -45,7 +45,7 @@ ERR_LOADING_PRIORS_REQUIRED = (
 
 
 # ============================================================
-# Parameter container
+# Parameter containers
 # ============================================================
 
 
@@ -54,22 +54,33 @@ class CostParams:
     """Grouped parameters for `compute_full_cost`.
 
     Attributes:
-        mu: Mean vector of the observation model. Shape (n_features,) or
+        mu:
+            Mean vector of the observation model. Shape (n_features,) or
             (n_features, 1).
-        noise_variance: Observation noise variance (V in the original code).
-        loading_covariances: Optional list of Av[i] covariances for rows of A,
+        noise_variance:
+            Observation noise variance (V in the original code).
+        loading_covariances:
+            Optional list of Av[i] covariances for rows of A,
             each of shape (n_components, n_components).
-        score_covariances: Optional list of Sv[j] or Sv[pattern] covariances
+        score_covariances:
+            Optional list of Sv[j] or Sv[pattern] covariances
             for columns of S, each of shape (n_components, n_components).
-        score_pattern_index: Optional mapping from sample index j into
+        score_pattern_index:
+            Optional mapping from sample index j into
             score_covariances (pattern index).
-        mu_variances: Optional posterior variances for mu (per feature).
-        loading_priors: Prior variances for rows/columns of A (Va). Scalar or
+        mu_variances:
+            Optional posterior variances for mu (per feature).
+        loading_priors:
+            Prior variances for rows/columns of A (Va). Scalar or
             array broadcastable to A.
-        mu_prior_variance: Prior variance for mu (Vmu).
-        mask: Optional mask matrix for X; ones/True mark observed entries.
-        s_xv: Optional precomputed expected squared reconstruction error term.
-        n_data: Optional number of observed entries; if None, inferred from
+        mu_prior_variance:
+            Prior variance for mu (Vmu).
+        mask:
+            Optional mask matrix for X; ones/True mark observed entries.
+        s_xv:
+            Optional precomputed expected squared reconstruction error term.
+        n_data:
+            Optional number of observed entries; if None, inferred from
             the mask.
     """
 
@@ -84,6 +95,28 @@ class CostParams:
     mask: np.ndarray | sp.spmatrix | None = None
     s_xv: float | None = None
     n_data: int | None = None
+
+
+@dataclass(slots=True)
+class ObservationInfo:
+    """Observed-entry structure for the data term."""
+
+    mask: np.ndarray | sp.spmatrix
+    row_idx: np.ndarray
+    col_idx: np.ndarray
+    n_data: int | None
+
+
+@dataclass(slots=True)
+class CovarianceInfo:
+    """Covariance and variance structure for the data term."""
+
+    n_components: int
+    loading_covariances: list[np.ndarray] | None
+    score_covariances: list[np.ndarray] | None
+    score_pattern_index: np.ndarray | None
+    mu_variances: np.ndarray | None
+    s_xv: float | None
 
 
 # ============================================================
@@ -107,12 +140,16 @@ def _build_mask_and_clean_x(
     """Construct a mask and clean x for missing values.
 
     Returns:
-        x_clean: x with NaNs replaced by zeros in the dense case; unchanged
+        x_clean:
+            x with NaNs replaced by zeros in the dense case; unchanged
             for sparse.
-        mask_out: mask with ones/True for observed entries and zeros/False
+        mask_out:
+            Mask with ones/True for observed entries and zeros/False
             for missing.
-        row_idx: Row indices of observed entries.
-        col_idx: Column indices of observed entries.
+        row_idx:
+            Row indices of observed entries.
+        col_idx:
+            Column indices of observed entries.
     """
     if mask is None:
         if sp.issparse(x):
@@ -143,38 +180,40 @@ def _compute_sxv(
     x: np.ndarray | sp.spmatrix,
     a: np.ndarray,
     s: np.ndarray,
-    mask: np.ndarray | sp.spmatrix,
-    row_idx: np.ndarray,
-    col_idx: np.ndarray,
-    n_components: int,
-    loading_covariances: list[np.ndarray] | None,
-    score_covariances: list[np.ndarray] | None,
-    score_pattern_index: np.ndarray | None,
-    mu_variances: np.ndarray | None,
-    s_xv: float | None,
-    n_data: int | None,
+    obs: ObservationInfo,
+    cov: CovarianceInfo,
 ) -> tuple[float, int]:
     """Compute or refine the expected squared reconstruction error `s_xv`.
 
-    This includes contributions from the deterministic residuals (via RMS)
-    and the posterior covariances of A, S, and mu.
+    This includes:
+    - the deterministic residual contribution (via RMS), and
+    - contributions from the posterior covariances of A, S, and mu.
     """
-    n_data_effective = len(row_idx) if n_data is None else n_data
+    # Effective number of observed entries
+    n_data_effective = len(obs.row_idx) if obs.n_data is None else obs.n_data
 
-    if s_xv is not None:
-        return float(s_xv), n_data_effective
+    # If caller supplied s_xv explicitly, just use it.
+    if cov.s_xv is not None:
+        return float(cov.s_xv), n_data_effective
 
-    # RMS reconstruction error (delegates sparse/dense handling to compute_rms)
-    rms, _ = compute_rms(x, a, s, mask, n_data_effective)
+    # RMS reconstruction error (handles sparse/dense internally)
+    rms_config = RmsConfig(n_observed=n_data_effective, num_cpu=1)
+    rms, _ = compute_rms(x, a, s, obs.mask, rms_config)
     s_xv_local = float((rms**2) * n_data_effective)
+
+    n_components = cov.n_components
+    loading_covariances = cov.loading_covariances
+    score_covariances = cov.score_covariances
+    score_pattern_index = cov.score_pattern_index
+    mu_variances = cov.mu_variances
 
     # Contributions from Sv / Av
     if score_covariances is None:
         # No score covariances given; use identity for each column.
         sv_identity = np.eye(n_components)
         for r in range(n_data_effective):
-            i = row_idx[r]
-            j = col_idx[r]
+            i = obs.row_idx[r]
+            j = obs.col_idx[r]
             a_i = a[i, :]  # (k,)
             sv_j = sv_identity
 
@@ -188,8 +227,8 @@ def _compute_sxv(
     else:
         # Score covariances provided; either direct or via pattern indices.
         for r in range(n_data_effective):
-            i = row_idx[r]
-            j = col_idx[r]
+            i = obs.row_idx[r]
+            j = obs.col_idx[r]
 
             if score_pattern_index is not None and len(score_pattern_index) > j:
                 sv_j = score_covariances[score_pattern_index[j]]
@@ -208,7 +247,7 @@ def _compute_sxv(
     # Contributions from mu posterior variances
     if mu_variances is not None and mu_variances.size > 0:
         # Each row variance contributes once per observed element in that row.
-        s_xv_local += float(np.sum(mu_variances[row_idx]))
+        s_xv_local += float(np.sum(mu_variances[obs.row_idx]))
 
     return s_xv_local, n_data_effective
 
@@ -370,21 +409,30 @@ def compute_full_cost(
     - cost_s: latent score term
 
     Args:
-        x: Observed data matrix of shape (n_features, n_samples). May contain
+        x:
+            Observed data matrix of shape (n_features, n_samples). May contain
             NaNs to indicate missing values when `params.mask` is None and
             x is dense. For sparse x, missing entries are typically implicit
             (unstored zeros).
-        a: Factor loadings of shape (n_features, n_components).
-        s: Factor scores of shape (n_components, n_samples).
-        params: Grouped parameters controlling priors, posterior covariances,
+        a:
+            Factor loadings of shape (n_features, n_components).
+        s:
+            Factor scores of shape (n_components, n_samples).
+        params:
+            Grouped parameters controlling priors, posterior covariances,
             masking, and noise variance.
 
     Returns:
-        cost: Total cost (sum of all components).
-        cost_x: Data term.
-        cost_a: Loading matrix term.
-        cost_mu: Mean term.
-        cost_s: Latent score term.
+        cost:
+            Total cost (sum of all components).
+        cost_x:
+            Data term.
+        cost_a:
+            Loading matrix term.
+        cost_mu:
+            Mean term.
+        cost_s:
+            Latent score term.
     """
     n_features, n_samples = x.shape
 
@@ -403,21 +451,29 @@ def compute_full_cost(
     # Mask / missing handling and observed indices
     x_clean, mask_out, row_idx, col_idx = _build_mask_and_clean_x(x, params.mask)
 
+    obs = ObservationInfo(
+        mask=mask_out,
+        row_idx=row_idx,
+        col_idx=col_idx,
+        n_data=params.n_data,
+    )
+
+    cov = CovarianceInfo(
+        n_components=n_components,
+        loading_covariances=params.loading_covariances,
+        score_covariances=params.score_covariances,
+        score_pattern_index=params.score_pattern_index,
+        mu_variances=params.mu_variances,
+        s_xv=params.s_xv,
+    )
+
     # Compute s_xv and n_data (data term core)
     s_xv_val, n_data_effective = _compute_sxv(
         x_clean,
         a,
         s,
-        mask_out,
-        row_idx,
-        col_idx,
-        n_components,
-        params.loading_covariances,
-        params.score_covariances,
-        params.score_pattern_index,
-        params.mu_variances,
-        params.s_xv,
-        params.n_data,
+        obs,
+        cov,
     )
 
     # Data term
