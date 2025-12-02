@@ -1,9 +1,8 @@
-# vbpca_py/_full_update.py
 """Helper functions for full VB-PCA update.
 
 This module factors out pieces of the :func:`pca_full` implementation
 to keep the main loop readable while preserving the original algorithmic
-behaviour.  The helpers are intentionally small and focused; shared
+behaviour. The helpers are intentionally small and focused; shared
 state is carried via simple data classes rather than long parameter
 lists so that static analysis tools remain happy.
 """
@@ -11,49 +10,37 @@ lists so that static analysis tools remain happy.
 from __future__ import annotations
 
 import logging
-from collections.abc import MutableMapping
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import numpy as np
+from numpy.linalg import LinAlgError
+from scipy.linalg import cho_factor, cho_solve
 from scipy.sparse import issparse
 
-from ._mean import Matrix, subtract_mu
+from ._mean import Matrix, ProbeMatrices, subtract_mu
 from ._missing import _missing_patterns
-from ._monitoring import (
-    InitResult,
-    InitShapes,
-    init_params,  # ← add this
-    log_progress,
-)
+from ._monitoring import InitResult, InitShapes, init_params, log_progress
 from ._remove_empty import remove_empty_entries
-from ._rms import compute_rms
-from ._rotate import rotate_to_pca
+from ._rms import RmsConfig, compute_rms
+from ._rotate import RotateParams, rotate_to_pca
+
+if TYPE_CHECKING:
+    from collections.abc import MutableMapping
 
 logger = logging.getLogger(__name__)
 
+_EPS_VAR = 1e-15  # minimum variance for numerical safety
+
 
 # ---------------------------------------------------------------------------
-# Small state containers
+# Small state / context containers
 # ---------------------------------------------------------------------------
 
 
 @dataclass
 class BiasState:
-    """State required for updating the bias/mean parameter.
-
-    Attributes:
-    ----------
-    mu:
-        Current mean vector of shape (n_features, 1).
-    muv:
-        Posterior variances of the mean, shape (n_features, 1) or empty.
-    noise_var:
-        Current noise variance :math:`σ²`.
-    vmu:
-        Prior variance of the mean.
-    n_obs_row:
-        Number of observations per feature (row).
-    """
+    """State required for updating the bias/mean parameter."""
 
     mu: np.ndarray
     muv: np.ndarray
@@ -74,14 +61,14 @@ class CenteringState:
 
 @dataclass
 class ScoreState:
-    """State required for updating scores S and their covariances."""
+    """State required for updating scores and their covariances."""
 
     x_data: Matrix
     mask: Matrix
-    a: np.ndarray
-    s: np.ndarray
-    av: list[np.ndarray]
-    sv: list[np.ndarray]
+    loadings: np.ndarray  # A
+    scores: np.ndarray  # S
+    loading_covariances: list[np.ndarray]  # Av
+    score_covariances: list[np.ndarray]  # Sv
     pattern_index: np.ndarray | None
     obs_patterns: list[list[int]]
     noise_var: float
@@ -93,14 +80,92 @@ class ScoreState:
 class NoiseState:
     """State required for updating the noise variance."""
 
-    a: np.ndarray
-    s: np.ndarray
-    av: list[np.ndarray]
-    sv: list[np.ndarray]
-    muv: np.ndarray
+    loadings: np.ndarray
+    scores: np.ndarray
+    loading_covariances: list[np.ndarray]
+    score_covariances: list[np.ndarray]
+    mu_variances: np.ndarray
     pattern_index: np.ndarray | None
     n_data: float
     noise_var: float
+
+
+@dataclass
+class InitContext:
+    """Context needed for initial parameter setup and centering."""
+
+    x_data: Matrix
+    x_probe: Matrix | None
+    mask: Matrix
+    mask_probe: Matrix | None
+    shapes: InitShapes
+    pattern_index: np.ndarray | None
+    n_obs_row: np.ndarray
+    use_prior: bool
+    use_postvar: bool
+    opts: MutableMapping[str, object]
+
+
+@dataclass
+class HyperpriorContext:
+    """Context for updating hyperpriors Va and Vmu."""
+
+    iteration: int
+    use_prior: bool
+    niter_broadprior: int
+    bias_enabled: bool
+    mu: np.ndarray
+    mu_variances: np.ndarray
+    loadings: np.ndarray
+    loading_covariances: list[np.ndarray]
+    n_features: int
+    hp_va: float
+    hp_vb: float
+    va: np.ndarray
+    vmu: float
+
+
+@dataclass
+class LoadingsUpdateState:
+    """State for updating loadings and their covariances."""
+
+    x_data: Matrix
+    mask: Matrix
+    scores: np.ndarray
+    loading_covariances: list[np.ndarray]
+    score_covariances: list[np.ndarray]
+    pattern_index: np.ndarray | None
+    va: np.ndarray
+    noise_var: float
+    verbose: int
+
+
+@dataclass
+class RmsContext:
+    """Context for recomputing RMS and (optional) probe RMS."""
+
+    x_data: Matrix
+    x_probe: Matrix | None
+    mask: Matrix
+    mask_probe: Matrix | None
+    n_data: float
+    n_probe: int
+    loadings: np.ndarray
+    scores: np.ndarray
+
+
+@dataclass
+class RotationContext:
+    """Context for final PCA-style rotation."""
+
+    loadings: np.ndarray
+    loading_covariances: list[np.ndarray]
+    scores: np.ndarray
+    score_covariances: list[np.ndarray]
+    mu: np.ndarray
+    pattern_index: np.ndarray | None
+    obs_patterns: list[list[int]]
+    bias_enabled: bool
 
 
 # ---------------------------------------------------------------------------
@@ -134,7 +199,6 @@ def _prepare_data(
         x_data,
         x_probe,
         opts["init"],
-        opts["verbose"],
     )
     # Carry updated init option forward.
     opts["init"] = init_opt
@@ -142,53 +206,63 @@ def _prepare_data(
     return x_data, x_probe, n_features_original, n_samples_original, row_idx, col_idx
 
 
+# -- mask helpers -------------------------------------------------------------
+
+
+def _build_masks_sparse(
+    x_data: Matrix,
+    x_probe: Matrix | None,
+) -> tuple[Matrix, Matrix | None, Matrix, Matrix | None]:
+    """Build masks and normalized data for sparse inputs."""
+    mask: Matrix = (x_data != 0).astype(float)
+
+    if x_probe is not None and issparse(x_probe):
+        mask_probe: Matrix | None = (x_probe != 0).astype(float)
+    elif x_probe is not None:
+        x_probe_arr = np.asarray(x_probe, dtype=float)
+        x_probe = x_probe_arr
+        mask_probe = (x_probe_arr != 0).astype(float)
+    else:
+        mask_probe = None
+
+    return x_data, x_probe, mask, mask_probe
+
+
+def _build_masks_dense(
+    x_data: Matrix,
+    x_probe: Matrix | None,
+) -> tuple[Matrix, Matrix | None, Matrix, Matrix | None]:
+    """Build masks and normalized data for dense inputs."""
+    x_arr = np.asarray(x_data, dtype=float, copy=False)
+    mask = ~np.isnan(x_arr)
+
+    eps = np.finfo(float).eps
+    x_arr[x_arr == 0.0] = eps
+    x_arr[np.isnan(x_arr)] = 0.0
+    x_data = x_arr
+
+    if x_probe is not None:
+        x_probe_arr = np.asarray(x_probe, dtype=float, copy=False)
+        x_probe = x_probe_arr
+        mask_probe = ~np.isnan(x_probe_arr)
+        x_probe_arr[x_probe_arr == 0.0] = eps
+        x_probe_arr[np.isnan(x_probe_arr)] = 0.0
+    else:
+        mask_probe = None
+
+    return x_data, x_probe, mask, mask_probe
+
+
 def _build_masks_and_counts(
     x_data: Matrix,
     x_probe: Matrix | None,
     opts: MutableMapping[str, object],
 ) -> tuple[Matrix, Matrix | None, Matrix, Matrix | None, np.ndarray, float, int]:
-    """Build missingness masks, handle NaNs/zeros, and count observations.
-
-    Returns:
-    -------
-    x_data, x_probe :
-        Possibly modified copies of the input data / probe matrices.
-    mask, mask_probe :
-        Boolean or numeric masks indicating observed entries.
-    n_obs_row :
-        Number of observations per feature (row).
-    n_data :
-        Total number of observed entries.
-    n_probe :
-        Number of observed probe entries.
-    """
+    """Build missingness masks, handle NaNs/zeros, and count observations."""
     if issparse(x_data):
-        mask: Matrix = (x_data != 0).astype(float)
-        if x_probe is not None and issparse(x_probe):
-            mask_probe: Matrix | None = (x_probe != 0).astype(float)
-        elif x_probe is not None:
-            x_probe_arr = np.asarray(x_probe, dtype=float)
-            x_probe = x_probe_arr
-            mask_probe = (x_probe_arr != 0).astype(float)
-        else:
-            mask_probe = None
+        x_data, x_probe, mask, mask_probe = _build_masks_sparse(x_data, x_probe)
     else:
-        x_arr = np.asarray(x_data, dtype=float)
-        x_data = x_arr
-        mask = ~np.isnan(x_arr)
-
-        eps = np.finfo(float).eps
-        x_arr[x_arr == 0] = eps
-        x_arr[np.isnan(x_arr)] = 0.0
-
-        if x_probe is not None:
-            x_probe_arr = np.asarray(x_probe, dtype=float)
-            x_probe = x_probe_arr
-            mask_probe = ~np.isnan(x_probe_arr)
-            x_probe_arr[x_probe_arr == 0] = eps
-            x_probe_arr[np.isnan(x_probe_arr)] = 0.0
-        else:
-            mask_probe = None
+        x_data, x_probe, mask, mask_probe = _build_masks_dense(x_data, x_probe)
 
     if issparse(mask):
         n_obs_row = np.asarray(mask.sum(axis=1)).ravel()
@@ -227,7 +301,7 @@ def _missing_patterns_info(
     n_samples: int,
 ) -> tuple[int, list[list[int]], np.ndarray | None]:
     """Compute missingness-pattern information and Isv mapping."""
-    if opts["uniquesv"]:
+    if opts.get("uniquesv"):
         n_patterns, obs_patterns, isv = _missing_patterns(mask)
         isv_arr = np.asarray(isv, dtype=int)
         return int(n_patterns), obs_patterns, isv_arr
@@ -243,19 +317,7 @@ def _missing_patterns_info(
 
 
 def _initialize_parameters(
-    *,
-    x_data: Matrix,
-    mask: Matrix,
-    n_features: int,
-    n_samples: int,
-    n_components: int,
-    n_patterns: int,
-    pattern_index: np.ndarray | None,
-    n_obs_row: np.ndarray,
-    use_prior: bool,
-    use_postvar: bool,
-    opts: MutableMapping[str, object],
-    x_probe: Matrix | None,
+    ctx: InitContext,
 ) -> tuple[
     np.ndarray,
     np.ndarray,
@@ -269,100 +331,111 @@ def _initialize_parameters(
     Matrix,
     Matrix | None,
 ]:
-    """Initialize A, S, Mu, V, Av, Sv, Muv, Va, Vmu and center data."""
-    shapes = InitShapes(
-        n_features=n_features,
-        n_samples=n_samples,
-        n_components=n_components,
-        n_obs_patterns=n_patterns,
-    )
+    """Initialize loadings, scores, mu, V, Av, Sv, Muv, Va, Vmu and center data."""
+    shapes = ctx.shapes
 
     init_result: InitResult = init_params(
-        opts["init"],
+        ctx.opts["init"],
         shapes,
-        score_pattern_index=pattern_index,
+        score_pattern_index=ctx.pattern_index,
         rng=np.random.default_rng(),
     )
-    a = init_result.a
-    s = init_result.s
+    loadings = init_result.a
+    scores = init_result.s
     mu = init_result.mu.reshape(-1, 1)
     noise_var = float(init_result.v)
-    av = init_result.av
-    sv = init_result.sv
-    muv = init_result.muv.reshape(-1, 1)
+    loading_covariances = init_result.av
+    score_covariances = init_result.sv
+    mu_variances = init_result.muv.reshape(-1, 1)
 
-    # Priors on A and Mu
-    if use_prior:
-        va = 1000.0 * np.ones(n_components, dtype=float)
+    # Priors on loadings and mu
+    if ctx.use_prior:
+        va = np.full(shapes.n_components, 1000.0, dtype=float)
         vmu = 1000.0
     else:
-        va = np.full(n_components, np.inf, dtype=float)
+        va = np.full(shapes.n_components, np.inf, dtype=float)
         vmu = float("inf")
 
     # MAP / PPCA: disable posterior variances if needed
-    if not use_postvar:
-        muv = np.array([], dtype=float)
-        av = []
+    if not ctx.use_postvar:
+        mu_variances = np.array([], dtype=float)
+        loading_covariances = []
 
-    if not bool(opts["bias"]):
-        muv = np.array([], dtype=float)
+    if not bool(ctx.opts.get("bias", 1)):
+        mu_variances = np.array([], dtype=float)
         vmu = 0.0
 
-    # Initialize Mu from data if empty
+    # Initialize mu from data if empty
     if mu.size == 0:
-        if bool(opts["bias"]):
-            if issparse(x_data):
-                mu_num = np.asarray(x_data.sum(axis=1)).ravel()
+        if bool(ctx.opts.get("bias", 1)):
+            if issparse(ctx.x_data):
+                mu_num = np.asarray(ctx.x_data.sum(axis=1)).ravel()
             else:
-                mu_num = np.sum(x_data, axis=1)
-            mu = (mu_num / n_obs_row).reshape(-1, 1)
+                mu_num = np.sum(
+                    np.asarray(ctx.x_data, dtype=float, copy=False),
+                    axis=1,
+                )
+            # Avoid division by zero: rows with no observations get zero mean.
+            with np.errstate(divide="ignore", invalid="ignore"):
+                mu_vec = np.divide(
+                    mu_num,
+                    ctx.n_obs_row,
+                    out=np.zeros_like(mu_num, dtype=float),
+                    where=ctx.n_obs_row > 0,
+                )
+            mu = mu_vec.reshape(-1, 1)
         else:
-            mu = np.zeros((n_features, 1), dtype=float)
+            mu = np.zeros((shapes.n_features, 1), dtype=float)
 
-    # Initial centering
-    x_data, x_probe = subtract_mu(
+    # Initial centering using subtract_mu helper.
+    probe_container: ProbeMatrices | None = None
+    if ctx.x_probe is not None and ctx.mask_probe is not None:
+        probe_container = ProbeMatrices(x=ctx.x_probe, mask=ctx.mask_probe)
+
+    x_data_centered, x_probe_centered = subtract_mu(
         mu,
-        x_data,
-        mask,
-        x_probe,
-        None,
-        update_bias=bool(opts["bias"]),
+        ctx.x_data,
+        ctx.mask,
+        probe=probe_container,
+        update_bias=bool(ctx.opts.get("bias", 1)),
     )
 
-    return a, s, mu, noise_var, av, sv, muv, va, vmu, x_data, x_probe
+    return (
+        loadings,
+        scores,
+        mu,
+        noise_var,
+        loading_covariances,
+        score_covariances,
+        mu_variances,
+        va,
+        vmu,
+        x_data_centered,
+        x_probe_centered,
+    )
 
 
-def _update_hyperpriors(
-    *,
-    iteration: int,
-    use_prior: bool,
-    niter_broadprior: int,
-    bias: bool,
-    mu: np.ndarray,
-    muv: np.ndarray,
-    a: np.ndarray,
-    av: list[np.ndarray],
-    n_features: int,
-    hp_va: float,
-    hp_vb: float,
-    va: np.ndarray,
-    vmu: float,
-) -> tuple[np.ndarray, float]:
+def _update_hyperpriors(ctx: HyperpriorContext) -> tuple[np.ndarray, float]:
     """Update Va and Vmu after a broad-prior warmup period."""
-    if not use_prior or iteration <= niter_broadprior:
-        return va, vmu
+    if not ctx.use_prior or ctx.iteration <= ctx.niter_broadprior:
+        return ctx.va, ctx.vmu
 
-    if bias:
-        vmu_val = float(np.sum(mu**2))
-        if muv.size > 0:
-            vmu_val += float(np.sum(muv))
-        vmu = (vmu_val + 2.0 * hp_va) / (n_features + 2.0 * hp_vb)
+    denom = float(ctx.n_features + 2.0 * ctx.hp_vb)
 
-    va_new = np.sum(a**2, axis=0)
-    if av:
-        for row_cov in av:
+    vmu = ctx.vmu
+    if ctx.bias_enabled:
+        vmu_val = float(np.sum(ctx.mu**2))
+        if ctx.mu_variances.size > 0:
+            vmu_val += float(np.sum(ctx.mu_variances))
+        vmu = max((vmu_val + 2.0 * ctx.hp_va) / denom, _EPS_VAR)
+
+    va_new = np.sum(ctx.loadings**2, axis=0)
+    if ctx.loading_covariances:
+        for row_cov in ctx.loading_covariances:
             va_new = va_new + np.diag(row_cov)
-    va_new = (va_new + 2.0 * hp_va) / (n_features + 2.0 * hp_vb)
+
+    va_new = (va_new + 2.0 * ctx.hp_va) / denom
+    va_new = np.maximum(va_new, _EPS_VAR)
 
     return va_new, vmu
 
@@ -373,53 +446,83 @@ def _update_hyperpriors(
 
 
 def _update_bias(
-    bias: bool,
+    *,
+    bias_enabled: bool,
     bias_state: BiasState,
     err_mx: np.ndarray,
     centering: CenteringState,
 ) -> tuple[BiasState, CenteringState]:
     """Bias / mean update, including in-place centering of x / x_probe."""
-    if not bias:
+    if not bias_enabled:
         return bias_state, centering
 
     mu = bias_state.mu
-    muv = bias_state.muv
-    noise_var = bias_state.noise_var
-    vmu = bias_state.vmu
+    mu_variances = bias_state.muv
+    noise_var = float(bias_state.noise_var)
+    vmu = float(bias_state.vmu)
     n_obs_row = bias_state.n_obs_row
 
-    d_mu = np.sum(err_mx, axis=1) / n_obs_row  # (n_features,)
+    # Safe d_mu: zero update where no observations.
+    with np.errstate(divide="ignore", invalid="ignore"):
+        d_mu = np.divide(
+            np.sum(err_mx, axis=1),
+            n_obs_row,
+            out=np.zeros_like(n_obs_row, dtype=float),
+            where=n_obs_row > 0,
+        )
 
-    if muv.size > 0:
-        muv = (noise_var / (n_obs_row + noise_var / vmu)).reshape(-1, 1)
+    if mu_variances.size > 0 and vmu > 0.0:
+        denom = n_obs_row + noise_var / vmu
+        with np.errstate(divide="ignore", invalid="ignore"):
+            muv_vec = np.divide(
+                noise_var,
+                denom,
+                out=np.zeros_like(denom, dtype=float),
+                where=denom > 0,
+            )
+        mu_variances = muv_vec.reshape(-1, 1)
 
-    shrink = 1.0 / (1.0 + noise_var / (n_obs_row * vmu))
+    # Shrinkage factor for mu update, stable even for zero n_obs_row.
+    if vmu > 0.0:
+        with np.errstate(divide="ignore", invalid="ignore"):
+            shrink = 1.0 / (1.0 + noise_var / (n_obs_row * vmu))
+        # Rows with no observations → shrink = 0
+        shrink = np.where(n_obs_row > 0, shrink, 0.0)
+    else:
+        shrink = np.zeros_like(n_obs_row, dtype=float)
     shrink = shrink.reshape(-1, 1)
-    d_mu_vec = d_mu.reshape(-1, 1)
 
+    d_mu_vec = d_mu.reshape(-1, 1)
     mu_old = mu
     mu = shrink * (mu + d_mu_vec)
     d_mu_update = mu - mu_old
 
-    x_data, x_probe = subtract_mu(
+    # Recentre data and probe using the updated mean increment.
+    probe_container: ProbeMatrices | None = None
+    if centering.x_probe is not None and centering.mask_probe is not None:
+        probe_container = ProbeMatrices(
+            x=centering.x_probe,
+            mask=centering.mask_probe,
+        )
+
+    x_data_new, x_probe_new = subtract_mu(
         d_mu_update,
         centering.x_data,
         centering.mask,
-        centering.x_probe,
-        centering.mask_probe,
+        probe=probe_container,
         update_bias=True,
     )
 
     updated_bias_state = BiasState(
         mu=mu,
-        muv=muv,
+        muv=mu_variances,
         noise_var=noise_var,
         vmu=vmu,
         n_obs_row=n_obs_row,
     )
     updated_centering = CenteringState(
-        x_data=x_data,
-        x_probe=x_probe,
+        x_data=x_data_new,
+        x_probe=x_probe_new,
         mask=centering.mask,
         mask_probe=centering.mask_probe,
     )
@@ -431,81 +534,179 @@ def _update_bias(
 # ---------------------------------------------------------------------------
 
 
-def _update_scores(state: ScoreState) -> ScoreState:
-    """Update S (scores) and Sv (score covariances)."""
+def _score_update_fast_dense_no_av(state: ScoreState) -> ScoreState:
+    """Fast path: fully observed dense data, no loading covariances."""
     x_is_sparse = issparse(state.x_data)
-    _, n_samples = state.x_data.shape
+    _n_features, n_samples = state.x_data.shape
+    n_components = state.loadings.shape[1]
 
-    if state.pattern_index is None:
-        # No pattern sharing: Sv[j] is specific to column j
-        for j in range(n_samples):
-            if issparse(state.mask):
-                m_col = np.asarray(state.mask[:, j].toarray()).ravel()
-            else:
-                m_col = state.mask[:, j].astype(float)
+    # Common psi = A^T A + noise_var I
+    ata = state.loadings.T @ state.loadings
+    psi = ata + state.noise_var * state.eye_components
+    psi = 0.5 * (psi + psi.T)
+    try:
+        cho = cho_factor(psi, lower=True, check_finite=False)
+    except LinAlgError:
+        jitter = _EPS_VAR * np.eye(n_components)
+        cho = cho_factor(psi + jitter, lower=True, check_finite=False)
 
-            a_masked = m_col[:, None] * state.a  # (n_features, n_components)
-            psi = a_masked.T @ a_masked + state.noise_var * state.eye_components
-            if state.av:
-                for i_row in np.where(m_col > 0)[0]:
-                    psi = psi + state.av[i_row]
+    cov_common = state.noise_var * cho_solve(
+        cho,
+        state.eye_components,
+        check_finite=False,
+    )
 
-            inv_psi = np.linalg.inv(psi)
+    for j in range(n_samples):
+        if x_is_sparse:
+            x_col = state.x_data[:, j].toarray().ravel()
+        else:
+            x_col = np.asarray(state.x_data[:, j], dtype=float, copy=False)
+        rhs = state.loadings.T @ x_col
+        state.scores[:, j] = cho_solve(cho, rhs, check_finite=False)
+        state.score_covariances[j] = cov_common
 
-            x_col = (
-                state.x_data[:, j].toarray().ravel()
-                if x_is_sparse
-                else state.x_data[:, j]
-            )
+        log_progress(
+            state.verbose,
+            current=j + 1,
+            total=n_samples,
+            phase="Updating scores",
+        )
+    return state
 
-            state.s[:, j] = inv_psi @ (a_masked.T @ x_col)
-            state.sv[j] = state.noise_var * inv_psi
 
-            log_progress(
-                state.verbose,
-                current=j + 1,
-                total=n_samples,
-                phase="Updating S",
-            )
-    else:
-        # Pattern sharing: Sv[k] shared for all j in obs_patterns[k]
-        n_patterns = len(state.obs_patterns)
-        for k, cols in enumerate(state.obs_patterns):
-            if not cols:
-                continue
-            j_rep = cols[0]
+def _score_update_general_no_patterns(state: ScoreState) -> ScoreState:
+    """General score update when there is no pattern sharing."""
+    x_is_sparse = issparse(state.x_data)
+    _n_features, n_samples = state.x_data.shape
+    n_components = state.loadings.shape[1]
 
-            if issparse(state.mask):
-                m_col = np.asarray(state.mask[:, j_rep].toarray()).ravel()
-            else:
-                m_col = state.mask[:, j_rep].astype(float)
+    for j in range(n_samples):
+        if issparse(state.mask):
+            mask_col = np.asarray(state.mask[:, j].toarray()).ravel()
+        else:
+            mask_col = np.asarray(state.mask[:, j], dtype=float, copy=False)
 
-            a_masked = m_col[:, None] * state.a
-            psi = a_masked.T @ a_masked + state.noise_var * state.eye_components
-            if state.av:
-                for i_row in np.where(m_col > 0)[0]:
-                    psi = psi + state.av[i_row]
+        loadings_masked = mask_col[:, None] * state.loadings
+        psi = (
+            loadings_masked.T @ loadings_masked + state.noise_var * state.eye_components
+        )
 
-            inv_psi = np.linalg.inv(psi)
-            state.sv[k] = state.noise_var * inv_psi
-            tmp = inv_psi @ a_masked.T  # (n_components, n_features)
+        if state.loading_covariances:
+            observed_rows = np.where(mask_col > 0)[0]
+            for row_index in observed_rows:
+                psi = psi + state.loading_covariances[row_index]
 
-            for j_idx in cols:
-                x_col = (
-                    state.x_data[:, j_idx].toarray().ravel()
-                    if x_is_sparse
-                    else state.x_data[:, j_idx]
-                )
-                state.s[:, j_idx] = tmp @ x_col
+        psi = 0.5 * (psi + psi.T)
+        try:
+            cho = cho_factor(psi, lower=True, check_finite=False)
+        except LinAlgError:
+            jitter = _EPS_VAR * np.eye(n_components)
+            cho = cho_factor(psi + jitter, lower=True, check_finite=False)
 
-            log_progress(
-                state.verbose,
-                current=k + 1,
-                total=n_patterns,
-                phase="Updating S (patterns)",
-            )
+        if x_is_sparse:
+            x_col = state.x_data[:, j].toarray().ravel()
+        else:
+            x_col = np.asarray(state.x_data[:, j], dtype=float, copy=False)
+
+        rhs = loadings_masked.T @ x_col
+        state.scores[:, j] = cho_solve(cho, rhs, check_finite=False)
+        state.score_covariances[j] = state.noise_var * cho_solve(
+            cho,
+            state.eye_components,
+            check_finite=False,
+        )
+
+        log_progress(
+            state.verbose,
+            current=j + 1,
+            total=n_samples,
+            phase="Updating scores",
+        )
 
     return state
+
+
+def _score_update_with_patterns(state: ScoreState) -> ScoreState:
+    """Score update when multiple columns share covariance patterns."""
+    x_is_sparse = issparse(state.x_data)
+    _n_features, _n_samples = state.x_data.shape
+    n_components = state.loadings.shape[1]
+    n_patterns = len(state.obs_patterns)
+
+    for pattern_index, cols in enumerate(state.obs_patterns):
+        if not cols:
+            continue
+
+        j_rep = cols[0]
+        if issparse(state.mask):
+            mask_col = np.asarray(state.mask[:, j_rep].toarray()).ravel()
+        else:
+            mask_col = np.asarray(state.mask[:, j_rep], dtype=float, copy=False)
+
+        loadings_masked = mask_col[:, None] * state.loadings
+        psi = (
+            loadings_masked.T @ loadings_masked + state.noise_var * state.eye_components
+        )
+
+        if state.loading_covariances:
+            observed_rows = np.where(mask_col > 0)[0]
+            for row_index in observed_rows:
+                psi = psi + state.loading_covariances[row_index]
+
+        psi = 0.5 * (psi + psi.T)
+        try:
+            cho = cho_factor(psi, lower=True, check_finite=False)
+        except LinAlgError:
+            jitter = _EPS_VAR * np.eye(n_components)
+            cho = cho_factor(psi + jitter, lower=True, check_finite=False)
+
+        sv_pattern = state.noise_var * cho_solve(
+            cho,
+            state.eye_components,
+            check_finite=False,
+        )
+        state.score_covariances[pattern_index] = sv_pattern
+
+        loadings_masked_t = loadings_masked.T
+        for j_idx in cols:
+            if x_is_sparse:
+                x_col = state.x_data[:, j_idx].toarray().ravel()
+            else:
+                x_col = np.asarray(
+                    state.x_data[:, j_idx],
+                    dtype=float,
+                    copy=False,
+                )
+            rhs = loadings_masked_t @ x_col
+            state.scores[:, j_idx] = cho_solve(cho, rhs, check_finite=False)
+
+        log_progress(
+            state.verbose,
+            current=pattern_index + 1,
+            total=n_patterns,
+            phase="Updating scores (patterns)",
+        )
+
+    return state
+
+
+def _update_scores(state: ScoreState) -> ScoreState:
+    """Update scores and score covariances."""
+    # Pattern-free branch
+    if state.pattern_index is None:
+        dense_mask = None
+        fully_observed = False
+        if not issparse(state.mask):
+            dense_mask = np.asarray(state.mask, dtype=float, copy=False)
+            fully_observed = np.all(dense_mask > 0)
+
+        if dense_mask is not None and fully_observed and not state.loading_covariances:
+            return _score_update_fast_dense_no_av(state)
+
+        return _score_update_general_no_patterns(state)
+
+    # Pattern-sharing branch
+    return _score_update_with_patterns(state)
 
 
 # ---------------------------------------------------------------------------
@@ -513,56 +714,153 @@ def _update_scores(state: ScoreState) -> ScoreState:
 # ---------------------------------------------------------------------------
 
 
-def _update_loadings(
-    *,
-    x_data: Matrix,
-    mask: Matrix,
-    s: np.ndarray,
-    av: list[np.ndarray],
-    sv: list[np.ndarray],
-    pattern_index: np.ndarray | None,
-    va: np.ndarray,
-    noise_var: float,
-    verbose: int,
-) -> tuple[np.ndarray, list[np.ndarray]]:
-    """Update A (loadings) and Av (loading covariances)."""
-    x_is_sparse = issparse(x_data)
-    n_features, _ = x_data.shape
-    n_components = s.shape[0]
+def _loadings_update_fast_dense_no_sv(
+    state: LoadingsUpdateState,
+) -> tuple[
+    np.ndarray,
+    list[np.ndarray],
+]:
+    """Fast path: fully observed dense data, no score covariances."""
+    x_is_sparse = issparse(state.x_data)
+    n_features, _ = state.x_data.shape
+    n_components = state.scores.shape[0]
 
-    if verbose == 2:
-        logger.info("Updating A")
+    if state.verbose == 2:
+        logger.info("Updating loadings")
 
-    prior_prec = np.diag(noise_var / va)
-    a = np.empty((n_features, n_components), dtype=float)
+    prior_prec_diag = np.zeros_like(state.va, dtype=float)
+    finite_mask = np.isfinite(state.va) & (state.va > 0)
+    prior_prec_diag[finite_mask] = state.noise_var / state.va[finite_mask]
+    prior_prec = np.diag(prior_prec_diag)
 
+    scores_masked = state.scores
+    phi = scores_masked @ scores_masked.T + prior_prec
+    phi = 0.5 * (phi + phi.T)
+    try:
+        cho = cho_factor(phi, lower=True, check_finite=False)
+    except LinAlgError:
+        jitter = _EPS_VAR * np.eye(n_components)
+        cho = cho_factor(phi + jitter, lower=True, check_finite=False)
+
+    loadings = np.empty((n_features, n_components), dtype=float)
     for i in range(n_features):
-        if issparse(mask):
-            m_row = np.asarray(mask[i, :].toarray()).ravel()
+        if x_is_sparse:
+            x_row = state.x_data[i, :].toarray().ravel()
         else:
-            m_row = mask[i, :].astype(float)
+            x_row = np.asarray(state.x_data[i, :], dtype=float, copy=False)
 
-        s_masked = m_row[None, :] * s  # (n_components, n_samples)
-        phi = s_masked @ s_masked.T + prior_prec
-        obs_cols = np.where(m_row > 0)[0]
+        rhs = scores_masked @ x_row
+        loadings[i, :] = cho_solve(cho, rhs, check_finite=False)
 
-        for j_idx in obs_cols:
-            phi = phi + (
-                sv[j_idx] if pattern_index is None else sv[pattern_index[j_idx]]
+        if state.loading_covariances:
+            state.loading_covariances[i] = state.noise_var * cho_solve(
+                cho,
+                np.eye(n_components),
+                check_finite=False,
             )
 
-        inv_phi = np.linalg.inv(phi)
+        log_progress(
+            state.verbose,
+            current=i + 1,
+            total=n_features,
+            phase="Updating loadings",
+        )
 
-        x_row = x_data[i, :].toarray().ravel() if x_is_sparse else x_data[i, :]
+    return loadings, state.loading_covariances
 
-        a[i, :] = x_row @ s_masked.T @ inv_phi
 
-        if av:
-            av[i] = noise_var * inv_phi
+def _loadings_update_general(
+    state: LoadingsUpdateState,
+) -> tuple[
+    np.ndarray,
+    list[np.ndarray],
+]:
+    """General loading update, including masks and score covariances."""
+    x_is_sparse = issparse(state.x_data)
+    n_features, _ = state.x_data.shape
+    n_components = state.scores.shape[0]
 
-        log_progress(verbose, current=i + 1, total=n_features, phase="Updating A")
+    if state.verbose == 2:
+        logger.info("Updating loadings")
 
-    return a, av
+    prior_prec_diag = np.zeros_like(state.va, dtype=float)
+    finite_mask = np.isfinite(state.va) & (state.va > 0)
+    prior_prec_diag[finite_mask] = state.noise_var / state.va[finite_mask]
+    prior_prec = np.diag(prior_prec_diag)
+
+    loadings = np.empty((n_features, n_components), dtype=float)
+
+    for i in range(n_features):
+        if issparse(state.mask):
+            mask_row = np.asarray(state.mask[i, :].toarray()).ravel()
+        else:
+            mask_row = np.asarray(state.mask[i, :], dtype=float, copy=False)
+
+        scores_masked = mask_row[None, :] * state.scores
+        phi = scores_masked @ scores_masked.T + prior_prec
+
+        observed_cols = np.where(mask_row > 0)[0]
+        for j_idx in observed_cols:
+            if not state.score_covariances:
+                continue
+            sv_j = (
+                state.score_covariances[j_idx]
+                if state.pattern_index is None
+                else state.score_covariances[state.pattern_index[j_idx]]
+            )
+            phi = phi + sv_j
+
+        phi = 0.5 * (phi + phi.T)
+        try:
+            cho = cho_factor(phi, lower=True, check_finite=False)
+        except LinAlgError:
+            jitter = _EPS_VAR * np.eye(n_components)
+            cho = cho_factor(phi + jitter, lower=True, check_finite=False)
+
+        if x_is_sparse:
+            x_row = state.x_data[i, :].toarray().ravel()
+        else:
+            x_row = np.asarray(state.x_data[i, :], dtype=float, copy=False)
+
+        rhs = scores_masked @ x_row
+        loadings[i, :] = cho_solve(cho, rhs, check_finite=False)
+
+        if state.loading_covariances:
+            state.loading_covariances[i] = state.noise_var * cho_solve(
+                cho,
+                np.eye(n_components),
+                check_finite=False,
+            )
+
+        log_progress(
+            state.verbose,
+            current=i + 1,
+            total=n_features,
+            phase="Updating loadings",
+        )
+
+    return loadings, state.loading_covariances
+
+
+def _update_loadings(
+    state: LoadingsUpdateState,
+) -> tuple[
+    np.ndarray,
+    list[np.ndarray],
+]:
+    """Update loadings and loading covariances."""
+    dense_mask = None
+    fully_observed = False
+    sv_contrib = bool(state.score_covariances)
+
+    if not issparse(state.mask):
+        dense_mask = np.asarray(state.mask, dtype=float, copy=False)
+        fully_observed = np.all(dense_mask > 0)
+
+    if dense_mask is not None and fully_observed and not sv_contrib:
+        return _loadings_update_fast_dense_no_sv(state)
+
+    return _loadings_update_general(state)
 
 
 # ---------------------------------------------------------------------------
@@ -570,23 +868,23 @@ def _update_loadings(
 # ---------------------------------------------------------------------------
 
 
-def _recompute_rms(
-    *,
-    x_data: Matrix,
-    x_probe: Matrix | None,
-    mask: Matrix,
-    mask_probe: Matrix | None,
-    n_data: float,
-    n_probe: int,
-    a: np.ndarray,
-    s: np.ndarray,
-) -> tuple[float, float, np.ndarray]:
-    """Recompute RMS and probe RMS after an update of A/S."""
-    rms, err_mx = compute_rms(x_data, a, s, mask, n_data)
-    if n_probe > 0 and x_probe is not None and mask_probe is not None:
-        prms, _ = compute_rms(x_probe, a, s, mask_probe, n_probe)
+def _recompute_rms(ctx: RmsContext) -> tuple[float, float, Matrix]:
+    """Recompute RMS and probe RMS after an update of loadings/scores."""
+    cfg_data = RmsConfig(n_observed=int(ctx.n_data), num_cpu=1)
+    rms, err_mx = compute_rms(ctx.x_data, ctx.loadings, ctx.scores, ctx.mask, cfg_data)
+
+    if ctx.n_probe > 0 and ctx.x_probe is not None and ctx.mask_probe is not None:
+        cfg_probe = RmsConfig(n_observed=int(ctx.n_probe), num_cpu=1)
+        prms, _ = compute_rms(
+            ctx.x_probe,
+            ctx.loadings,
+            ctx.scores,
+            ctx.mask_probe,
+            cfg_probe,
+        )
     else:
         prms = float("nan")
+
     return float(rms), float(prms), err_mx
 
 
@@ -604,42 +902,51 @@ def _update_noise_variance(
 ) -> tuple[NoiseState, float]:
     """Update noise variance using current posterior covariances."""
     s_xv = 0.0
-    if noise_state.pattern_index is None:
+    loadings = noise_state.loadings
+    scores = noise_state.scores
+    loading_covariances = noise_state.loading_covariances
+    score_covariances = noise_state.score_covariances
+    pattern_index = noise_state.pattern_index
+
+    if pattern_index is None:
         for i, j in zip(ix, jx, strict=True):
-            a_i = noise_state.a[i, :][None, :]  # (1, n_components)
-            s_xv += float(a_i @ noise_state.sv[j] @ a_i.T)
-            if noise_state.av:
-                s_j = noise_state.s[:, j][:, None]
+            a_i = loadings[i, :][None, :]  # (1, k)
+            sv_j = score_covariances[j]
+            s_xv += float((a_i @ sv_j @ a_i.T)[0, 0])
+            if loading_covariances:
+                s_j = scores[:, j][:, None]
                 s_xv += float(
-                    s_j.T @ noise_state.av[i] @ s_j
-                    + np.sum(noise_state.sv[j] * noise_state.av[i])
+                    s_j.T @ loading_covariances[i] @ s_j
+                    + np.sum(sv_j * loading_covariances[i]),
                 )
     else:
         for i, j in zip(ix, jx, strict=True):
-            a_i = noise_state.a[i, :][None, :]
-            sv_j = noise_state.sv[noise_state.pattern_index[j]]
-            s_xv += float(a_i @ sv_j @ a_i.T)
-            if noise_state.av:
-                s_j = noise_state.s[:, j][:, None]
+            a_i = loadings[i, :][None, :]
+            sv_j = score_covariances[pattern_index[j]]
+            s_xv += float((a_i @ sv_j @ a_i.T)[0, 0])
+            if loading_covariances:
+                s_j = scores[:, j][:, None]
                 s_xv += float(
-                    s_j.T @ noise_state.av[i] @ s_j + np.sum(sv_j * noise_state.av[i])
+                    s_j.T @ loading_covariances[i] @ s_j
+                    + np.sum(sv_j * loading_covariances[i]),
                 )
 
-    if noise_state.muv.size > 0:
-        s_xv += float(np.sum(noise_state.muv[ix, 0]))
+    if noise_state.mu_variances.size > 0:
+        s_xv += float(np.sum(noise_state.mu_variances[ix, 0]))
 
     s_xv = s_xv + (rms**2) * noise_state.n_data
     v_new = (s_xv + 2.0 * hp_v) / (noise_state.n_data + 2.0 * hp_v)
+    v_new = max(float(v_new), _EPS_VAR)
 
     updated_state = NoiseState(
-        a=noise_state.a,
-        s=noise_state.s,
-        av=noise_state.av,
-        sv=noise_state.sv,
-        muv=noise_state.muv,
-        pattern_index=noise_state.pattern_index,
+        loadings=loadings,
+        scores=scores,
+        loading_covariances=loading_covariances,
+        score_covariances=score_covariances,
+        mu_variances=noise_state.mu_variances,
+        pattern_index=pattern_index,
         n_data=noise_state.n_data,
-        noise_var=float(v_new),
+        noise_var=v_new,
     )
     return updated_state, float(s_xv)
 
@@ -650,27 +957,37 @@ def _update_noise_variance(
 
 
 def _final_rotation(
-    *,
-    a: np.ndarray,
-    av: list[np.ndarray],
-    s: np.ndarray,
-    sv: list[np.ndarray],
-    mu: np.ndarray,
-    pattern_index: np.ndarray | None,
-    obs_patterns: list[list[int]],
-    bias: bool,
-) -> tuple[np.ndarray, list[np.ndarray], np.ndarray, list[np.ndarray], np.ndarray]:
+    ctx: RotationContext,
+) -> tuple[
+    np.ndarray,
+    list[np.ndarray],
+    np.ndarray,
+    list[np.ndarray],
+    np.ndarray,
+]:
     """Final PCA rotation if no iterative rotation was applied."""
-    av_for_rotation = av if av else None
-    d_mu_final, a, av, s, sv = rotate_to_pca(
-        a,
-        av_for_rotation,
-        s,
-        sv,
-        pattern_index,
-        obs_patterns,
-        update_bias=bias,
+    # Only pass loadings covariances if we actually maintain them.
+    loading_covariances = ctx.loading_covariances if ctx.loading_covariances else None
+
+    params = RotateParams(
+        loading_covariances=loading_covariances,
+        score_covariances=ctx.score_covariances,
+        isv=ctx.pattern_index,
+        obscombj=ctx.obs_patterns,
+        update_bias=ctx.bias_enabled,
     )
-    if bias:
-        mu = mu + d_mu_final
-    return a, av, s, sv, mu
+
+    d_mu_final, loadings_rot, av_rot, scores_rot, sv_rot = rotate_to_pca(
+        ctx.loadings,
+        ctx.scores,
+        params,
+    )
+
+    # Ensure we always return a list for av, even if rotation used None.
+    av_out: list[np.ndarray] = av_rot if av_rot is not None else []
+
+    mu_out = ctx.mu
+    if ctx.bias_enabled:
+        mu_out = mu_out + d_mu_final
+
+    return loadings_rot, av_out, scores_rot, sv_rot, mu_out

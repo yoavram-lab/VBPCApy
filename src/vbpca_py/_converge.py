@@ -4,14 +4,16 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Mapping, MutableMapping, Sequence
+
+import time
 
 import numpy as np
 from scipy.linalg import subspace_angles
 from scipy.sparse import issparse, spmatrix
 
 from ._cost import CostParams, compute_full_cost
-from ._monitoring import display_progress
+from ._monitoring import display_progress, log_step
 
 Array = np.ndarray
 Sparse = spmatrix
@@ -46,6 +48,98 @@ class ConvergenceState:
     lc: dict[str, list[float]]
     a_old: np.ndarray
     dsph: dict[str, object]
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers for convergence criteria
+# ---------------------------------------------------------------------------
+
+
+def _angle_stop_message(opts: Mapping[str, Any], angle_a: float) -> str | None:
+    """Return an angle-based convergence message, or None if not triggered."""
+    minangle = float(opts.get("minangle", np.inf))
+    if np.isfinite(minangle) and angle_a < minangle:
+        return (
+            f"Convergence achieved: subspace angle {angle_a:.2e} "
+            f"is below minangle = {minangle:.2e}."
+        )
+    return None
+
+
+def _early_stop_message(
+    opts: Mapping[str, Any],
+    prms: np.ndarray,
+) -> str | None:
+    """Return an early-stopping message based on probe RMS, or None."""
+    if not opts.get("earlystop"):
+        return None
+    if prms.size < 2:
+        return None
+
+    last = prms[-1]
+    prev = prms[-2]
+
+    if np.isfinite(last) and np.isfinite(prev) and last > prev:
+        return "Early stopping: probe RMS increased."
+    return None
+
+
+def _plateau_stop(
+    series: np.ndarray,
+    stop_cfg: Sequence[float] | np.ndarray | None,
+    label: str,
+) -> str | None:
+    """Generic plateau stop for RMS / cost series.
+
+    Returns a message if the series is flat over the configured window,
+    otherwise None.
+    """
+    if stop_cfg is None or series.size == 0:
+        return None
+
+    cfg = np.asarray(stop_cfg, dtype=float).ravel()
+    if cfg.size < 2:
+        return None
+
+    window = int(cfg[0])
+    abs_tol = float(cfg[1])
+    rel_tol = float(cfg[2]) if cfg.size > 2 else np.nan
+
+    # Need at least window+1 points so we can compare current vs. older
+    if window <= 0 or series.size <= window:
+        return None
+
+    older = series[-window - 1]
+    newer = series[-1]
+
+    if not (np.isfinite(older) and np.isfinite(newer)):
+        return None
+
+    delta = abs(older - newer)
+    rel = delta / (abs(newer) + np.finfo(float).eps)
+
+    if delta < abs_tol or (np.isfinite(rel_tol) and rel < rel_tol):
+        return (
+            f"Stop: {label} changed by "
+            f"{delta:.3e} (rel {rel:.3e}) over {window} iterations."
+        )
+
+    return None
+
+
+def _slowing_down_message(sd_iter: int | None) -> str | None:
+    """Return a slowing-down message if sd_iter hits the threshold."""
+    if sd_iter is not None and sd_iter == 40:
+        return (
+            "Slowing-down stop: step size repeatedly reduced. "
+            "Consider changing the gradient type or learning rates."
+        )
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Public convergence check
+# ---------------------------------------------------------------------------
 
 
 def convergence_check(
@@ -94,87 +188,45 @@ def convergence_check(
     convmsg
         Empty string if no criterion is met; otherwise a diagnostic message.
     """
-    # --- 1. Angle stop ----------------------------------------------------
-    minangle = float(opts.get("minangle", np.inf))
-    if np.isfinite(minangle) and angle_a < minangle:
-        return (
-            f"Convergence achieved: subspace angle {angle_a:.2e} "
-            f"is below minangle = {minangle:.2e}."
-        )
+    # 1. Angle-based stop
+    angle_msg = _angle_stop_message(opts, angle_a)
+    if angle_msg:
+        return angle_msg
 
     rms = np.asarray(lc.get("rms", []), dtype=float)
     prms = np.asarray(lc.get("prms", []), dtype=float)
     cost = np.asarray(lc.get("cost", []), dtype=float)
 
-    # Need at least two points for most criteria
-    have_two_rms = rms.size >= 2
-    have_two_prms = prms.size >= 2
-    have_two_cost = cost.size >= 2
+    # 2. Early stopping on probe RMS
+    early_msg = _early_stop_message(opts, prms)
+    if early_msg:
+        return early_msg
 
-    # --- 2. Early stopping on probe RMS ----------------------------------
-    if opts.get("earlystop") and have_two_prms:
-        last, prev = prms[-1], prms[-2]
-        if np.isfinite(last) and np.isfinite(prev) and last > prev:
-            return "Early stopping: probe RMS increased."
-
-    # Helper for plateau criteria
-    def _plateau_stop(
-        series: np.ndarray,
-        stop_cfg: Sequence[float] | np.ndarray,
-        label: str,
-    ) -> str | None:
-        if series.size == 0 or stop_cfg is None:
-            return None
-
-        cfg = np.asarray(stop_cfg, dtype=float).ravel()
-        if cfg.size < 2:
-            return None
-
-        window = int(cfg[0])
-        abs_tol = float(cfg[1])
-        rel_tol = float(cfg[2]) if cfg.size > 2 else np.nan
-
-        if window <= 0 or series.size <= window:
-            return None
-
-        older = series[-window - 1]
-        newer = series[-1]
-
-        if not (np.isfinite(older) and np.isfinite(newer)):
-            return None
-
-        delta = abs(older - newer)
-        rel = delta / (abs(newer) + np.finfo(float).eps)
-
-        if delta < abs_tol or (np.isfinite(rel_tol) and rel < rel_tol):
-            return (
-                f"Stop: {label} changed by "
-                f"{delta:.3e} (rel {rel:.3e}) over {window} iterations."
-            )
-        return None
-
-    # --- 3. RMS plateau ---------------------------------------------------
+    # 3. RMS plateau
     rmsstop = opts.get("rmsstop")
-    if have_two_rms and rmsstop is not None:
-        msg = _plateau_stop(rms, rmsstop, "RMS")
-        if msg:
-            return msg
+    if rms.size >= 2 and rmsstop is not None:
+        plateau_msg = _plateau_stop(rms, rmsstop, "RMS")
+        if plateau_msg:
+            return plateau_msg
 
-    # --- 4. Cost plateau --------------------------------------------------
+    # 4. Cost plateau
     cfstop = opts.get("cfstop")
-    if have_two_cost and cfstop is not None:
-        msg = _plateau_stop(cost, cfstop, "cost")
-        if msg:
-            return msg
+    if cost.size >= 2 and cfstop is not None:
+        plateau_msg = _plateau_stop(cost, cfstop, "cost")
+        if plateau_msg:
+            return plateau_msg
 
-    # --- 5. Slowing-down stop --------------------------------------------
-    if sd_iter is not None and sd_iter == 40:
-        return (
-            "Slowing-down stop: step size repeatedly reduced. "
-            "Consider changing the gradient type or learning rates."
-        )
+    # 5. Slowing-down criterion
+    slow_msg = _slowing_down_message(sd_iter)
+    if slow_msg:
+        return slow_msg
 
     return ""
+
+
+# ---------------------------------------------------------------------------
+# Logging + cost computation helper
+# ---------------------------------------------------------------------------
 
 
 def _log_and_check_convergence(
@@ -185,11 +237,12 @@ def _log_and_check_convergence(
     """Update learning curves, compute cost (if requested), and check convergence."""
     verbose = int(state.opts["verbose"])
     elapsed = time.time() - state.time_start
+
     state.lc["rms"].append(float(rms))
     state.lc["prms"].append(float(prms))
     state.lc["time"].append(float(elapsed))
 
-    if np.size(state.opts["cfstop"]) > 0:
+    if np.size(state.opts.get("cfstop", [])) > 0:
         mask_arr = (
             state.mask.toarray().astype(bool)  # type: ignore[union-attr]
             if issparse(state.mask)
@@ -214,6 +267,7 @@ def _log_and_check_convergence(
     else:
         state.lc["cost"].append(float("nan"))
 
+    # UI / logging hooks
     display_progress(state.dsph, state.lc)
 
     angles = subspace_angles(state.a, state.a_old)

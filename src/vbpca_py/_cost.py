@@ -82,6 +82,9 @@ class CostParams:
         n_data:
             Optional number of observed entries; if None, inferred from
             the mask.
+        num_cpu:
+            Number of CPU threads to use for the RMS computation on the
+            sparse path. Values < 1 are coerced to 1.
     """
 
     mu: np.ndarray
@@ -95,6 +98,7 @@ class CostParams:
     mask: np.ndarray | sp.spmatrix | None = None
     s_xv: float | None = None
     n_data: int | None = None
+    num_cpu: int = 1
 
 
 @dataclass(slots=True)
@@ -117,6 +121,7 @@ class CovarianceInfo:
     score_pattern_index: np.ndarray | None
     mu_variances: np.ndarray | None
     s_xv: float | None
+    num_cpu: int
 
 
 # ============================================================
@@ -176,6 +181,130 @@ def _build_mask_and_clean_x(
     return x_clean, mask_out, row_idx, col_idx
 
 
+def _sxv_identity_contrib(
+    a: np.ndarray,
+    s: np.ndarray,
+    obs: ObservationInfo,
+    loading_covs: list[np.ndarray] | None,
+) -> float:
+    """Contribution to s_xv when Sv = I for all columns."""
+    _ = s  # scores only used when Av is provided
+
+    contrib = 0.0
+
+    # a_i^T I a_i = ||a_i||^2, aggregated by row occurrence counts.
+    n_features = a.shape[0]
+    row_counts = np.bincount(obs.row_idx, minlength=n_features)
+    row_norm_sq = np.sum(a * a, axis=1)
+    contrib += float(np.sum(row_counts * row_norm_sq))
+
+    # If Av is present, per-observation terms depending on both i and j.
+    if loading_covs is not None and len(loading_covs) > 0:
+        for i, j in zip(obs.row_idx, obs.col_idx, strict=True):
+            if i >= len(loading_covs):
+                continue
+            av_i = loading_covs[i]
+            s_j = s[:, j]
+            contrib += float(s_j @ av_i @ s_j)
+            contrib += float(np.trace(av_i))
+
+    return contrib
+
+
+def _sxv_patterned_fastpath(
+    a: np.ndarray,
+    obs: ObservationInfo,
+    score_covs: list[np.ndarray],
+    pattern_index: np.ndarray,
+) -> float:
+    """Fast path for Sv with pattern indices and no Av.
+
+    Aggregates contributions a_i^T Sv_p a_i over (row, pattern) counts.
+    """
+    n_features = a.shape[0]
+    n_patterns = len(score_covs)
+
+    # For each observation (i, j), determine its pattern p and count (i, p).
+    pat = pattern_index[obs.col_idx]
+    counts = np.zeros((n_features, n_patterns), dtype=np.int64)
+    np.add.at(counts, (obs.row_idx, pat), 1)
+
+    contrib = 0.0
+    for p, sv_p in enumerate(score_covs):
+        if sv_p is None:
+            continue
+        a_sv = a @ sv_p  # (n_features, k)
+        per_row = np.sum(a_sv * a, axis=1)  # a_i^T Sv_p a_i
+        contrib += float(np.sum(counts[:, p] * per_row))
+
+    return contrib
+
+
+def _sxv_general_per_observation(
+    a: np.ndarray,
+    s: np.ndarray,
+    obs: ObservationInfo,
+    cov: CovarianceInfo,
+) -> float:
+    """General per-observation Sv/Av contribution."""
+    contrib = 0.0
+    score_covs = cov.score_covariances
+    loading_covs = cov.loading_covariances
+    pattern_index = cov.score_pattern_index
+
+    if score_covs is None:
+        return 0.0
+
+    for i, j in zip(obs.row_idx, obs.col_idx, strict=True):
+        sv_j = (
+            score_covs[pattern_index[j]] if pattern_index is not None else score_covs[j]
+        )
+        a_i = a[i, :]
+        contrib += float(a_i @ sv_j @ a_i.T)
+
+        if loading_covs is not None and i < len(loading_covs):
+            av_i = loading_covs[i]
+            s_j = s[:, j]
+            contrib += float(s_j @ av_i @ s_j)
+            contrib += float(np.sum(sv_j * av_i))
+
+    return contrib
+
+
+def _sxv_score_covariance_contrib(
+    a: np.ndarray,
+    s: np.ndarray,
+    obs: ObservationInfo,
+    cov: CovarianceInfo,
+) -> float:
+    """Variance contribution from Sv, Av, or both."""
+    score_covs = cov.score_covariances
+    loading_covs = cov.loading_covariances
+    pattern_index = cov.score_pattern_index
+
+    # Case 1: No Sv provided => Sv = I.
+    if score_covs is None:
+        return _sxv_identity_contrib(a, s, obs, loading_covs)
+
+    # Case 2: Sv present, no Av, and pattern index available => fast path.
+    if loading_covs is None and pattern_index is not None:
+        return _sxv_patterned_fastpath(a, obs, score_covs, pattern_index)
+
+    # Case 3: General per-observation path.
+    return _sxv_general_per_observation(a, s, obs, cov)
+
+
+def _sxv_mu_variance_contrib(
+    obs: ObservationInfo,
+    cov: CovarianceInfo,
+) -> float:
+    """Contribution from posterior variances of mu."""
+    mu_vars = cov.mu_variances
+    if mu_vars is None or mu_vars.size == 0:
+        return 0.0
+    return float(np.sum(mu_vars[obs.row_idx]))
+
+
 def _compute_sxv(
     x: np.ndarray | sp.spmatrix,
     a: np.ndarray,
@@ -183,7 +312,8 @@ def _compute_sxv(
     obs: ObservationInfo,
     cov: CovarianceInfo,
 ) -> tuple[float, int]:
-    """Compute or refine the expected squared reconstruction error `s_xv`.
+    """
+    Compute or refine the expected squared reconstruction error s_xv.
 
     This includes:
     - the deterministic residual contribution (via RMS), and
@@ -196,58 +326,18 @@ def _compute_sxv(
     if cov.s_xv is not None:
         return float(cov.s_xv), n_data_effective
 
-    # RMS reconstruction error (handles sparse/dense internally)
-    rms_config = RmsConfig(n_observed=n_data_effective, num_cpu=1)
+    # RMS reconstruction error (handles sparse/dense internally),
+    # using the specified number of CPU threads.
+    rms_config = RmsConfig(
+        n_observed=n_data_effective,
+        num_cpu=max(int(cov.num_cpu), 1),
+    )
     rms, _ = compute_rms(x, a, s, obs.mask, rms_config)
     s_xv_local = float((rms**2) * n_data_effective)
 
-    n_components = cov.n_components
-    loading_covariances = cov.loading_covariances
-    score_covariances = cov.score_covariances
-    score_pattern_index = cov.score_pattern_index
-    mu_variances = cov.mu_variances
-
-    # Contributions from Sv / Av
-    if score_covariances is None:
-        # No score covariances given; use identity for each column.
-        sv_identity = np.eye(n_components)
-        for r in range(n_data_effective):
-            i = obs.row_idx[r]
-            j = obs.col_idx[r]
-            a_i = a[i, :]  # (k,)
-            sv_j = sv_identity
-
-            s_xv_local += float(a_i @ sv_j @ a_i.T)
-
-            if loading_covariances is not None and len(loading_covariances) > i:
-                s_j = s[:, j]  # (k,)
-                av_i = loading_covariances[i]  # (k, k)
-                s_xv_local += float(s_j.T @ av_i @ s_j)
-                s_xv_local += float(np.sum(sv_j * av_i))
-    else:
-        # Score covariances provided; either direct or via pattern indices.
-        for r in range(n_data_effective):
-            i = obs.row_idx[r]
-            j = obs.col_idx[r]
-
-            if score_pattern_index is not None and len(score_pattern_index) > j:
-                sv_j = score_covariances[score_pattern_index[j]]
-            else:
-                sv_j = score_covariances[j]
-
-            a_i = a[i, :]
-            s_xv_local += float(a_i @ sv_j @ a_i.T)
-
-            if loading_covariances is not None and len(loading_covariances) > i:
-                s_j = s[:, j]
-                av_i = loading_covariances[i]
-                s_xv_local += float(s_j.T @ av_i @ s_j)
-                s_xv_local += float(np.sum(sv_j * av_i))
-
-    # Contributions from mu posterior variances
-    if mu_variances is not None and mu_variances.size > 0:
-        # Each row variance contributes once per observed element in that row.
-        s_xv_local += float(np.sum(mu_variances[obs.row_idx]))
+    # Add covariance contributions
+    s_xv_local += _sxv_score_covariance_contrib(a, s, obs, cov)
+    s_xv_local += _sxv_mu_variance_contrib(obs, cov)
 
     return s_xv_local, n_data_effective
 
@@ -420,7 +510,7 @@ def compute_full_cost(
             Factor scores of shape (n_components, n_samples).
         params:
             Grouped parameters controlling priors, posterior covariances,
-            masking, and noise variance.
+            masking, noise variance, and RMS threading.
 
     Returns:
         cost:
@@ -465,6 +555,7 @@ def compute_full_cost(
         score_pattern_index=params.score_pattern_index,
         mu_variances=params.mu_variances,
         s_xv=params.s_xv,
+        num_cpu=params.num_cpu,
     )
 
     # Compute s_xv and n_data (data term core)

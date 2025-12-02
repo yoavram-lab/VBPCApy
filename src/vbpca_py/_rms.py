@@ -1,9 +1,8 @@
-# src/vbpca_py/_rms.py
 """
 RMS computation utilities for Variational Bayesian PCA.
 
 This module provides a vectorized, shape-safe implementation of
-``compute_rms``, which computes both:
+compute_rms, which computes both:
 
 1. The elementwise reconstruction error matrix
    E = (data - loadings @ scores) ⊙ mask   (dense or sparse), and
@@ -18,14 +17,14 @@ Notation mapping to the original paper / MATLAB code:
 - mask     ↔ M
 
 Here:
-- ``data`` is the observed data matrix (dense or sparse).
-- ``loadings`` and ``scores`` are factor matrices such that
-  ``loadings @ scores`` has the same shape as ``data``.
-- ``mask`` is a binary mask of the same shape as ``data``
+- data is the observed data matrix (dense or sparse).
+- loadings and scores are factor matrices such that
+  loadings @ scores has the same shape as data.
+- mask is a binary mask of the same shape as data
   (1 = observed, 0 = missing).
-- ``config.n_observed`` is the *number of observed entries*, supplied
+- config.n_observed is the *number of observed entries*, supplied
   by the caller.
-- ``config.num_cpu`` configures CPU threads used on the sparse path.
+- config.num_cpu configures CPU threads used on the sparse path.
 - For sparse data, reconstruction errors are computed by the optimized
   C++ backend via :func:`vbpca_py._sparse_error.sparse_reconstruction_error`.
 
@@ -101,7 +100,7 @@ def compute_rms(
         Factor scores with shape (k, n_samples).
 
     mask : ndarray or sparse matrix
-        Mask matrix of shape equal to ``data``. Ones mark observed entries,
+        Mask matrix of shape equal to data. Ones mark observed entries,
         zeros mark missing. May be dense or sparse.
 
     config : RmsConfig
@@ -114,8 +113,8 @@ def compute_rms(
         Root-mean-square reconstruction error over observed entries.
 
     err : ndarray or sparse matrix
-        Elementwise error matrix ``(data − loadings @ scores) ⊙ mask``.
-        Sparse if ``data`` was sparse.
+        Elementwise error matrix (data - loadings @ scores) ⊙ mask.
+        Sparse if data was sparse.
 
     Raises:
     ------

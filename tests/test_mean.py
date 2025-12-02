@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 import scipy.sparse as sp
 
-from vbpca_py._mean import subtract_mu
+from vbpca_py._mean import ProbeMatrices, subtract_mu
 
 
 def _close(a: float, b: float, tol: float = 1e-12) -> bool:
@@ -64,12 +64,13 @@ def test_subtract_mu_dense_with_probe() -> None:
     mask = np.ones_like(x)
     mask_probe = np.array([[1.0, 0.0], [0.0, 1.0]])
 
+    probe = ProbeMatrices(x=x_probe, mask=mask_probe)
+
     x_out, x_probe_out = subtract_mu(
         mu,
         x,
         mask,
-        x_probe=x_probe,
-        mask_probe=mask_probe,
+        probe=probe,
         update_bias=True,
     )
 
@@ -77,25 +78,26 @@ def test_subtract_mu_dense_with_probe() -> None:
     expected_probe = x_probe - mu[:, None] * mask_probe
 
     assert isinstance(x_out, np.ndarray)
-    assert isinstance(x_probe_out, np.ndarray | type(None))
     assert x_probe_out is not None
+    assert isinstance(x_probe_out, np.ndarray)
     assert np.allclose(x_out, expected_x)
     assert np.allclose(x_probe_out, expected_probe)
 
 
 def test_subtract_mu_update_bias_false_returns_unchanged() -> None:
-    """When update_bias is False, x and x_probe are returned unchanged."""
+    """When update_bias is False, x and probe.x are returned unchanged."""
     x = np.array([[1.0, 2.0], [3.0, 4.0]])
     x_probe = np.array([[5.0, 6.0], [7.0, 8.0]])
     mu = np.array([0.5, 1.0])
     mask = np.ones_like(x)
 
+    probe = ProbeMatrices(x=x_probe, mask=mask)
+
     x_out, x_probe_out = subtract_mu(
         mu,
         x,
         mask,
-        x_probe=x_probe,
-        mask_probe=mask,
+        probe=probe,
         update_bias=False,
     )
 
@@ -168,7 +170,7 @@ def test_subtract_mu_sparse_zero_becomes_eps() -> None:
 
 
 def test_subtract_mu_sparse_with_probe() -> None:
-    """Sparse x and sparse x_probe both updated."""
+    """Sparse x and sparse probe.x both updated."""
     # 2x2 CSR:
     # [1 0]
     # [0 2]
@@ -182,16 +184,18 @@ def test_subtract_mu_sparse_with_probe() -> None:
     mask = np.ones((2, 2))  # ignored for sparse
     mask_probe = np.ones((2, 2))
 
+    probe = ProbeMatrices(x=x_probe, mask=mask_probe)
+
     x_out, x_probe_out = subtract_mu(
         mu,
         x,
         mask,
-        x_probe=x_probe,
-        mask_probe=mask_probe,
+        probe=probe,
         update_bias=True,
     )
 
     assert sp.isspmatrix_csr(x_out)
+    assert x_probe_out is not None
     assert sp.isspmatrix_csr(x_probe_out)
 
     dense = x_out.toarray()
@@ -231,40 +235,40 @@ def test_subtract_mu_shape_errors() -> None:
             update_bias=True,
         )
 
-    # Probe mask required if x_probe is given (dense case)
+    # Probe mask required if probe.x is given (dense case)
     x_probe = np.ones_like(x)
+    probe_missing_mask = ProbeMatrices(x=x_probe, mask=None)
     with pytest.raises(ValueError, match="mask_probe must be provided"):
         subtract_mu(
             mu,
             x,
             mask,
-            x_probe=x_probe,
-            mask_probe=None,
+            probe=probe_missing_mask,
             update_bias=True,
         )
 
     # Probe rows mismatch (dense)
     x_probe2 = np.ones((3, 3))
     mask_probe2 = np.ones_like(x_probe2)
+    probe_rows_mismatch_dense = ProbeMatrices(x=x_probe2, mask=mask_probe2)
     with pytest.raises(ValueError, match="x_probe must have the same number of rows"):
         subtract_mu(
             mu,
             x,
             mask,
-            x_probe=x_probe2,
-            mask_probe=mask_probe2,
+            probe=probe_rows_mismatch_dense,
             update_bias=True,
         )
 
     # Probe rows mismatch (sparse)
     xs = sp.csr_matrix(x)
     x_probe_sparse = sp.csr_matrix(np.ones((3, 3)))
+    probe_rows_mismatch_sparse = ProbeMatrices(x=x_probe_sparse, mask=mask_probe2)
     with pytest.raises(ValueError, match="x_probe must have the same number of rows"):
         subtract_mu(
             mu,
             xs,
             mask,
-            x_probe=x_probe_sparse,
-            mask_probe=mask_probe2,
+            probe=probe_rows_mismatch_sparse,
             update_bias=True,
         )

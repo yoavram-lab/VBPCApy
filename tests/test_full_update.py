@@ -13,6 +13,7 @@ from vbpca_py._full_update import (
     ScoreState,
     _build_masks_and_counts,
     _final_rotation,
+    _initialize_parameters,
     _missing_patterns_info,
     _observed_indices,
     _prepare_data,
@@ -44,14 +45,14 @@ def _make_dense_with_nans(seed: int = 0) -> np.ndarray:
 def test_build_masks_dense_basic() -> None:
     """Basic test of _build_masks_and_counts with dense input."""
     x = _make_dense_with_nans(seed=1)
-    opts = {
+    opts: dict[str, object] = {
         "xprobe": None,
         "earlystop": 1,
         "init": "random",
         "verbose": 0,
     }
 
-    # prepare_data: just a smoke test on shapes; main logic is in remove_empty_entries
+    # _prepare_data: just a smoke test on shapes; main logic in remove_empty_entries
     x_data, x_probe, n1x, n2x, row_idx, col_idx = _prepare_data(x, opts)
     assert x_data.shape == (n1x, n2x)
     assert x_probe is None
@@ -86,7 +87,12 @@ def test_build_masks_sparse_basic() -> None:
     dense[rng.random(dense.shape) < 0.5] = 0.0
     x_sparse = sp.csr_matrix(dense)
 
-    opts = {"xprobe": None, "earlystop": 1, "init": "random", "verbose": 0}
+    opts: dict[str, object] = {
+        "xprobe": None,
+        "earlystop": 1,
+        "init": "random",
+        "verbose": 0,
+    }
     x_data, x_probe, n1x, n2x, *_ = _prepare_data(x_sparse, opts)
     assert sp.isspmatrix_csr(x_data)
     assert x_data.shape == (n1x, n2x)
@@ -132,6 +138,79 @@ def test_missing_patterns_info_uniquesv_false() -> None:
     assert n_patterns == x.shape[1]
     assert obs_patterns == []
     assert pattern_index is None
+
+
+# ----------------------------------------------------------------------
+# _initialize_parameters
+# ----------------------------------------------------------------------
+
+
+def test_initialize_parameters_basic_centering() -> None:
+    """_initialize_parameters returns correctly shaped parameters and centers data."""
+    rng = np.random.default_rng(10)
+    n_features, n_samples, n_components = 4, 5, 2
+    x = rng.standard_normal((n_features, n_samples))
+
+    # Simple case: no probe, fully observed dense data
+    opts: dict[str, object] = {
+        "init": "random",
+        "bias": 1,
+        "verbose": 0,
+    }
+
+    x_data = x.copy()
+    x_probe = None
+    mask = np.ones_like(x_data, dtype=bool)
+    mask_probe = None
+    n_obs_row = np.sum(mask, axis=1).astype(float)
+
+    n_patterns = n_samples
+    pattern_index = None
+
+    (
+        a,
+        s,
+        mu,
+        noise_var,
+        av,
+        sv,
+        muv,
+        va,
+        vmu,
+        x_centered,
+        x_probe_centered,
+    ) = _initialize_parameters(
+        x_data=x_data,
+        x_probe=x_probe,
+        mask=mask,
+        mask_probe=mask_probe,
+        n_features=n_features,
+        n_samples=n_samples,
+        n_components=n_components,
+        n_patterns=n_patterns,
+        pattern_index=pattern_index,
+        n_obs_row=n_obs_row,
+        use_prior=True,
+        use_postvar=True,
+        opts=opts,
+    )
+
+    # Shapes
+    assert a.shape == (n_features, n_components)
+    assert s.shape == (n_components, n_samples)
+    assert mu.shape == (n_features, 1)
+    assert muv.shape == (n_features, 1)
+    assert isinstance(noise_var, float)
+    assert isinstance(vmu, float)
+    assert va.shape == (n_components,)
+    assert len(av) == n_features
+    assert len(sv) == n_patterns
+
+    # Centering: with random init Mu (default) and bias=True, data should
+    # be shifted but remain finite and same shape; probe is None.
+    assert x_centered.shape == x_data.shape
+    assert np.all(np.isfinite(x_centered))
+    assert x_probe_centered is None
 
 
 # ----------------------------------------------------------------------

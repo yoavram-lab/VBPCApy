@@ -1,4 +1,3 @@
-# src/vbpca_py/_monitoring.py
 """
 Initialization, logging, and (optional) progress display utilities for VBPCA.
 
@@ -24,6 +23,8 @@ import numpy as np
 from scipy.io import loadmat
 from scipy.linalg import orth
 
+from ._rms import RmsConfig, compute_rms
+
 logger = logging.getLogger(__name__)
 
 try:
@@ -34,6 +35,8 @@ except ImportError:  # pragma: no cover
 __all__ = [
     "InitResult",
     "InitShapes",
+    "InitialMonitoringInputs",
+    "_initial_monitoring",
     "display_init",
     "display_progress",
     "init_params",
@@ -49,6 +52,11 @@ __all__ = [
 ERR_INIT_TYPE = "init must be a string, mapping, or None."
 ERR_MUV_SHAPE = "Muv must have shape (n_features, 1)."
 ERR_AV_SHAPE = "Unsupported Av array shape for initialization."
+ERR_SV_SHAPE = (
+    "Unsupported Sv array shape for initialization: expected "
+    "(n_components, n_samples) or "
+    "(n_samples, n_components, n_components)."
+)
 ERR_SV_PATTERN_INDEX = (
     "score_pattern_index or Isv is required when n_obs_patterns < n_samples."
 )
@@ -148,7 +156,8 @@ def _normalize_init(init: str | Mapping[str, Any] | None) -> dict[str, Any]:
             return {}
 
         mat_data = loadmat(init)
-        # If MATLAB stored a struct named "init", prefer that; otherwise use the whole dict.
+        # If MATLAB stored a struct named "init", prefer that; otherwise
+        # use the whole dict.
         if "init" in mat_data:
             raw = mat_data["init"]
             # MATLAB structs come in with dtype.names
@@ -169,11 +178,6 @@ def _normalize_init(init: str | Mapping[str, Any] | None) -> dict[str, Any]:
         return dict(init)
 
     raise ValueError(ERR_INIT_TYPE)
-
-
-# ---------------------------------------------------------------------
-# Helpers: A and Av
-# ---------------------------------------------------------------------
 
 
 def _init_a_av(
@@ -246,11 +250,6 @@ def _init_mu_muv_v(
     return mu, muv, v
 
 
-# ---------------------------------------------------------------------
-# Helpers: S and Sv
-# ---------------------------------------------------------------------
-
-
 def _init_s_sv(
     init_dict: Mapping[str, Any],
     shapes: InitShapes,
@@ -280,7 +279,7 @@ def _init_s_sv(
     if n_obs_patterns < n_samples:
         if isv is None:
             raise ValueError(ERR_SV_PATTERN_INDEX)
-        sv = _init_sv_pattern_mode(sv_raw, isv, n_obs_patterns, n_components)
+        sv = _init_sv_pattern_mode(sv_raw, isv, n_obs_patterns)
         return s, sv
 
     # No pattern-sharing: one covariance per sample.
@@ -300,7 +299,7 @@ def _init_s_sv(
 
 def _resolve_score_pattern_index(
     score_pattern_index: np.ndarray | Sequence[int] | None,
-    isv_init: Any,
+    isv_init: np.ndarray | Sequence[int] | None,
     n_samples: int,
 ) -> np.ndarray | None:
     """Resolve the score pattern index from explicit argument or init dict."""
@@ -314,10 +313,9 @@ def _resolve_score_pattern_index(
 
 
 def _init_sv_pattern_mode(
-    sv_raw: Any,
+    sv_raw: np.ndarray | Sequence[np.ndarray],
     isv: np.ndarray,
     n_obs_patterns: int,
-    n_components: int,
 ) -> list[np.ndarray]:
     """Initialize Sv when multiple columns share covariance patterns."""
     _, first_idx = np.unique(isv, return_index=True)
@@ -326,14 +324,14 @@ def _init_sv_pattern_mode(
         sv_arr = np.asarray(sv_raw, dtype=float)
         # Expect shape (n_components, n_samples).
         sv_list: list[np.ndarray] = []
-        for j in range(n_obs_patterns):
-            col = isv[first_idx[j]]
+        for pattern_idx in range(n_obs_patterns):
+            col = isv[first_idx[pattern_idx]]
             sv_list.append(np.diag(sv_arr[:, col]))
         return sv_list
 
-    sv_list = []
-    for j in range(n_obs_patterns):
-        col = isv[first_idx[j]]
+    sv_list: list[np.ndarray] = []
+    for pattern_idx in range(n_obs_patterns):
+        col = isv[first_idx[pattern_idx]]
         sv_list.append(np.asarray(sv_raw[col], dtype=float))
     return sv_list
 
@@ -348,8 +346,7 @@ def _expand_sv_array(
         return [np.diag(sv_arr[:, j]) for j in range(n_samples)]
     if sv_arr.ndim == 3 and sv_arr.shape[0] == n_samples:
         return [sv_arr[j] for j in range(n_samples)]
-    # Fallback if shape is unexpected; caller can decide how to handle.
-    return []
+    raise ValueError(ERR_SV_SHAPE)
 
 
 # ---------------------------------------------------------------------
@@ -431,8 +428,6 @@ def display_init(display: int, lc: Mapping[str, Sequence[float]]) -> dict[str, A
     ----------
     display
         If 0, returns a dict with {'display': False}.
-        If non-zero and matplotlib is available, creates a figure with two
-        subplots and returns handles.
     lc
         Log container with 'rms' and 'prms' sequences.
 
@@ -461,7 +456,7 @@ def display_init(display: int, lc: Mapping[str, Sequence[float]]) -> dict[str, A
     (line_rms,) = ax1.plot(steps_rms, rms_values, label="Training RMS")
     ax1.set_ylabel("RMS")
     ax1.legend()
-    ax1.grid(True)
+    ax1.grid(visible=True)
 
     # Probe / test RMS
     ax2 = axes[1]
@@ -470,7 +465,7 @@ def display_init(display: int, lc: Mapping[str, Sequence[float]]) -> dict[str, A
     ax2.set_xlabel("Step")
     ax2.set_ylabel("RMS")
     ax2.legend()
-    ax2.grid(True)
+    ax2.grid(visible=True)
 
     plt.tight_layout()
     plt.draw()
@@ -513,23 +508,46 @@ def display_progress(
     plt.draw()
 
 
-# to do -> edit code below this point to be ruff complinat
+# ---------------------------------------------------------------------
+# Initial monitoring helper (refactored for ruff)
+# ---------------------------------------------------------------------
+
+
+@dataclass
+class InitialMonitoringInputs:
+    """Inputs required for computing initial RMS / probe RMS and logging."""
+
+    x_data: Any  # Matrix type alias is defined elsewhere in the package
+    x_probe: Any | None
+    mask: Any
+    n_data: float
+    n_probe: int
+    a: np.ndarray
+    s: np.ndarray
+    opts: Mapping[str, object]
 
 
 def _initial_monitoring(
-    X: Matrix,
-    Xprobe: Matrix | None,
-    M: Matrix,
-    ndata: float,
-    nprobe: int,
-    A: np.ndarray,
-    S: np.ndarray,
-    opts: Mapping[str, object],
-) -> tuple[float, np.ndarray, float, dict[str, list[float]], dict[str, Any]]:
+    inputs: InitialMonitoringInputs,
+) -> tuple[float, Any, float, dict[str, list[float]], dict[str, Any]]:
     """Compute initial RMS / probe RMS and set up logging / display."""
-    rms, errMx = compute_rms(X, A, S, M, ndata)
-    if nprobe > 0 and Xprobe is not None:
-        prms, _ = compute_rms(Xprobe, A, S, M, nprobe)
+    x_data = inputs.x_data
+    x_probe = inputs.x_probe
+    mask = inputs.mask
+    n_data = inputs.n_data
+    n_probe = inputs.n_probe
+    a = inputs.a
+    s = inputs.s
+    opts = inputs.opts
+
+    num_cpu = int(opts.get("num_cpu", 1))
+
+    cfg_data = RmsConfig(n_observed=int(n_data), num_cpu=num_cpu)
+    rms, err_matrix = compute_rms(x_data, a, s, mask, cfg_data)
+
+    if n_probe > 0 and x_probe is not None:
+        cfg_probe = RmsConfig(n_observed=int(n_probe), num_cpu=num_cpu)
+        prms, _ = compute_rms(x_probe, a, s, mask, cfg_probe)
     else:
         prms = float("nan")
 
@@ -540,6 +558,10 @@ def _initial_monitoring(
         "cost": [float("nan")],
     }
 
-    dsph = display_init(int(opts["display"]), lc)
-    log_first_step(int(opts["verbose"]), float(rms), float(prms))
-    return float(rms), errMx, float(prms), lc, dsph
+    dsph = display_init(display=int(opts["display"]), lc=lc)
+    log_first_step(
+        verbose=int(opts["verbose"]),
+        rms=float(rms),
+        prms=float(prms),
+    )
+    return float(rms), err_matrix, float(prms), lc, dsph

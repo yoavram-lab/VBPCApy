@@ -1,4 +1,10 @@
 # tests/test_converge.py
+"""Tests for convergence checking functionality.
+
+This module contains unit tests for the convergence_check function,
+verifying angle-based stopping, early stopping, RMS plateau detection,
+cost plateau detection, and slowing-down iteration criteria.
+"""
 
 from __future__ import annotations
 
@@ -29,7 +35,7 @@ def _lc(
 # --------------------------------------------------------------------------
 
 
-def test_angle_convergence_triggers():
+def test_angle_convergence_triggers() -> None:
     """If angleA < minangle, we should stop with an angle-based message."""
     opts = {
         "minangle": 1e-3,
@@ -47,7 +53,7 @@ def test_angle_convergence_triggers():
     assert "angle" in msg.lower()
 
 
-def test_no_angle_no_earlystop_no_plateau():
+def test_no_angle_no_earlystop_no_plateau() -> None:
     """If no criterion is met, we should return an empty message."""
     opts = {
         "minangle": 0.0,  # angle always bigger
@@ -65,7 +71,7 @@ def test_no_angle_no_earlystop_no_plateau():
     assert msg == ""
 
 
-def test_early_stop_triggers_when_prms_increases():
+def test_early_stop_triggers_when_prms_increases() -> None:
     """Early stopping triggers when probe RMS increases."""
     opts = {
         "minangle": 0.0,
@@ -88,7 +94,7 @@ def test_early_stop_triggers_when_prms_increases():
 # --------------------------------------------------------------------------
 
 
-def test_rms_plateau_requires_enough_iterations():
+def test_rms_plateau_requires_enough_iterations() -> None:
     """RMS plateau is not checked until we have more than 'window' lag."""
     opts = {
         "minangle": 0.0,
@@ -107,7 +113,7 @@ def test_rms_plateau_requires_enough_iterations():
     assert msg == ""
 
 
-def test_rms_plateau_absolute_tolerance():
+def test_rms_plateau_absolute_tolerance() -> None:
     """RMS plateau stop should trigger when absolute change < abs_tol."""
     opts = {
         "minangle": 0.0,
@@ -129,7 +135,7 @@ def test_rms_plateau_absolute_tolerance():
     assert "rms" in msg.lower()
 
 
-def test_rms_plateau_relative_tolerance():
+def test_rms_plateau_relative_tolerance() -> None:
     """RMS plateau should also work via relative tolerance."""
     opts = {
         "minangle": 0.0,
@@ -155,7 +161,7 @@ def test_rms_plateau_relative_tolerance():
 # --------------------------------------------------------------------------
 
 
-def test_cost_plateau_requires_enough_iterations():
+def test_cost_plateau_requires_enough_iterations() -> None:
     """Cost plateau is not checked until history length > window."""
     opts = {
         "minangle": 0.0,
@@ -173,7 +179,7 @@ def test_cost_plateau_requires_enough_iterations():
     assert msg == ""
 
 
-def test_cost_plateau_after_rms():
+def test_cost_plateau_after_rms() -> None:
     """Cost plateau is checked (after angle/earlystop/RMS) when enabled."""
     opts = {
         "minangle": 0.0,
@@ -199,7 +205,7 @@ def test_cost_plateau_after_rms():
 # --------------------------------------------------------------------------
 
 
-def test_slowing_down_stop_triggers_at_40():
+def test_slowing_down_stop_triggers_at_40() -> None:
     """Slowing-down stop criterion triggers exactly when sd_iter == 40."""
     opts = {
         "minangle": 0.0,
@@ -217,7 +223,7 @@ def test_slowing_down_stop_triggers_at_40():
     assert "slowing-down" in msg.lower() or "slowing" in msg.lower()
 
 
-def test_slowing_down_stop_not_triggered_before_40():
+def test_slowing_down_stop_not_triggered_before_40() -> None:
     """sd_iter < 40 should not trigger the slowing-down criterion."""
     opts = {
         "minangle": 0.0,
@@ -240,7 +246,7 @@ def test_slowing_down_stop_not_triggered_before_40():
 # --------------------------------------------------------------------------
 
 
-def test_angle_has_priority_over_rms_and_cost():
+def test_angle_has_priority_over_rms_and_cost() -> None:
     """If angle criterion is met, it should short-circuit other criteria."""
     opts = {
         "minangle": 1e-3,
@@ -259,7 +265,7 @@ def test_angle_has_priority_over_rms_and_cost():
     assert "angle" in msg.lower()
 
 
-def test_earlystop_has_priority_over_rms_and_cost():
+def test_earlystop_has_priority_over_rms_and_cost() -> None:
     """If earlystop is triggered, RMS/cost plateaus should not override it."""
     opts = {
         "minangle": 0.0,

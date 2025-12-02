@@ -70,7 +70,7 @@ def _missing_patterns(
     if mask.ndim != 2:
         raise ValueError(MASK_WRONG_DIM)
 
-    n_rows, n_cols = mask.shape  # n_rows is unused but kept for clarity
+    _n_rows, n_cols = mask.shape  # n_rows is unused but kept for clarity
 
     # Degenerate case: no columns.
     if n_cols == 0:

@@ -7,15 +7,33 @@ import time
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
+from scipy.sparse import spmatrix
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
-from scipy.sparse import spmatrix
 
+from ._converge import ConvergenceState, _log_and_check_convergence
 from ._expand import _add_m_cols, _add_m_rows
-from ._monitoring import (
-    _initial_monitoring,
+from ._full_update import (
+    BiasState,
+    CenteringState,
+    NoiseState,
+    ScoreState,
+    _build_masks_and_counts,
+    _final_rotation,
+    _initialize_parameters,
+    _missing_patterns_info,
+    _observed_indices,
+    _prepare_data,
+    _recompute_rms,
+    _update_bias,
+    _update_hyperpriors,
+    _update_loadings,
+    _update_noise_variance,
+    _update_scores,
 )
+from ._mean import subtract_mu
+from ._monitoring import InitialMonitoringInputs, _initial_monitoring
 from ._options import _options
 
 logger = logging.getLogger(__name__)
@@ -89,183 +107,259 @@ def pca_full(x: Matrix, n_components: int, **kwargs: object) -> dict[str, Any]:
     opts = _build_options(kwargs)
     use_prior, use_postvar = _select_algorithm(opts)
 
-    X, Xprobe, n1x, n2x, Ir, Ic = _prepare_data(x, opts)
-    M, Mprobe, Nobs_i, ndata, nprobe = _build_masks_and_counts(X, Xprobe, opts)
-    IX, JX = _observed_indices(X)
+    # ------------------------------------------------------------------
+    # Data preparation and missingness masks
+    # ------------------------------------------------------------------
+    x_data, x_probe, n1x, n2x, row_idx, col_idx = _prepare_data(x, opts)
+    x_data, x_probe, mask, mask_probe, n_obs_row, n_data, n_probe = (
+        _build_masks_and_counts(x_data, x_probe, opts)
+    )
 
-    n1, n2 = X.shape
-    nobscomb, obscombj, Isv_use = _missing_patterns_info(M, opts, n2)
+    ix_obs, jx_obs = _observed_indices(x_data)
 
+    n_features, n_samples = x_data.shape
+    n_patterns, obs_patterns, pattern_index = _missing_patterns_info(
+        mask,
+        opts,
+        n_samples=n_samples,
+    )
+
+    # ------------------------------------------------------------------
+    # Parameter initialisation + initial centering
+    # ------------------------------------------------------------------
     (
-        A,
-        S,
-        Mu,
-        V,
-        Av,
-        Sv,
-        Muv,
-        Va,
-        Vmu,
-        X,
-        Xprobe,
+        a,
+        s,
+        mu,
+        noise_var,
+        av,
+        sv,
+        muv,
+        va,
+        vmu,
+        x_data,
+        x_probe,
     ) = _initialize_parameters(
-        X=X,
-        Xprobe=Xprobe,
-        M=M,
-        Nobs_i=Nobs_i,
-        n1=n1,
-        n2=n2,
+        x_data=x_data,
+        x_probe=x_probe,
+        mask=mask,
+        mask_probe=mask_probe,
+        n_features=n_features,
+        n_samples=n_samples,
         n_components=n_components,
-        nobscomb=nobscomb,
-        Isv_use=Isv_use,
+        n_patterns=n_patterns,
+        pattern_index=pattern_index,
+        n_obs_row=n_obs_row,
         use_prior=use_prior,
         use_postvar=use_postvar,
         opts=opts,
     )
 
-    # Initial RMS / logging state
-    rms, errMx, prms, lc, dsph = _initial_monitoring(
-        X, Xprobe, M, ndata, nprobe, A, S, opts
+    # ------------------------------------------------------------------
+    # Initial monitoring (RMS / probe RMS / logging)
+    # ------------------------------------------------------------------
+    init_inputs = InitialMonitoringInputs(
+        x_data=x_data,
+        x_probe=x_probe,
+        mask=mask,
+        n_data=n_data,
+        n_probe=n_probe,
+        a=a,
+        s=s,
+        opts=opts,
     )
-    Aold = A.copy()
+    rms, err_mx, prms, lc, dsph = _initial_monitoring(init_inputs)
+    a_old = a.copy()
 
-    # Hyperparams for Va, Vmu, V
-    hpVa = 0.001
-    hpVb = 0.001
-    hpV = 0.001
+    # ------------------------------------------------------------------
+    # Hyperparameters for Va, Vmu, V
+    # ------------------------------------------------------------------
+    hp_va = 0.001
+    hp_vb = 0.001
+    hp_v = 0.001
 
     time_start = time.time()
     verbose = int(opts["verbose"])
-    rotate_each_iter = int(opts["rotate2pca"])
+    rotate_each_iter = bool(opts["rotate2pca"])
     eye_components = np.eye(n_components, dtype=float)
 
+    # Bias / centering state
+    bias_state = BiasState(
+        mu=mu,
+        muv=muv,
+        noise_var=noise_var,
+        vmu=vmu,
+        n_obs_row=n_obs_row,
+    )
+    centering_state = CenteringState(
+        x_data=x_data,
+        x_probe=x_probe,
+        mask=mask,
+        mask_probe=mask_probe,
+    )
+
     # ------------------------------------------------------------------
-    # Main EM / VB loop
+    # Main VB / EM loop
     # ------------------------------------------------------------------
     for iteration in range(1, int(opts["maxiters"]) + 1):
-        Va, Vmu = _update_hyperpriors(
+        # 1) Update Va, Vmu after broad-prior warmup
+        va, vmu = _update_hyperpriors(
             iteration=iteration,
             use_prior=use_prior,
             niter_broadprior=int(opts["niter_broadprior"]),
             bias=bool(opts["bias"]),
-            Mu=Mu,
-            Muv=Muv,
-            A=A,
-            Av=Av,
-            n1=n1,
-            hpVa=hpVa,
-            hpVb=hpVb,
-            Va=Va,
-            Vmu=Vmu,
+            mu=bias_state.mu,
+            muv=bias_state.muv,
+            a=a,
+            av=av,
+            n_features=n_features,
+            hp_va=hp_va,
+            hp_vb=hp_vb,
+            va=va,
+            vmu=vmu,
         )
 
-        Mu, Muv, X, Xprobe = _update_bias(
+        # 2) Bias / mean update (Mu, Muv) and recenter X / Xprobe
+        bias_state.noise_var = noise_var
+        bias_state.vmu = vmu
+
+        bias_state, centering_state = _update_bias(
             bias=bool(opts["bias"]),
-            Mu=Mu,
-            Muv=Muv,
-            V=V,
-            Vmu=Vmu,
-            Nobs_i=Nobs_i,
-            errMx=errMx,
-            X=X,
-            Xprobe=Xprobe,
-            M=M,
-            Mprobe=Mprobe,
+            bias_state=bias_state,
+            err_mx=err_mx,
+            centering=centering_state,
         )
 
-        A, S, Sv = _update_scores(
-            X=X,
-            M=M,
-            A=A,
-            S=S,
-            Av=Av,
-            Sv=Sv,
-            Isv_use=Isv_use,
-            obscombj=obscombj,
-            V=V,
+        mu = bias_state.mu
+        muv = bias_state.muv
+        # noise_var and vmu remain as scalars above
+
+        x_data = centering_state.x_data
+        x_probe = centering_state.x_probe
+
+        # 3) Update S and Sv (scores and their covariances)
+        score_state = ScoreState(
+            x_data=x_data,
+            mask=mask,
+            a=a,
+            s=s,
+            av=av,
+            sv=sv,
+            pattern_index=pattern_index,
+            obs_patterns=obs_patterns,
+            noise_var=noise_var,
             eye_components=eye_components,
             verbose=verbose,
         )
+        score_state = _update_scores(score_state)
+        s = score_state.s
+        sv = score_state.sv
 
+        # Optional rotate-to-PCA step each iteration, including bias shift
         if rotate_each_iter:
-            A, Av, S, Sv, Mu, X, Xprobe = _maybe_rotate(
-                A=A,
-                Av=Av,
-                S=S,
-                Sv=Sv,
-                Isv_use=Isv_use,
-                obscombj=obscombj,
+            mu_before = mu.copy()
+            a, av, s, sv, mu = _final_rotation(
+                a=a,
+                av=av,
+                s=s,
+                sv=sv,
+                mu=mu,
+                pattern_index=pattern_index,
+                obs_patterns=obs_patterns,
                 bias=bool(opts["bias"]),
-                X=X,
-                Xprobe=Xprobe,
-                M=M,
-                Mprobe=Mprobe,
             )
+            if bool(opts["bias"]):
+                d_mu_iter = mu - mu_before
+                x_data, x_probe = subtract_mu(
+                    d_mu_iter,
+                    x_data,
+                    mask,
+                    x_probe,
+                    mask_probe,
+                    update_bias=True,
+                )
+                centering_state.x_data = x_data
+                centering_state.x_probe = x_probe
+                bias_state.mu = mu
 
-        A, Av = _update_loadings(
-            X=X,
-            M=M,
-            S=S,
-            Av=Av,
-            Sv=Sv,
-            Isv_use=Isv_use,
-            Va=Va,
-            V=V,
+        # 4) Update A and Av (loadings and their covariances)
+        a, av = _update_loadings(
+            x_data=x_data,
+            mask=mask,
+            s=s,
+            av=av,
+            sv=sv,
+            pattern_index=pattern_index,
+            va=va,
+            noise_var=noise_var,
             verbose=verbose,
         )
 
-        rms, prms, errMx = _recompute_rms(
-            X=X,
-            Xprobe=Xprobe,
-            M=M,
-            Mprobe=Mprobe,
-            ndata=ndata,
-            nprobe=nprobe,
-            A=A,
-            S=S,
+        # 5) Recompute RMS / probe RMS and error matrix
+        rms, prms, err_mx = _recompute_rms(
+            x_data=x_data,
+            x_probe=x_probe,
+            mask=mask,
+            mask_probe=mask_probe,
+            n_data=n_data,
+            n_probe=n_probe,
+            a=a,
+            s=s,
         )
 
-        V, sXv = _update_noise_variance(
-            V=V,
-            A=A,
-            S=S,
-            Av=Av,
-            Sv=Sv,
-            Muv=Muv,
-            rms=rms,
-            IX=IX,
-            JX=JX,
-            Isv_use=Isv_use,
-            ndata=ndata,
+        # 6) Update noise variance V
+        noise_state = NoiseState(
+            a=a,
+            s=s,
+            av=av,
+            sv=sv,
+            muv=muv,
+            pattern_index=pattern_index,
+            n_data=n_data,
+            noise_var=noise_var,
         )
+        noise_state, s_xv = _update_noise_variance(
+            noise_state,
+            rms,
+            ix_obs,
+            jx_obs,
+            hp_v=hp_v,
+        )
+        noise_var = noise_state.noise_var
+        bias_state.noise_var = noise_var  # keep in sync
 
-        lc, angleA, convmsg, Aold = _log_and_check_convergence(
+        # 7) Logging, cost, convergence check
+        conv_state = ConvergenceState(
             opts=opts,
-            X=X,
-            A=A,
-            S=S,
-            Mu=Mu,
-            V=V,
-            Va=Va,
-            Av=Av,
-            Vmu=Vmu,
-            Muv=Muv,
-            Sv=Sv,
-            Isv_use=Isv_use,
-            M=M,
-            sXv=sXv,
-            ndata=ndata,
+            x_data=x_data,
+            a=a,
+            s=s,
+            mu=mu,
+            noise_var=noise_var,
+            va=va,
+            av=av,
+            vmu=vmu,
+            muv=muv,
+            sv=sv,
+            pattern_index=pattern_index,
+            mask=mask,
+            s_xv=s_xv,
+            n_data=n_data,
             time_start=time_start,
             lc=lc,
-            rms=rms,
-            prms=prms,
-            Aold=Aold,
+            a_old=a_old,
             dsph=dsph,
         )
 
+        lc, angle_a, convmsg, a_old = _log_and_check_convergence(
+            conv_state,
+            rms,
+            prms,
+        )
+
         if convmsg:
+            # In VB mode, ignore convergence if prior never updated
             if use_prior and iteration <= int(opts["niter_broadprior"]):
-                # Prior never updated: ignore convergence and continue
                 pass
             else:
                 if verbose:
@@ -276,44 +370,45 @@ def pca_full(x: Matrix, n_components: int, **kwargs: object) -> dict[str, Any]:
     # Final PCA rotation (if not rotated during iterations)
     # ------------------------------------------------------------------
     if not rotate_each_iter:
-        A, Av, S, Sv, Mu = _final_rotation(
-            A=A,
-            Av=Av,
-            S=S,
-            Sv=Sv,
-            Mu=Mu,
-            Isv_use=Isv_use,
-            obscombj=obscombj,
+        a, av, s, sv, mu = _final_rotation(
+            a=a,
+            av=av,
+            s=s,
+            sv=sv,
+            mu=mu,
+            pattern_index=pattern_index,
+            obs_patterns=obs_patterns,
             bias=bool(opts["bias"]),
         )
 
     # ------------------------------------------------------------------
     # Restore removed rows/columns (add missing rows/cols back)
     # ------------------------------------------------------------------
-    if n1 < n1x:
-        A, Av = _add_m_rows(A, Av, Ir, n1x, Va)
-        Mu, Muv = _add_m_rows(Mu, Muv, Ir, n1x, Vmu)
-    if n2 < n2x:
-        S, Sv, Isv_use = _add_m_cols(S, Sv, Ic, n2x, Isv_use)
+    if n_features < n1x:
+        a, av = _add_m_rows(a, av, row_idx, n1x, va)
+        mu, muv = _add_m_rows(mu, muv, row_idx, n1x, vmu)
+
+    if n_samples < n2x:
+        s, sv, pattern_index = _add_m_cols(s, sv, col_idx, n2x, pattern_index)
 
     # ------------------------------------------------------------------
     # Pack result
     # ------------------------------------------------------------------
     result: dict[str, Any] = {
-        "A": A,
-        "S": S,
-        "Mu": Mu,
-        "V": float(V),
-        "Av": Av,
-        "Sv": Sv,
-        "Isv": Isv_use,
-        "Muv": Muv,
-        "Va": Va,
-        "Vmu": float(Vmu),
+        "A": a,
+        "S": s,
+        "Mu": mu,
+        "V": float(noise_var),
+        "Av": av,
+        "Sv": sv,
+        "Isv": pattern_index,
+        "Muv": muv,
+        "Va": va,
+        "Vmu": float(vmu),
         "lc": lc,
         # Posterior covariances / variances, grouped:
-        "cv": {"A": Av, "S": Sv, "Isv": Isv_use, "Mu": Muv},
-        "hp": {"Va": Va, "Vmu": float(Vmu)},
+        "cv": {"A": av, "S": sv, "Isv": pattern_index, "Mu": muv},
+        "hp": {"Va": va, "Vmu": float(vmu)},
     }
 
     return result
@@ -360,4 +455,5 @@ def _select_algorithm(opts: Mapping[str, object]) -> tuple[bool, bool]:
         return True, False
     if algorithm == "vb":
         return True, True
-    raise ValueError(f"Wrong value of the argument 'algorithm': {opts['algorithm']}")
+    msg = f"Wrong value of the argument 'algorithm': {opts['algorithm']}"
+    raise ValueError(msg)

@@ -154,12 +154,21 @@ def test_sparse_remove_empty_rows_and_columns() -> None:
     assert sp.isspmatrix_csr(x_probe_out)
     assert np.allclose(x_probe_out.toarray(), expected_dense)
 
-    # Init arrays/lists sliced consistently (compare to *originals*)
+    # Init arrays/lists sliced consistently (compare to originals)
     assert np.array_equal(init_out["A"], a_orig[ir, :])
+    assert np.array_equal(init_out["S"], s_orig[:, ic])
+
+    assert len(init_out["Av"]) == len(ir)
+    for k, i in enumerate(ir):
+        assert np.allclose(init_out["Av"][k], av_orig[i])
+
+    assert len(init_out["Sv"]) == len(ic)
+    for k, j in enumerate(ic):
+        assert np.allclose(init_out["Sv"][k], sv_orig[j])
 
 
-def test_init_non_dict_is_passed_through() -> None:
-    """If init is not a dict, it should be returned unchanged."""
+def test_init_non_dict_is_passed_through_no_empty() -> None:
+    """If init is not a dict and there are no empty rows/cols, it is unchanged."""
     x = np.array([[np.nan, 1.0], [2.0, np.nan]])
     x_probe = None
     init = 42  # arbitrary non-dict
@@ -169,6 +178,28 @@ def test_init_non_dict_is_passed_through() -> None:
     # Here both rows and both cols have at least one non-NaN entry.
     assert np.array_equal(ir, np.array([0, 1]))
     assert np.array_equal(ic, np.array([0, 1]))
+    assert init_out == init
+
+
+def test_init_non_dict_is_passed_through_with_empty() -> None:
+    """If init is not a dict and there are empty rows/cols, it is returned unchanged."""
+    # Row 0 is all NaN, col 1 is all NaN
+    x = np.array(
+        [
+            [np.nan, np.nan],
+            [1.0, np.nan],
+        ]
+    )
+    x_probe = None
+    init = "not-a-dict"
+
+    x_out, x_probe_out, ir, ic, init_out = remove_empty_entries(x, x_probe, init)
+
+    # We keep only row 1, column 0
+    assert np.array_equal(ir, np.array([1]))
+    assert np.array_equal(ic, np.array([0]))
+    assert x_out.shape == (1, 1)
+    assert x_probe_out is None
     assert init_out == init
 
 

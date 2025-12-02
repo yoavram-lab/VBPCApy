@@ -393,7 +393,7 @@ def test_add_m_cols_bad_scores_dim() -> None:
 
 
 def test_add_m_cols_kept_cols_mismatch() -> None:
-    """Test _add_m_cols raises error when kept_cols length doesn't match scores columns."""
+    """Test _add_m_cols raises error when kept_cols len doesn't match scores cols."""
     scores = np.array([[1.0, 2.0]])
     with pytest.raises(ValueError, match=re.escape(ERR_SCORES_KEPT_MISMATCH)):
         _add_m_cols(

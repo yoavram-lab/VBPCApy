@@ -22,7 +22,7 @@ from typing import Any
 import numpy as np
 import scipy.sparse as sp
 
-InitType = dict[str, Any] | None
+InitType = Any
 Matrix = np.ndarray | sp.spmatrix
 
 
@@ -103,9 +103,12 @@ def _update_init_dict(
     n_rows_orig: int,
     n_cols_orig: int,
 ) -> InitType:
-    """Update an init dict in-place to match removed rows/columns."""
-    if init is None:
-        return None
+    """Update an init dict in-place to match removed rows/columns.
+
+    If ``init`` is not a dict (or is None), it is returned unchanged.
+    """
+    if init is None or not isinstance(init, dict):
+        return init
 
     n_rows_kept = ir.size
     n_cols_kept = ic.size
@@ -151,7 +154,10 @@ def remove_empty_entries(
         x_probe:
             Optional probe matrix sliced identically to ``x``.
         init:
-            Optional initialization dictionary to update.
+            Optional initialization object. If it is a dict, recognized
+            keys ``"A"``, ``"Av"``, ``"S"``, and ``"Sv"`` are sliced
+            consistently with the retained rows and columns. Non-dict
+            values are passed through unchanged.
 
     Returns:
         x_out, x_probe_out, ir, ic, init_out
@@ -169,7 +175,7 @@ def remove_empty_entries(
     x_out = _slice_matrix_like(x, ir, ic, n_rows_orig, n_cols_orig)
     x_probe_out = _slice_matrix_like(x_probe, ir, ic, n_rows_orig, n_cols_orig)
 
-    # Update init dictionary
+    # Update init dictionary (if dict-like)
     init_out = _update_init_dict(init, ir, ic, n_rows_orig, n_cols_orig)
 
     return x_out, x_probe_out, ir, ic, init_out

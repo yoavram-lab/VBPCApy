@@ -73,7 +73,6 @@ def test_cost_sxv_equivalence() -> None:
     cost1, cost_x1, *_ = compute_full_cost(x, a, s, params1)
 
     # Infer the effective n_data and implied s_xv from cost_x1:
-    # cost_x = 0.5 * s_xv / V + 0.5 * n_data * log(2*pi*V)
     n_data = mask.size
     implied_s_xv = (
         2.0
@@ -318,3 +317,248 @@ def test_cost_mask_ignores_unobserved_entries() -> None:
 
     # Data term must be invariant to changes outside mask
     assert _close(cost_x1, cost_x2, tol=1e-10)
+
+
+# ---------------------------------------------------------------------------
+# Additional tests for s_xv refactor and branches
+# ---------------------------------------------------------------------------
+
+
+def test_cost_sxv_identity_with_loading_covariances_matches_reference() -> None:
+    """Identity Sv with Av present: cost_x matches explicit s_xv reference."""
+    x = np.array([[1.0, 2.0], [3.0, 4.0]])
+    a = np.array([[1.0, 0.0], [0.0, 1.0]])  # identity
+    s = np.array([[0.5, 1.0], [1.5, -0.5]])
+    mu = np.zeros(2)
+    noise_variance = 1.0
+
+    # Simple diagonal Av per row
+    av0 = np.diag([0.5, 0.2])
+    av1 = np.diag([0.3, 0.7])
+    loading_covariances = [av0, av1]
+
+    params = CostParams(
+        mu=mu,
+        noise_variance=noise_variance,
+        loading_covariances=loading_covariances,
+        loading_priors=None,
+    )
+
+    _, cost_x, *_ = compute_full_cost(x, a, s, params)
+
+    # Explicit s_xv reference:
+    residual = x - a @ s
+    sse = float(np.sum(residual**2))
+
+    mask = np.ones_like(x, dtype=bool)
+    row_idx, col_idx = np.where(mask)
+    n_data = mask.size
+
+    # Sv = I for all columns
+    # Sv contribution: sum_{i,j} ||a_i||^2
+    row_norm_sq = np.sum(a**2, axis=1)
+    sv_contrib = float(np.sum(row_norm_sq[row_idx]))
+
+    # Av contributions: sum_{i,j} s_j^T Av_i s_j + sum(Sv_j ⊙ Av_i) with Sv_j = I
+    av_contrib = 0.0
+    for i, j in zip(row_idx, col_idx, strict=True):
+        av_i = loading_covariances[i]
+        s_j = s[:, j]
+        av_contrib += float(s_j.T @ av_i @ s_j)
+        av_contrib += float(np.trace(av_i))
+
+    expected_s_xv = sse + sv_contrib + av_contrib
+    expected_cost_x = 0.5 * expected_s_xv / noise_variance + 0.5 * n_data * np.log(
+        2.0 * np.pi * noise_variance
+    )
+
+    assert _close(cost_x, expected_cost_x, tol=1e-10)
+
+
+def test_cost_sxv_patterned_sv_fastpath_matches_reference() -> None:
+    """Pattern-index Sv fast path: cost_x matches explicit s_xv reference."""
+    # Simple setup: residual term zero
+    a = np.array([[1.0, 0.0], [0.0, 2.0]])
+    s = np.array(
+        [
+            [1.0, 0.0, -1.0, 0.0],
+            [0.0, 1.0, 0.0, -1.0],
+        ]
+    )
+    x = a @ s  # perfect reconstruction
+    mu = np.zeros(2)
+    noise_variance = 1.0
+
+    # Two patterns for Sv
+    sv0 = np.array([[1.0, 0.0], [0.0, 2.0]])
+    sv1 = np.array([[0.5, 0.1], [0.1, 1.5]])
+    score_covariances = [sv0, sv1]
+    score_pattern_index = np.array([0, 1, 0, 1], dtype=int)
+
+    mask = np.ones_like(x, dtype=bool)
+
+    params = CostParams(
+        mu=mu,
+        noise_variance=noise_variance,
+        score_covariances=score_covariances,
+        score_pattern_index=score_pattern_index,
+        mask=mask,
+        loading_priors=None,
+    )
+
+    _, cost_x, *_ = compute_full_cost(x, a, s, params)
+
+    # Reference s_xv: residual zero, no Av, so just sum_{i,j} a_i^T Sv_{p(j)} a_i
+    row_idx, col_idx = np.where(mask)
+    n_data = mask.size
+
+    sv_contrib = 0.0
+    for i, j in zip(row_idx, col_idx, strict=True):
+        sv_j = score_covariances[score_pattern_index[j]]
+        a_i = a[i, :]
+        sv_contrib += float(a_i @ sv_j @ a_i.T)
+
+    expected_s_xv = sv_contrib
+    expected_cost_x = 0.5 * expected_s_xv / noise_variance + 0.5 * n_data * np.log(
+        2.0 * np.pi * noise_variance
+    )
+
+    assert _close(cost_x, expected_cost_x, tol=1e-10)
+
+
+def test_cost_sxv_general_sv_and_av_matches_reference() -> None:
+    """General per-observation Sv+Av branch matches explicit s_xv reference."""
+    # 2x2 example
+    x = np.zeros((2, 2))
+    a = np.array([[1.0, 0.5], [0.2, -0.3]])
+    s = np.array([[0.5, -1.0], [1.0, 0.3]])
+    mu = np.zeros(2)
+    noise_variance = 1.0
+
+    # Per-column Sv
+    sv0 = np.array([[1.0, 0.2], [0.2, 0.5]])
+    sv1 = np.array([[0.7, 0.1], [0.1, 0.9]])
+    score_covariances = [sv0, sv1]
+
+    # Per-row Av
+    av0 = np.array([[0.4, 0.0], [0.0, 0.6]])
+    av1 = np.array([[0.3, 0.1], [0.1, 0.8]])
+    loading_covariances = [av0, av1]
+
+    mask = np.ones_like(x, dtype=bool)
+
+    params = CostParams(
+        mu=mu,
+        noise_variance=noise_variance,
+        loading_covariances=loading_covariances,
+        score_covariances=score_covariances,
+        score_pattern_index=None,  # force general Sv path
+        mask=mask,
+        loading_priors=None,
+    )
+
+    _, cost_x, *_ = compute_full_cost(x, a, s, params)
+
+    row_idx, col_idx = np.where(mask)
+    n_data = mask.size
+
+    # Residual term: x - a@s
+    residual = x - a @ s
+    sse = float(np.sum(residual**2))
+
+    # Full Sv+Av contribution:
+    var_contrib = 0.0
+    for i, j in zip(row_idx, col_idx, strict=True):
+        a_i = a[i, :]
+        s_j = s[:, j]
+        sv_j = score_covariances[j]
+        av_i = loading_covariances[i]
+
+        var_contrib += float(a_i @ sv_j @ a_i.T)
+        var_contrib += float(s_j.T @ av_i @ s_j)
+        var_contrib += float(np.sum(sv_j * av_i))
+
+    expected_s_xv = sse + var_contrib
+    expected_cost_x = 0.5 * expected_s_xv / noise_variance + 0.5 * n_data * np.log(
+        2.0 * np.pi * noise_variance
+    )
+
+    assert _close(cost_x, expected_cost_x, tol=1e-10)
+
+
+def test_cost_sxv_mu_variances_contribution_only() -> None:
+    """mu_variances contribution to s_xv matches expected delta in cost_x."""
+    # Choose setup where residual and Sv/Av contributions are zero.
+    x = np.zeros((2, 3))
+    a = np.zeros((2, 1))
+    s = np.zeros((1, 3))
+    mu = np.zeros(2)
+    noise_variance = 1.0
+
+    mask = np.ones_like(x, dtype=bool)
+    row_idx, _ = np.where(mask)
+
+    mu_variances = np.array([0.5, 1.5])
+
+    # Without mu_variances
+    params_no_muvar = CostParams(
+        mu=mu,
+        noise_variance=noise_variance,
+        mask=mask,
+        loading_priors=None,
+    )
+    _, cost_x_no_muvar, *_ = compute_full_cost(x, a, s, params_no_muvar)
+
+    # With mu_variances
+    params_with_muvar = CostParams(
+        mu=mu,
+        noise_variance=noise_variance,
+        mask=mask,
+        mu_variances=mu_variances,
+        loading_priors=None,
+    )
+    _, cost_x_with_muvar, *_ = compute_full_cost(x, a, s, params_with_muvar)
+
+    # Expected delta in cost_x comes from Δs_xv = sum(mu_var[row_idx])
+    delta_s_xv = float(np.sum(mu_variances[row_idx]))
+    expected_delta_cost_x = 0.5 * delta_s_xv / noise_variance
+
+    assert _close(
+        cost_x_with_muvar - cost_x_no_muvar,
+        expected_delta_cost_x,
+        tol=1e-10,
+    )
+
+
+def test_cost_sparse_num_cpu_invariance() -> None:
+    """Changing num_cpu in CostParams should not change the cost."""
+    data_vals = np.array([2.0, -1.0])
+    indices = np.array([0, 1])
+    indptr = np.array([0, 1, 2])
+    x = sp.csr_matrix((data_vals, indices, indptr), shape=(2, 2))
+
+    a = np.array([[1.0, 0.0], [0.0, 1.0]])
+    s = np.zeros((2, 2))
+    mu = np.zeros(2)
+    noise_variance = 1.0
+    mask = np.ones((2, 2), dtype=bool)
+
+    params_cpu1 = CostParams(
+        mu=mu,
+        noise_variance=noise_variance,
+        mask=mask,
+        loading_priors=None,
+        num_cpu=1,
+    )
+    params_cpu4 = CostParams(
+        mu=mu,
+        noise_variance=noise_variance,
+        mask=mask,
+        loading_priors=None,
+        num_cpu=4,
+    )
+
+    _, cost_x1, *_ = compute_full_cost(x, a, s, params_cpu1)
+    _, cost_x4, *_ = compute_full_cost(x, a, s, params_cpu4)
+
+    assert _close(cost_x1, cost_x4, tol=1e-12)
