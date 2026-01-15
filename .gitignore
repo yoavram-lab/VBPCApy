@@ -75,3 +75,6 @@ tests/Full_Tests/OHspecial_transformed_iso_data1.parquet
 .prof/
 .cache/
 pytest_cache/
+# pixi environments
+.pixi/*
+!.pixi/config.toml
