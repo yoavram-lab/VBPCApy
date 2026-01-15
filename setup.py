@@ -1,4 +1,7 @@
 import os
+import platform
+import subprocess
+from typing import List
 
 import pybind11
 from setuptools import Extension, find_packages, setup
@@ -33,6 +36,39 @@ def get_eigen_include_path() -> str:
     return "/usr/local/include/eigen3"
 
 
+def get_macos_sdk_path() -> str | None:
+    """Return macOS SDK path if available."""
+    sdkroot = os.environ.get("SDKROOT")
+    if sdkroot and os.path.exists(sdkroot):
+        return sdkroot
+    try:
+        output = subprocess.check_output(
+            ["xcrun", "--sdk", "macosx", "--show-sdk-path"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    return output if output and os.path.exists(output) else None
+
+
+def get_macos_compile_args() -> List[str]:
+    """Return extra compile args to ensure libc++ headers are found on macOS."""
+    if platform.system() != "Darwin":
+        return []
+    sdk_path = get_macos_sdk_path()
+    if not sdk_path:
+        return []
+    libcxx_path = os.path.join(sdk_path, "usr", "include", "c++", "v1")
+    args = [f"-isysroot{sdk_path}"]
+    if os.path.exists(libcxx_path):
+        args.append(f"-isystem{libcxx_path}")
+    return args
+
+
+MACOS_COMPILE_ARGS = get_macos_compile_args()
+
+
 ext_modules = [
     Extension(
         name="vbpca_py.errpca_pt",
@@ -42,7 +78,7 @@ ext_modules = [
             get_eigen_include_path(),
         ],
         language="c++",
-        extra_compile_args=["-O3", "-std=c++14"],
+        extra_compile_args=["-O3", "-std=c++14", *MACOS_COMPILE_ARGS],
     ),
     Extension(
         name="vbpca_py.subtract_mu_from_sparse",
@@ -51,7 +87,7 @@ ext_modules = [
             get_pybind_include(),
         ],
         language="c++",
-        extra_compile_args=["-O3", "-std=c++11"],
+        extra_compile_args=["-O3", "-std=c++11", *MACOS_COMPILE_ARGS],
     ),
 ]
 
