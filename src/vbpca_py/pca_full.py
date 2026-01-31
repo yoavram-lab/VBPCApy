@@ -16,7 +16,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
-from scipy.sparse import spmatrix
+from scipy.sparse import issparse, spmatrix
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -323,10 +323,13 @@ def _run_main_loop(
         bias_state.noise_var = float(noise_var)
         bias_state.vmu = float(vmu)
 
+        # _update_bias expects a dense 2D error matrix; compute_rms may return sparse.
+        err_mx_arr = err_mx.toarray() if issparse(err_mx) else np.asarray(err_mx)
+
         bias_state, centering_state = _update_bias(
             bias_enabled=bool(opts["bias"]),
             bias_state=bias_state,
-            err_mx=err_mx,
+            err_mx=err_mx_arr,
             centering=centering_state,
         )
         mu = bias_state.mu
