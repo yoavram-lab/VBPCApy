@@ -24,29 +24,35 @@ Matrix = Array | Sparse
 class ConvergenceState:
     """State used when logging and checking convergence criteria.
 
-    This helper is mostly about monitoring and could be moved to
-    :mod:`vbpca_py._monitoring` if you prefer to keep all logging logic
-    in one place.
+    Naming is aligned with the helper modules (_full_update, etc.):
+
+    - loadings: A
+    - scores: S
+    - mu: Mu
+    - noise_var: V
+    - loading_covariances: Av (optional)
+    - score_covariances: Sv
+    - mu_variances: Muv (optional)
     """
 
     opts: MutableMapping[str, object]
     x_data: Matrix
-    a: np.ndarray
-    s: np.ndarray
+    loadings: np.ndarray
+    scores: np.ndarray
     mu: np.ndarray
     noise_var: float
     va: np.ndarray
-    av: list[np.ndarray]
+    loading_covariances: list[np.ndarray]
     vmu: float
-    muv: np.ndarray
-    sv: list[np.ndarray]
+    mu_variances: np.ndarray
+    score_covariances: list[np.ndarray]
     pattern_index: np.ndarray | None
     mask: Matrix
     s_xv: float
     n_data: float
     time_start: float
     lc: dict[str, list[float]]
-    a_old: np.ndarray
+    loadings_old: np.ndarray
     dsph: dict[str, object]
 
 
@@ -158,35 +164,6 @@ def convergence_check(
     3. RMS plateau stop (``rmsstop = [window, abs_tol, rel_tol]``).
     4. Cost plateau stop (``cfstop = [window, abs_tol, rel_tol]``).
     5. “Slowing-down'' stop based on ``sd_iter`` (gradient backtracking).
-
-    Parameters
-    ----------
-    opts
-        Options dict. Relevant keys:
-
-        - ``"minangle"`` : float, subspace angle threshold.
-        - ``"earlystop"`` : bool/int, whether to use probe-based early stop.
-        - ``"rmsstop"`` : array-like of length >= 2:
-              [window_iters, abs_tol, (optional) rel_tol]
-        - ``"cfstop"`` : array-like of length >= 2, same format as ``rmsstop``.
-
-    lc
-        Learning curves dict with keys:
-        - ``"rms"`` : sequence of training RMS values.
-        - ``"prms"`` : sequence of probe RMS values (may be empty).
-        - ``"cost"`` : sequence of cost-function values (may be empty).
-
-    angle_a
-        Current subspace angle between successive A estimates.
-
-    sd_iter
-        Optional “slowing-down” iteration counter (for line-search style
-        gradient methods). If equal to 40, triggers a special message.
-
-    Returns:
-    -------
-    convmsg
-        Empty string if no criterion is met; otherwise a diagnostic message.
     """
     # 1. Angle-based stop
     angle_msg = _angle_stop_message(opts, angle_a)
@@ -246,23 +223,27 @@ def _log_and_check_convergence(
         mask_arr = (
             state.mask.toarray().astype(bool)  # type: ignore[union-attr]
             if issparse(state.mask)
-            else state.mask.astype(bool)
+            else np.asarray(state.mask, dtype=bool)
         )
 
         params = CostParams(
             mu=state.mu.ravel(),
             noise_variance=float(state.noise_var),
             loading_priors=state.va,
-            loading_covariances=state.av if state.av else None,
+            loading_covariances=state.loading_covariances
+            if state.loading_covariances
+            else None,
             mu_prior_variance=float(state.vmu),
-            mu_variances=state.muv.ravel() if state.muv.size > 0 else None,
-            score_covariances=state.sv,
+            mu_variances=state.mu_variances.ravel()
+            if state.mu_variances.size > 0
+            else None,
+            score_covariances=state.score_covariances,
             score_pattern_index=state.pattern_index,
             mask=mask_arr,
             s_xv=float(state.s_xv),
             n_data=int(state.n_data),
         )
-        cost, *_ = compute_full_cost(state.x_data, state.a, state.s, params)
+        cost, *_ = compute_full_cost(state.x_data, state.loadings, state.scores, params)
         state.lc["cost"].append(float(cost))
     else:
         state.lc["cost"].append(float("nan"))
@@ -270,10 +251,10 @@ def _log_and_check_convergence(
     # UI / logging hooks
     display_progress(state.dsph, state.lc)
 
-    angles = subspace_angles(state.a, state.a_old)
+    angles = subspace_angles(state.loadings, state.loadings_old)
     angle_a = float(np.max(angles))
     log_step(verbose, state.lc, angle_a)
 
     convmsg = convergence_check(state.opts, state.lc, angle_a)
-    a_old_new = state.a.copy()
-    return state.lc, angle_a, convmsg, a_old_new
+    loadings_old_new = state.loadings.copy()
+    return state.lc, angle_a, convmsg, loadings_old_new
