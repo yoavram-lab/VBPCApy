@@ -15,21 +15,25 @@ def get_eigen_include_path() -> str:
     Priority order:
     1. EIGEN_INCLUDE_DIR env var
     2. $CONDA_PREFIX/include/eigen3 (Conda/Mamba)
-    3. /usr/local/include/eigen3 (fallback)
+    3. /opt/homebrew/include/eigen3 (Homebrew on Apple Silicon)
+    4. /usr/local/include/eigen3 (fallback)
     """
-    # 1. Explicit override
     env_path = os.environ.get("EIGEN_INCLUDE_DIR")
     if env_path and os.path.exists(env_path):
         return env_path
 
-    # 2. Conda/Mamba
     conda_prefix = os.environ.get("CONDA_PREFIX")
     if conda_prefix:
         potential_path = os.path.join(conda_prefix, "include", "eigen3")
         if os.path.exists(potential_path):
             return potential_path
 
-    # 3. Fallback
+    # Homebrew (Apple Silicon)
+    hb_path = "/opt/homebrew/include/eigen3"
+    if os.path.exists(hb_path):
+        return hb_path
+
+    # Fallback
     return "/usr/local/include/eigen3"
 
 
