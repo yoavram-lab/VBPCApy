@@ -1,19 +1,19 @@
-"""Top-level PCA_FULL routine (Variational Bayesian PCA).
+"""Top-level orchestration for Variational Bayesian PCA (PCA_FULL).
 
-This module provides :func:`vbpca_py.pca_full.pca_full`, a refactored, helper-
-driven orchestration of the original MATLAB *PCA_FULL* algorithm (Ilin & Raiko,
-JMLR 2010).
+This module provides :func:`vbpca_py.pca_full.pca_full`, an idiomatic Python
+translation of Ilin & Raiko's PCA_FULL (JMLR 2010).
 
-Implementation note: helper modules (e.g. :mod:`vbpca_py._full_update`) are
-treated as the source of truth for data structures and function signatures. If
-there is an API conflict, this module adapts to the helper API.
+The function itself is intentionally thin: the mathematical update steps live
+in helper modules (notably :mod:`vbpca_py._full_update`). If there is an API
+conflict, the helper modules are authoritative.
 """
 
 from __future__ import annotations
 
 import logging
 import time
-from typing import TYPE_CHECKING, Any
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, cast
 
 import numpy as np
 from scipy.sparse import issparse, spmatrix
@@ -62,76 +62,154 @@ Matrix = Array | Sparse
 # ---------------------------------------------------------------------------
 
 
-def pca_full(x: Matrix, n_components: int, **kwargs: object) -> dict[str, Any]:
-    """Variational Bayesian PCA with full posterior covariances (VBPCA).
+def pca_full(x: Matrix, n_components: int, **kwargs: object) -> dict[str, object]:
+    """Run VBPCA with full posterior covariances.
 
-    Orchestrates the algorithm, delegating update steps to helpers in
-    :mod:`vbpca_py._full_update`. Helper APIs are authoritative.
+    Parameters
+    ----------
+    x
+        Data matrix of shape (n_features, n_samples). Dense arrays may contain
+        NaNs to denote missing values. Sparse matrices store only observed
+        entries.
+    n_components
+        Number of latent components.
+    **kwargs
+        Options; see :func:`_build_options`.
+
+    Returns:
+    -------
+    dict
+        Result dictionary matching the historical PCA_FULL API.
     """
     opts = _build_options(kwargs)
     use_prior, use_postvar = _select_algorithm(opts)
 
-    prep = _prepare_problem(x, opts)
-    init = _initialize_and_monitor(
-        prep,
+    prepared = _prepare_problem(x, opts)
+    training = _initialize_model(
+        prepared=prepared,
         n_components=int(n_components),
         use_prior=use_prior,
         use_postvar=use_postvar,
         opts=opts,
     )
-
-    a, s, mu, noise_var, av, sv, muv, va, vmu = _run_main_loop(
-        init,
-        prep,
-        use_prior=use_prior,
-        opts=opts,
+    training = _run_training_loop(
+        prepared=prepared, training=training, use_prior=use_prior, opts=opts
     )
-
-    a, av, s, sv, mu = _finalize_rotation(
-        a,
-        av,
-        s,
-        sv,
-        mu,
-        prep,
-        bias_enabled=bool(opts["bias"]),
-        rotate_each_iter=bool(opts["rotate2pca"]),
-    )
-
-    a, av, s, sv, mu, muv, pattern_index = _restore_original_shape(
-        a,
-        av,
-        s,
-        sv,
-        mu,
-        muv,
-        prep,
-        va=va,
-        vmu=float(vmu),
-    )
-
-    return _pack_result(
-        a=a,
-        s=s,
-        mu=mu,
-        noise_var=float(noise_var),
-        av=av,
-        sv=sv,
-        pattern_index=pattern_index,
-        muv=muv,
-        va=va,
-        vmu=float(vmu),
-        lc=init["lc"],
-    )
+    training = _maybe_finalize_rotation(prepared=prepared, training=training, opts=opts)
+    final = _restore_original_shape(prepared=prepared, training=training)
+    return _pack_result(final)
 
 
 # ---------------------------------------------------------------------------
-# Internal orchestration helpers
+# Small data containers (to reduce arg lists + improve readability)
 # ---------------------------------------------------------------------------
 
 
-def _prepare_problem(x: Matrix, opts: Mapping[str, object]) -> dict[str, Any]:
-    """Prepare data, masks, and missingness metadata."""
+@dataclass(frozen=True)
+class PreparedProblem:
+    """Prepared data and masks for a PCA_FULL run.
+
+    This collects the various derived arrays that are shared across update
+    steps (masks, pattern index, observed indices, etc.) so we can avoid
+    extremely long argument lists in orchestration helpers.
+    """
+
+    x_data: Matrix
+    x_probe: Matrix | None
+    mask: Matrix
+    mask_probe: Matrix | None
+    n_obs_row: np.ndarray
+    n_data: float
+    n_probe: int
+    ix_obs: np.ndarray
+    jx_obs: np.ndarray
+    n_features: int
+    n_samples: int
+    n1x: int
+    n2x: int
+    row_idx: np.ndarray | None
+    col_idx: np.ndarray | None
+    n_patterns: int
+    obs_patterns: list[np.ndarray]
+    pattern_index: np.ndarray | None
+
+
+@dataclass
+class ModelState:
+    """Current model parameters during training."""
+
+    a: np.ndarray
+    s: np.ndarray
+    mu: np.ndarray
+    noise_var: float
+    av: list[np.ndarray]
+    sv: list[np.ndarray]
+    muv: np.ndarray
+    va: np.ndarray
+    vmu: float
+
+
+@dataclass
+class TrainingState:
+    """Mutable training state that evolves over iterations."""
+
+    model: ModelState
+    lc: dict[str, list[float]]
+    dsph: dict[str, object]
+    err_mx: object
+    a_old: np.ndarray
+    time_start: float
+
+
+@dataclass(frozen=True)
+class FinalState:
+    """Final objects after shape restoration, ready for packing."""
+
+    a: np.ndarray
+    s: np.ndarray
+    mu: np.ndarray
+    noise_var: float
+    av: list[np.ndarray]
+    sv: list[np.ndarray]
+    pattern_index: np.ndarray | None
+    muv: np.ndarray
+    va: np.ndarray
+    vmu: float
+    lc: dict[str, list[float]]
+
+
+@dataclass(frozen=True)
+class IterationConfig:
+    """Constant configuration used within the training loop."""
+
+    hp_va: float
+    hp_vb: float
+    hp_v: float
+    eye_components: np.ndarray
+    use_prior: bool
+    rotate_each_iter: bool
+    verbose: int
+    opts: Mapping[str, object]
+
+
+@dataclass
+class IterationContext:
+    """Inputs for a single training iteration."""
+
+    iteration: int
+    prepared: PreparedProblem
+    training: TrainingState
+    bias_state: BiasState
+    centering_state: CenteringState
+    cfg: IterationConfig
+
+
+# ---------------------------------------------------------------------------
+# Orchestration helpers
+# ---------------------------------------------------------------------------
+
+
+def _prepare_problem(x: Matrix, opts: Mapping[str, object]) -> PreparedProblem:
     x_data, x_probe, n1x, n2x, row_idx, col_idx = _prepare_data(x, opts)
     x_data, x_probe, mask, mask_probe, n_obs_row, n_data, n_probe = (
         _build_masks_and_counts(x_data, x_probe, opts)
@@ -143,433 +221,465 @@ def _prepare_problem(x: Matrix, opts: Mapping[str, object]) -> dict[str, Any]:
         mask, opts, n_samples=n_samples
     )
 
-    return {
-        "x_data": x_data,
-        "x_probe": x_probe,
-        "mask": mask,
-        "mask_probe": mask_probe,
-        "n_obs_row": n_obs_row,
-        "n_data": n_data,
-        "n_probe": n_probe,
-        "ix_obs": ix_obs,
-        "jx_obs": jx_obs,
-        "n_features": int(n_features),
-        "n_samples": int(n_samples),
-        "n1x": int(n1x),
-        "n2x": int(n2x),
-        "row_idx": row_idx,
-        "col_idx": col_idx,
-        "n_patterns": int(n_patterns),
-        "obs_patterns": obs_patterns,
-        "pattern_index": pattern_index,
-    }
+    return PreparedProblem(
+        x_data=x_data,
+        x_probe=x_probe,
+        mask=mask,
+        mask_probe=mask_probe,
+        n_obs_row=n_obs_row,
+        n_data=float(n_data),
+        n_probe=int(n_probe),
+        ix_obs=ix_obs,
+        jx_obs=jx_obs,
+        n_features=int(n_features),
+        n_samples=int(n_samples),
+        n1x=int(n1x),
+        n2x=int(n2x),
+        row_idx=row_idx,
+        col_idx=col_idx,
+        n_patterns=int(n_patterns),
+        obs_patterns=obs_patterns,
+        pattern_index=pattern_index,
+    )
 
 
-def _initialize_and_monitor(
-    prep: Mapping[str, Any],
+def _initialize_model(
     *,
+    prepared: PreparedProblem,
     n_components: int,
     use_prior: bool,
     use_postvar: bool,
     opts: Mapping[str, object],
-) -> dict[str, Any]:
-    """Initialize parameters and run initial monitoring/logging."""
+) -> TrainingState:
     shapes = InitShapes(
-        n_features=int(prep["n_features"]),
-        n_samples=int(prep["n_samples"]),
-        n_components=int(n_components),
-        n_obs_patterns=int(prep["n_patterns"]),
+        n_features=prepared.n_features,
+        n_samples=prepared.n_samples,
+        n_components=n_components,
+        n_obs_patterns=prepared.n_patterns,
     )
 
     init_ctx = InitContext(
-        x_data=prep["x_data"],
-        x_probe=prep["x_probe"],
-        mask=prep["mask"],
-        mask_probe=prep["mask_probe"],
+        x_data=prepared.x_data,
+        x_probe=prepared.x_probe,
+        mask=prepared.mask,
+        mask_probe=prepared.mask_probe,
         shapes=shapes,
-        pattern_index=prep["pattern_index"],
-        n_obs_row=prep["n_obs_row"],
+        pattern_index=prepared.pattern_index,
+        n_obs_row=prepared.n_obs_row,
         use_prior=use_prior,
         use_postvar=use_postvar,
         opts=opts,
     )
 
-    (
-        a,
-        s,
-        mu,
-        noise_var,
-        av,
-        sv,
-        muv,
-        va,
-        vmu,
-        x_data,
-        x_probe,
-    ) = _initialize_parameters(init_ctx)
+    a, s, mu, noise_var, av, sv, muv, va, vmu, x_data, x_probe = _initialize_parameters(
+        init_ctx
+    )
 
+    # Initial monitoring returns: (rms, err_mx, prms, lc, dsph).
     init_inputs = InitialMonitoringInputs(
         x_data=x_data,
         x_probe=x_probe,
-        mask=prep["mask"],
-        n_data=prep["n_data"],
-        n_probe=prep["n_probe"],
+        mask=prepared.mask,
+        n_data=float(prepared.n_data),
+        n_probe=int(prepared.n_probe),
         a=a,
         s=s,
         opts=opts,
     )
-    rms, err_mx, prms, lc, dsph = _initial_monitoring(init_inputs)
+    _rms0, err_mx, _prms0, lc, dsph = _initial_monitoring(init_inputs)
 
-    return {
-        "a": a,
-        "s": s,
-        "mu": mu,
-        "noise_var": float(noise_var),
-        "av": av,
-        "sv": sv,
-        "muv": muv,
-        "va": va,
-        "vmu": float(vmu),
-        "x_data": x_data,
-        "x_probe": x_probe,
-        "rms": float(rms),
-        "prms": float(prms),
-        "err_mx": err_mx,
-        "lc": lc,
-        "dsph": dsph,
-    }
+    model = ModelState(
+        a=a,
+        s=s,
+        mu=mu,
+        noise_var=float(noise_var),
+        av=av,
+        sv=sv,
+        muv=muv,
+        va=va,
+        vmu=float(vmu),
+    )
+    return TrainingState(
+        model=model,
+        lc=lc,
+        dsph=dsph,
+        err_mx=err_mx,
+        a_old=a.copy(),
+        time_start=time.time(),
+    )
 
 
-def _run_main_loop(
-    init: dict[str, Any],
-    prep: Mapping[str, Any],
+def _run_training_loop(
     *,
+    prepared: PreparedProblem,
+    training: TrainingState,
     use_prior: bool,
     opts: Mapping[str, object],
-) -> tuple[
-    np.ndarray,
-    np.ndarray,
-    np.ndarray,
-    float,
-    list[np.ndarray],
-    list[np.ndarray],
-    np.ndarray,
-    np.ndarray,
-    float,
-]:
-    """Run VB/EM iterations and update `init['lc']` in-place."""
-    a = init["a"]
-    s = init["s"]
-    mu = init["mu"]
-    noise_var = float(init["noise_var"])
-    av = init["av"]
-    sv = init["sv"]
-    muv = init["muv"]
-    va = init["va"]
-    vmu = float(init["vmu"])
-    x_data = init["x_data"]
-    x_probe = init["x_probe"]
-    err_mx = init["err_mx"]
-    lc = init["lc"]
-    dsph = init["dsph"]
-
-    hp_va = 0.001
-    hp_vb = 0.001
-    hp_v = 0.001
-
-    time_start = time.time()
-    verbose = int(opts["verbose"])
-    rotate_each_iter = bool(opts["rotate2pca"])
-    eye_components = np.eye(
-        int(prep["n_components"]) if "n_components" in prep else a.shape[1], dtype=float
+) -> TrainingState:
+    """Run the VB / EM iterations, mutating and returning the training state."""
+    # Hyperparameters for Va, Vmu, V (kept here for compatibility).
+    cfg = IterationConfig(
+        hp_va=0.001,
+        hp_vb=0.001,
+        hp_v=0.001,
+        eye_components=np.eye(training.model.s.shape[0], dtype=float),
+        use_prior=use_prior,
+        rotate_each_iter=bool(opts["rotate2pca"]),
+        verbose=int(opts["verbose"]),
+        opts=opts,
     )
-    # Prefer actual k from A if prep didn't store it
-    eye_components = np.eye(a.shape[1], dtype=float)
 
     bias_state = BiasState(
-        mu=mu,
-        muv=muv,
-        noise_var=float(noise_var),
-        vmu=float(vmu),
-        n_obs_row=prep["n_obs_row"],
+        mu=training.model.mu,
+        muv=training.model.muv,
+        noise_var=float(training.model.noise_var),
+        vmu=float(training.model.vmu),
+        n_obs_row=prepared.n_obs_row,
     )
     centering_state = CenteringState(
-        x_data=x_data,
-        x_probe=x_probe,
-        mask=prep["mask"],
-        mask_probe=prep["mask_probe"],
+        x_data=prepared.x_data,
+        x_probe=prepared.x_probe,
+        mask=prepared.mask,
+        mask_probe=prepared.mask_probe,
     )
-
-    loadings_old = a.copy()
 
     for iteration in range(1, int(opts["maxiters"]) + 1):
-        hp_ctx = HyperpriorContext(
+        ctx = IterationContext(
             iteration=iteration,
-            use_prior=use_prior,
-            niter_broadprior=int(opts["niter_broadprior"]),
-            bias_enabled=bool(opts["bias"]),
-            mu=bias_state.mu,
-            mu_variances=bias_state.muv,
-            loadings=a,
-            loading_covariances=av,
-            n_features=int(prep["n_features"]),
-            hp_va=hp_va,
-            hp_vb=hp_vb,
-            va=va,
-            vmu=float(vmu),
-        )
-        va, vmu = _update_hyperpriors(hp_ctx)
-
-        bias_state.noise_var = float(noise_var)
-        bias_state.vmu = float(vmu)
-
-        # _update_bias expects a dense 2D error matrix; compute_rms may return sparse.
-        err_mx_arr = err_mx.toarray() if issparse(err_mx) else np.asarray(err_mx)
-
-        bias_state, centering_state = _update_bias(
-            bias_enabled=bool(opts["bias"]),
+            prepared=prepared,
+            training=training,
             bias_state=bias_state,
-            err_mx=err_mx_arr,
-            centering=centering_state,
+            centering_state=centering_state,
+            cfg=cfg,
         )
-        mu = bias_state.mu
-        muv = bias_state.muv
-        x_data = centering_state.x_data
-        x_probe = centering_state.x_probe
+        _iteration_step(ctx)
 
-        score_state = ScoreState(
-            x_data=x_data,
-            mask=prep["mask"],
-            loadings=a,
-            scores=s,
-            loading_covariances=av,
-            score_covariances=sv,
-            pattern_index=prep["pattern_index"],
-            obs_patterns=prep["obs_patterns"],
-            noise_var=float(noise_var),
-            eye_components=eye_components,
-            verbose=verbose,
-        )
-        score_state = _update_scores(score_state)
-        s = score_state.scores
-        sv = score_state.score_covariances
+        # Stopping condition is recorded by _iteration_step in lc/convmsg.
+        if training.lc.get("_stop", [""])[-1]:
+            break
 
-        if rotate_each_iter:
-            mu_before = mu.copy()
-            rot_ctx = RotationContext(
-                loadings=a,
-                loading_covariances=av,
-                scores=s,
-                score_covariances=sv,
-                mu=mu,
-                pattern_index=prep["pattern_index"],
-                obs_patterns=prep["obs_patterns"],
-                bias_enabled=bool(opts["bias"]),
-            )
-            a, av, s, sv, mu = _final_rotation(rot_ctx)
+    # Cleanup internal stop marker to keep lc stable for external callers.
+    training.lc.pop("_stop", None)
+    return training
 
-            if bool(opts["bias"]):
-                d_mu_iter = mu - mu_before
-                probe_container = (
-                    ProbeMatrices(x=x_probe, mask=prep["mask_probe"])
-                    if x_probe is not None and prep["mask_probe"] is not None
-                    else None
-                )
-                x_data, x_probe = subtract_mu(
-                    d_mu_iter,
-                    x_data,
-                    prep["mask"],
-                    probe=probe_container,
-                    update_bias=True,
-                )
-                centering_state.x_data = x_data
-                centering_state.x_probe = x_probe
-                bias_state.mu = mu
 
-        load_state = LoadingsUpdateState(
-            x_data=x_data,
-            mask=prep["mask"],
-            scores=s,
-            loading_covariances=av,
-            score_covariances=sv,
-            pattern_index=prep["pattern_index"],
-            va=va,
-            noise_var=float(noise_var),
-            verbose=verbose,
-        )
-        a, av = _update_loadings(load_state)
+def _iteration_step(ctx: IterationContext) -> None:
+    """One full iteration of updates; mutates ``ctx.training`` in place."""
+    prepared = ctx.prepared
+    training = ctx.training
+    m = training.model
+    cfg = ctx.cfg
+    opts = cfg.opts
 
-        rms_ctx = RmsContext(
+    # 1) Hyperpriors
+    hp_ctx = HyperpriorContext(
+        iteration=ctx.iteration,
+        use_prior=cfg.use_prior,
+        niter_broadprior=int(opts["niter_broadprior"]),
+        bias_enabled=bool(opts["bias"]),
+        mu=ctx.bias_state.mu,
+        mu_variances=ctx.bias_state.muv,
+        loadings=m.a,
+        loading_covariances=m.av,
+        n_features=prepared.n_features,
+        hp_va=cfg.hp_va,
+        hp_vb=cfg.hp_vb,
+        va=m.va,
+        vmu=float(m.vmu),
+    )
+    m.va, m.vmu = _update_hyperpriors(hp_ctx)
+
+    # 2) Bias / mean update + recenter.
+    ctx.bias_state.noise_var = float(m.noise_var)
+    ctx.bias_state.vmu = float(m.vmu)
+
+    err_mx_arr = _as_dense_err_matrix(training.err_mx)
+    ctx.bias_state, ctx.centering_state = _update_bias(
+        bias_enabled=bool(opts["bias"]),
+        bias_state=ctx.bias_state,
+        err_mx=err_mx_arr,
+        centering=ctx.centering_state,
+    )
+    m.mu = ctx.bias_state.mu
+    m.muv = ctx.bias_state.muv
+
+    x_data = ctx.centering_state.x_data
+    x_probe = ctx.centering_state.x_probe
+
+    # 3) Scores
+    score_state = ScoreState(
+        x_data=x_data,
+        mask=prepared.mask,
+        loadings=m.a,
+        scores=m.s,
+        loading_covariances=m.av,
+        score_covariances=m.sv,
+        pattern_index=prepared.pattern_index,
+        obs_patterns=prepared.obs_patterns,
+        noise_var=float(m.noise_var),
+        eye_components=cfg.eye_components,
+        verbose=cfg.verbose,
+    )
+    score_state = _update_scores(score_state)
+    m.s = score_state.scores
+    m.sv = score_state.score_covariances
+
+    # 3b) Optional rotate-to-PCA
+    if cfg.rotate_each_iter:
+        x_data, x_probe = _rotate_towards_pca(
+            prepared=prepared,
+            training=training,
+            bias_state=ctx.bias_state,
             x_data=x_data,
             x_probe=x_probe,
-            mask=prep["mask"],
-            mask_probe=prep["mask_probe"],
-            n_data=float(prep["n_data"]),
-            n_probe=int(prep["n_probe"]),
-            loadings=a,
-            scores=s,
+            opts=opts,
         )
-        rms, prms, err_mx = _recompute_rms(rms_ctx)
+        ctx.centering_state.x_data = x_data
+        ctx.centering_state.x_probe = x_probe
 
-        noise_state = NoiseState(
-            loadings=a,
-            scores=s,
-            loading_covariances=av,
-            score_covariances=sv,
-            mu_variances=muv,
-            pattern_index=prep["pattern_index"],
-            n_data=float(prep["n_data"]),
-            noise_var=float(noise_var),
-        )
-        noise_state, s_xv = _update_noise_variance(
-            noise_state,
-            float(rms),
-            prep["ix_obs"],
-            prep["jx_obs"],
-            hp_v=float(hp_v),
-        )
-        noise_var = float(noise_state.noise_var)
-        bias_state.noise_var = float(noise_var)
+    # 4) Loadings
+    load_state = LoadingsUpdateState(
+        x_data=x_data,
+        mask=prepared.mask,
+        scores=m.s,
+        loading_covariances=m.av,
+        score_covariances=m.sv,
+        pattern_index=prepared.pattern_index,
+        va=m.va,
+        noise_var=float(m.noise_var),
+        verbose=cfg.verbose,
+    )
+    m.a, m.av = _update_loadings(load_state)
 
-        conv_state = ConvergenceState(
-            opts=dict(opts),  # ConvergenceState expects MutableMapping
-            x_data=x_data,
-            loadings=a,
-            scores=s,
-            mu=mu,
-            noise_var=float(noise_var),
-            va=va,
-            loading_covariances=av,
-            vmu=float(vmu),
-            mu_variances=muv,
-            score_covariances=sv,
-            pattern_index=prep["pattern_index"],
-            mask=prep["mask"],
-            s_xv=float(s_xv),
-            n_data=float(prep["n_data"]),
-            time_start=time_start,
-            lc=lc,
-            loadings_old=loadings_old,
-            dsph=dsph,
-        )
+    # 5) RMS (and error matrix)
+    rms_ctx = RmsContext(
+        x_data=x_data,
+        x_probe=x_probe,
+        mask=prepared.mask,
+        mask_probe=prepared.mask_probe,
+        n_data=float(prepared.n_data),
+        n_probe=int(prepared.n_probe),
+        loadings=m.a,
+        scores=m.s,
+    )
+    rms, prms, err_mx = _recompute_rms(rms_ctx)
+    training.err_mx = err_mx
 
-        lc, _angle_a, convmsg, loadings_old = _log_and_check_convergence(
-            conv_state,
-            float(rms),
-            float(prms),
-        )
+    # 6) Noise variance
+    noise_state = NoiseState(
+        loadings=m.a,
+        scores=m.s,
+        loading_covariances=m.av,
+        score_covariances=m.sv,
+        mu_variances=m.muv,
+        pattern_index=prepared.pattern_index,
+        n_data=float(prepared.n_data),
+        noise_var=float(m.noise_var),
+    )
+    noise_state, s_xv = _update_noise_variance(
+        noise_state,
+        float(rms),
+        prepared.ix_obs,
+        prepared.jx_obs,
+        hp_v=float(cfg.hp_v),
+    )
+    m.noise_var = float(noise_state.noise_var)
+    ctx.bias_state.noise_var = float(m.noise_var)
 
-        if convmsg:
-            if use_prior and iteration <= int(opts["niter_broadprior"]):
-                pass
-            else:
-                if verbose:
-                    logger.info("%s", convmsg)
-                break
+    # 7) Logging + convergence
+    conv_state = ConvergenceState(
+        opts=dict(opts),
+        x_data=x_data,
+        loadings=m.a,
+        scores=m.s,
+        mu=m.mu,
+        noise_var=float(m.noise_var),
+        va=m.va,
+        loading_covariances=m.av,
+        vmu=float(m.vmu),
+        mu_variances=m.muv,
+        score_covariances=m.sv,
+        pattern_index=prepared.pattern_index,
+        mask=prepared.mask,
+        s_xv=float(s_xv),
+        n_data=float(prepared.n_data),
+        time_start=float(training.time_start),
+        lc=training.lc,
+        loadings_old=training.a_old,
+        dsph=training.dsph,
+    )
+    training.lc, _angle_a, convmsg, training.a_old = _log_and_check_convergence(
+        conv_state,
+        float(rms),
+        float(prms),
+    )
 
-    # write back latest state into init for packing
-    init["lc"] = lc
+    # Store stop message internally to keep loop logic simple without touching
+    # the public learning-curve schema.
+    stop_now = ""
+    if convmsg:
+        if cfg.use_prior and ctx.iteration <= int(opts["niter_broadprior"]):
+            stop_now = ""
+        else:
+            if cfg.verbose:
+                logger.info("%s", convmsg)
+            stop_now = convmsg
 
-    return a, s, mu, float(noise_var), av, sv, muv, va, float(vmu)
+    training.lc.setdefault("_stop", []).append(stop_now)
 
 
-def _finalize_rotation(
-    a: np.ndarray,
-    av: list[np.ndarray],
-    s: np.ndarray,
-    sv: list[np.ndarray],
-    mu: np.ndarray,
-    prep: Mapping[str, Any],
+def _rotate_towards_pca(  # noqa: PLR0913
     *,
-    bias_enabled: bool,
-    rotate_each_iter: bool,
-) -> tuple[np.ndarray, list[np.ndarray], np.ndarray, list[np.ndarray], np.ndarray]:
-    """Apply final rotation if rotation wasn't applied each iteration."""
-    if rotate_each_iter:
-        return a, av, s, sv, mu
+    prepared: PreparedProblem,
+    training: TrainingState,
+    bias_state: BiasState,
+    x_data: Matrix,
+    x_probe: Matrix | None,
+    opts: Mapping[str, object],
+) -> tuple[Matrix, Matrix | None]:
+    """Apply rotate-to-PCA step.
+
+    Returns the (possibly re-centered) x_data and x_probe so the caller can keep
+    a consistent view of the centered matrices.
+    """
+    m = training.model
+    mu_before = m.mu.copy()
 
     rot_ctx = RotationContext(
-        loadings=a,
-        loading_covariances=av,
-        scores=s,
-        score_covariances=sv,
-        mu=mu,
-        pattern_index=prep["pattern_index"],
-        obs_patterns=prep["obs_patterns"],
-        bias_enabled=bias_enabled,
+        loadings=m.a,
+        loading_covariances=m.av,
+        scores=m.s,
+        score_covariances=m.sv,
+        mu=m.mu,
+        pattern_index=prepared.pattern_index,
+        obs_patterns=prepared.obs_patterns,
+        bias_enabled=bool(opts["bias"]),
     )
-    return _final_rotation(rot_ctx)
+    m.a, m.av, m.s, m.sv, m.mu = _final_rotation(rot_ctx)
+
+    if not bool(opts["bias"]):
+        return x_data, x_probe
+
+    d_mu_iter = m.mu - mu_before
+    probe_container = (
+        ProbeMatrices(x=x_probe, mask=prepared.mask_probe)
+        if x_probe is not None and prepared.mask_probe is not None
+        else None
+    )
+    x_new, probe_new = subtract_mu(
+        d_mu_iter,
+        x_data,
+        prepared.mask,
+        probe=probe_container,
+        update_bias=True,
+    )
+    bias_state.mu = m.mu
+    return x_new, probe_new
+
+
+def _maybe_finalize_rotation(
+    *,
+    prepared: PreparedProblem,
+    training: TrainingState,
+    opts: Mapping[str, object],
+) -> TrainingState:
+    if bool(opts["rotate2pca"]):
+        return training
+
+    m = training.model
+    rot_ctx = RotationContext(
+        loadings=m.a,
+        loading_covariances=m.av,
+        scores=m.s,
+        score_covariances=m.sv,
+        mu=m.mu,
+        pattern_index=prepared.pattern_index,
+        obs_patterns=prepared.obs_patterns,
+        bias_enabled=bool(opts["bias"]),
+    )
+    m.a, m.av, m.s, m.sv, m.mu = _final_rotation(rot_ctx)
+    return training
 
 
 def _restore_original_shape(
-    a: np.ndarray,
-    av: list[np.ndarray],
-    s: np.ndarray,
-    sv: list[np.ndarray],
-    mu: np.ndarray,
-    muv: np.ndarray,
-    prep: Mapping[str, Any],
-    *,
-    va: np.ndarray,
-    vmu: float,
-) -> tuple[
-    np.ndarray,
-    list[np.ndarray],
-    np.ndarray,
-    list[np.ndarray],
-    np.ndarray,
-    np.ndarray,
-    np.ndarray | None,
-]:
-    """Restore removed rows/cols back to original X shape."""
-    pattern_index = prep["pattern_index"]
+    *, prepared: PreparedProblem, training: TrainingState
+) -> FinalState:
+    """Undo row/column removal performed during preparation."""
+    m = training.model
+    a, av, s, sv, mu, muv, pattern_index = (
+        m.a,
+        m.av,
+        m.s,
+        m.sv,
+        m.mu,
+        m.muv,
+        prepared.pattern_index,
+    )
 
-    if int(prep["n_features"]) < int(prep["n1x"]):
-        a, av = _add_m_rows(a, av, prep["row_idx"], int(prep["n1x"]), va)
-        mu, muv = _add_m_rows(mu, muv, prep["row_idx"], int(prep["n1x"]), vmu)
+    if prepared.n_features < prepared.n1x:
+        a, av = _add_m_rows(a, av, prepared.row_idx, prepared.n1x, m.va)
+        mu, muv = _add_m_rows(mu, muv, prepared.row_idx, prepared.n1x, float(m.vmu))
 
-    if int(prep["n_samples"]) < int(prep["n2x"]):
+    if prepared.n_samples < prepared.n2x:
         s, sv, pattern_index = _add_m_cols(
-            s, sv, prep["col_idx"], int(prep["n2x"]), pattern_index
+            s, sv, prepared.col_idx, prepared.n2x, pattern_index
         )
 
-    return a, av, s, sv, mu, muv, pattern_index
+    return FinalState(
+        a=a,
+        s=s,
+        mu=mu,
+        noise_var=float(m.noise_var),
+        av=av,
+        sv=sv,
+        pattern_index=pattern_index,
+        muv=muv,
+        va=m.va,
+        vmu=float(m.vmu),
+        lc=training.lc,
+    )
 
 
-def _pack_result(
-    *,
-    a: np.ndarray,
-    s: np.ndarray,
-    mu: np.ndarray,
-    noise_var: float,
-    av: list[np.ndarray],
-    sv: list[np.ndarray],
-    pattern_index: np.ndarray | None,
-    muv: np.ndarray,
-    va: np.ndarray,
-    vmu: float,
-    lc: dict[str, list[float]],
-) -> dict[str, Any]:
-    """Package outputs in the legacy-compatible result dict."""
+def _pack_result(final: FinalState) -> dict[str, object]:
+    """Pack final values into the historical PCA_FULL result dictionary."""
     return {
-        "A": a,
-        "S": s,
-        "Mu": mu,
-        "V": float(noise_var),
-        "Av": av,
-        "Sv": sv,
-        "Isv": pattern_index,
-        "Muv": muv,
-        "Va": va,
-        "Vmu": float(vmu),
-        "lc": lc,
-        "cv": {"A": av, "S": sv, "Isv": pattern_index, "Mu": muv},
-        "hp": {"Va": va, "Vmu": float(vmu)},
+        "A": final.a,
+        "S": final.s,
+        "Mu": final.mu,
+        "V": float(final.noise_var),
+        "Av": final.av,
+        "Sv": final.sv,
+        "Isv": final.pattern_index,
+        "Muv": final.muv,
+        "Va": final.va,
+        "Vmu": float(final.vmu),
+        "lc": final.lc,
+        "cv": {
+            "A": final.av,
+            "S": final.sv,
+            "Isv": final.pattern_index,
+            "Mu": final.muv,
+        },
+        "hp": {"Va": final.va, "Vmu": float(final.vmu)},
     }
 
 
+def _as_dense_err_matrix(err_mx: object) -> np.ndarray:
+    """Ensure the bias updater sees a dense numeric array for err_mx.
+
+    In sparse-input modes, the RMS helper may return sparse matrices or other
+    wrappers. :func:`_update_bias` expects a dense array with shape
+    (n_features, n_samples) so it can sum over axis=1.
+    """
+    if err_mx is None:
+        return np.zeros((0, 0), dtype=float)
+    if issparse(err_mx):
+        return np.asarray(cast("spmatrix", err_mx).toarray(), dtype=float)
+    return np.asarray(err_mx, dtype=float)
+
+
 # ---------------------------------------------------------------------------
-# Options helpers
+# Options + algorithm selection (publicly relied upon)
 # ---------------------------------------------------------------------------
 
 
