@@ -1,15 +1,26 @@
 """Tests for the pca_full implementation.
 
-These tests focus on:
+These tests cover:
 
 - Basic shape and type correctness
-- Handling of missing values (NaNs)
+- Handling of missing values (NaNs) in dense inputs
 - Dense vs. sparse inputs
 - Different algorithms ("vb", "map", "ppca")
 - uniquesv pattern-sharing path
 - Cost computation when cfstop is given
-- Consistency between lc["rms"] and explicit reconstruction error
-- Optional regression tests against the original MATLAB implementation
+- Consistency between lc["rms"] and an explicit reconstruction RMS
+- Smoke tests for rotate2pca on/off and bias on/off
+- Optional regression tests against MATLAB fixtures (if present)
+
+Notes on RMS consistency:
+-------------------------
+The implementation normalizes dense inputs by:
+- treating NaNs as missing (mask = ~np.isnan(x)),
+- setting NaNs to 0.0 in the internal centered matrix, and
+- replacing exact zeros with eps to avoid ambiguity with sparse "missing" zeros.
+
+The helper `_compute_masked_rms_dense_like_impl` mirrors that behavior so that
+explicit RMS comparisons match lc["rms"].
 """
 
 from __future__ import annotations
@@ -23,6 +34,10 @@ from numpy.testing import assert_allclose
 from scipy.io import loadmat
 from vbpca_py.pca_full import pca_full
 
+# ----------------------------------------------------------------------
+# Helpers
+# ----------------------------------------------------------------------
+
 
 def _make_toy_dense_with_nans(
     n_features: int = 6,
@@ -31,29 +46,57 @@ def _make_toy_dense_with_nans(
 ) -> np.ndarray:
     rng = np.random.default_rng(seed)
     x = rng.standard_normal((n_features, n_samples))
+
+    # Introduce some NaNs as missing values
     mask = rng.random(x.shape) < 0.2
     x[mask] = np.nan
     return x
 
 
-def _compute_masked_rms(
+def _dense_preprocess_like_impl(x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Mirror the dense preprocessing in _full_update._build_masks_dense.
+
+    Returns
+    -------
+    x_proc : ndarray
+        Copy of x with NaNs replaced by 0 and exact zeros replaced by eps.
+    mask : ndarray[bool]
+        Observed mask (~np.isnan(x)).
+    """
+    x_proc = np.array(x, dtype=float, copy=True)
+    mask = ~np.isnan(x_proc)
+
+    eps = np.finfo(float).eps
+    x_proc[x_proc == 0.0] = eps
+    x_proc[np.isnan(x_proc)] = 0.0
+    return x_proc, mask
+
+
+def _compute_masked_rms_dense_like_impl(
     x_original: np.ndarray,
     loadings: np.ndarray,
     scores: np.ndarray,
     mean: np.ndarray,
 ) -> float:
-    recon = loadings @ scores + mean
-    mask = ~np.isnan(x_original)
-    ndata = int(np.count_nonzero(mask))
-    if ndata == 0:
+    """Compute RMS error on observed entries to match compute_rms behavior."""
+    x_proc, mask = _dense_preprocess_like_impl(x_original)
+    n_obs = int(np.count_nonzero(mask))
+    if n_obs == 0:
         return float("nan")
-    diff = (recon - np.nan_to_num(x_original, copy=True)) * mask
-    mse = np.sum(diff**2) / float(ndata)
+
+    recon = loadings @ scores + mean
+    diff = (recon - x_proc) * mask
+    mse = float(np.sum(diff**2) / float(n_obs))
     return float(np.sqrt(mse))
 
 
 def _fixture_path(name: str) -> pathlib.Path:
     return pathlib.Path(__file__).resolve().parent.joinpath("data").joinpath(name)
+
+
+# ----------------------------------------------------------------------
+# Basic dense test, algorithm="vb"
+# ----------------------------------------------------------------------
 
 
 def test_pca_full_dense_vb_basic() -> None:
@@ -69,6 +112,7 @@ def test_pca_full_dense_vb_basic() -> None:
         verbose=0,
     )
 
+    # Basic keys
     for key in (
         "A",
         "S",
@@ -92,27 +136,40 @@ def test_pca_full_dense_vb_basic() -> None:
     noise_var = result["V"]
     lc = result["lc"]
 
+    # Shapes
     assert loadings.shape == (5, 2)
     assert scores.shape == (2, 7)
     assert mean.shape == (5, 1)
     assert np.isscalar(noise_var) or np.shape(noise_var) == ()
 
-    assert len(lc["rms"]) >= 1
-    assert len(lc["prms"]) == len(lc["rms"])
-    assert len(lc["time"]) == len(lc["rms"])
-    assert len(lc["cost"]) == len(lc["rms"])
+    # Learning curves: keys and consistent lengths
+    for k in ("rms", "prms", "time", "cost"):
+        assert k in lc
+    n = len(lc["rms"])
+    assert n >= 1
+    assert len(lc["prms"]) == n
+    assert len(lc["time"]) == n
+    assert len(lc["cost"]) == n
 
-    # Optional initial-error curve (kept for backward compatibility)
+    # RMS should be non-negative (or NaN)
+    assert all(r >= 0.0 or np.isnan(r) for r in lc["rms"])
+
+    # Explicit RMS reconstruction on observed entries should roughly match last lc["rms"]
     last_rms = float(lc["rms"][-1])
-    explicit_rms = _compute_masked_rms(x, loadings, scores, mean)
+    explicit_rms = _compute_masked_rms_dense_like_impl(x, loadings, scores, mean)
     if not np.isnan(last_rms) and not np.isnan(explicit_rms):
         assert_allclose(explicit_rms, last_rms, rtol=1e-4, atol=1e-6)
+
+
+# ----------------------------------------------------------------------
+# Sparse input, algorithm="map"
+# ----------------------------------------------------------------------
 
 
 def test_pca_full_sparse_map_basic() -> None:
     rng = np.random.default_rng(2)
     dense = rng.standard_normal((4, 6))
-    dense[rng.random(dense.shape) < 0.3] = 0.0
+    dense[rng.random(dense.shape) < 0.3] = 0.0  # many zeros -> will be sparse
     x_sparse = sp.csr_matrix(dense)
 
     result = pca_full(
@@ -137,12 +194,20 @@ def test_pca_full_sparse_map_basic() -> None:
     assert scores.shape == (2, 6)
     assert mean.shape == (4, 1)
 
+    # For MAP: use_postvar=False, so Av and Muv are empty
     assert isinstance(av, list)
     assert len(av) == 0
+    assert isinstance(muv, np.ndarray)
     assert muv.size == 0
 
+    # Va and Vmu should be finite (priors enabled in MAP)
     assert np.all(np.isfinite(va))
     assert np.isfinite(vmu)
+
+
+# ----------------------------------------------------------------------
+# Algorithm="ppca" behavior
+# ----------------------------------------------------------------------
 
 
 def test_pca_full_ppca_no_posterior_variances() -> None:
@@ -163,15 +228,23 @@ def test_pca_full_ppca_no_posterior_variances() -> None:
     va = result["Va"]
     vmu = result["Vmu"]
 
+    # In ppca: no priors, no posterior variances
     assert isinstance(av, list)
     assert len(av) == 0
+    assert isinstance(muv, np.ndarray)
     assert muv.size == 0
 
     assert np.all(np.isinf(va))
     assert np.isinf(vmu)
 
 
+# ----------------------------------------------------------------------
+# uniquesv=True: pattern-sharing path
+# ----------------------------------------------------------------------
+
+
 def test_pca_full_uniquesv_pattern_mode() -> None:
+    # Columns 0 and 2 share pattern; columns 1 and 3 share another.
     x = np.array(
         [
             [1.0, np.nan, 3.0, np.nan],
@@ -207,6 +280,11 @@ def test_pca_full_uniquesv_pattern_mode() -> None:
     assert len(lc["rms"]) >= 1
 
 
+# ----------------------------------------------------------------------
+# cfstop: cost computation path
+# ----------------------------------------------------------------------
+
+
 def test_pca_full_cost_computation_cfstop() -> None:
     x = _make_toy_dense_with_nans(n_features=4, n_samples=5, seed=4)
 
@@ -223,9 +301,17 @@ def test_pca_full_cost_computation_cfstop() -> None:
 
     lc = result["lc"]
     costs = np.asarray(lc["cost"], dtype=float)
+    rms_series = np.asarray(lc["rms"], dtype=float)
 
-    assert costs.shape[0] == len(lc["rms"])
+    assert costs.shape[0] == rms_series.shape[0]
+
+    # At least one finite cost value should be present when cfstop is enabled
     assert int(np.isfinite(costs).sum()) >= 1
+
+
+# ----------------------------------------------------------------------
+# Smoke test with rotate2pca off
+# ----------------------------------------------------------------------
 
 
 def test_pca_full_rotate2pca_off() -> None:
@@ -247,6 +333,11 @@ def test_pca_full_rotate2pca_off() -> None:
     assert result["Mu"].shape == (5, 1)
 
 
+# ----------------------------------------------------------------------
+# Bias / mean behaviour
+# ----------------------------------------------------------------------
+
+
 def test_pca_full_bias_disabled_gives_zero_mean() -> None:
     x = _make_toy_dense_with_nans(n_features=4, n_samples=6, seed=10)
 
@@ -261,7 +352,8 @@ def test_pca_full_bias_disabled_gives_zero_mean() -> None:
         verbose=0,
     )
 
-    assert_allclose(result["Mu"], np.zeros_like(result["Mu"]), atol=1e-8)
+    mean = result["Mu"]
+    assert_allclose(mean, np.zeros_like(mean), atol=1e-8)
 
 
 def test_pca_full_tiny_problem_smoke() -> None:
@@ -285,6 +377,11 @@ def test_pca_full_tiny_problem_smoke() -> None:
     assert all(np.isfinite(r) for r in result["lc"]["rms"] if not np.isnan(r))
 
 
+# ----------------------------------------------------------------------
+# Optional MATLAB regression tests
+# ----------------------------------------------------------------------
+
+
 def test_pca_full_matches_matlab_dense_fixture() -> None:
     fixture = _fixture_path("legacy_pca_full_dense.mat")
     if not fixture.exists():
@@ -300,7 +397,7 @@ def test_pca_full_matches_matlab_dense_fixture() -> None:
         x,
         n_components=k,
         algorithm="vb",
-        maxiters=mat_res.maxiters if hasattr(mat_res, "maxiters") else 200,
+        maxiters=int(getattr(mat_res, "maxiters", 200)),
         bias=int(getattr(mat_res, "bias", 1)),
         uniquesv=int(getattr(mat_res, "uniquesv", 0)),
         autosave=0,
@@ -316,9 +413,14 @@ def test_pca_full_matches_matlab_dense_fixture() -> None:
     A_mat = np.asarray(mat_res.A, dtype=float)
     S_mat = np.asarray(mat_res.S, dtype=float)
     Mu_mat = np.asarray(mat_res.Mu, dtype=float)
+    if Mu_mat.ndim == 1:
+        Mu_mat = Mu_mat[:, None]
     V_mat = float(mat_res.V)
 
-    assert_allclose(A_py @ S_py + Mu_py, A_mat @ S_mat + Mu_mat, rtol=1e-5, atol=1e-7)
+    x_rec_py = A_py @ S_py + Mu_py
+    x_rec_mat = A_mat @ S_mat + Mu_mat
+
+    assert_allclose(x_rec_py, x_rec_mat, rtol=1e-5, atol=1e-7)
     assert_allclose(V_py, V_mat, rtol=1e-5, atol=1e-7)
 
 
@@ -337,7 +439,7 @@ def test_pca_full_matches_matlab_missing_fixture() -> None:
         x,
         n_components=k,
         algorithm="vb",
-        maxiters=mat_res.maxiters if hasattr(mat_res, "maxiters") else 200,
+        maxiters=int(getattr(mat_res, "maxiters", 200)),
         bias=int(getattr(mat_res, "bias", 1)),
         uniquesv=int(getattr(mat_res, "uniquesv", 0)),
         autosave=0,
@@ -353,6 +455,8 @@ def test_pca_full_matches_matlab_missing_fixture() -> None:
     A_mat = np.asarray(mat_res.A, dtype=float)
     S_mat = np.asarray(mat_res.S, dtype=float)
     Mu_mat = np.asarray(mat_res.Mu, dtype=float)
+    if Mu_mat.ndim == 1:
+        Mu_mat = Mu_mat[:, None]
     V_mat = float(mat_res.V)
 
     x_rec_py = A_py @ S_py + Mu_py
