@@ -3,7 +3,6 @@
 import numpy as np
 import pytest
 import scipy.sparse as sp
-
 from vbpca_py._mean import ProbeMatrices, subtract_mu
 
 
@@ -272,3 +271,22 @@ def test_subtract_mu_shape_errors() -> None:
             probe=probe_rows_mismatch_sparse,
             update_bias=True,
         )
+
+
+def test_subtract_mu_dense_missing_entries_remain_zero_after_preprocess() -> None:
+    x = np.array([[1.0, np.nan], [3.0, 5.0]], dtype=float)
+    mask = ~np.isnan(x)
+    x_proc = x.copy()
+    x_proc[np.isnan(x_proc)] = 0.0
+
+    mu = np.array([[1.0], [4.0]])  # mean over observed entries per row
+
+    x_out, _ = subtract_mu(mu, x_proc, mask.astype(float), update_bias=True)
+
+    # Missing entry stays 0.0 because mask=0 there
+    assert x_out[0, 1] == 0.0
+
+    # Observed entries subtract properly
+    assert x_out[0, 0] == 0.0
+    assert x_out[1, 0] == -1.0
+    assert x_out[1, 1] == 1.0

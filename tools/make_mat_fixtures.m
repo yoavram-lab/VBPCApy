@@ -3,21 +3,23 @@
 % Generates MATLAB-compatible .mat fixtures for the Python test suite:
 %   tests/data/legacy_pca_full_dense.mat
 %   tests/data/legacy_pca_full_missing.mat
+%   tests/data/legacy_rotate_to_pca.mat        <-- NEW
 %
-% If you do not have a MATLAB license, you can run this script using GNU
-% Octave (https://www.gnu.org/software/octave/). It should be fully
-% compatible.
+% Run in MATLAB or GNU Octave.
 
 % -----------------------------
 % ADD YOUR LEGACY MATLAB VBPCA CODE PATH HERE
-% can be downloaded from: https://users.ics.aalto.fi/alexilin/software/
 % -----------------------------
-% This must be the folder that contains pca_full.m (or a parent directory).
 addpath("/Users/josh/Documents/VBPCA");  
 
 % Confirm pca_full is found
 if exist("pca_full", "file") ~= 2
   error("Could not find pca_full.m on the Octave path. Edit addpath(...) above.");
+end
+
+% Confirm RotateToPCA is found (you added RotateToPCA.m)
+if exist("RotateToPCA", "file") ~= 2
+  error("Could not find RotateToPCA.m on the Octave path. Ensure it exists and addpath(...) is correct.");
 end
 
 % Output directory: tests/data
@@ -55,7 +57,6 @@ end
 % -------------------------------------------------------------------------
 % 1) Dense fixture
 % -------------------------------------------------------------------------
-% Deterministic RNG (Octave-compatible)
 rand("state", 1);
 randn("state", 1);
 
@@ -68,8 +69,6 @@ opts = _make_opts(200, 1, 0);
 
 result = pca_full(x, k, opts);
 
-% Store a few fields that the Python test tries to read from mat_res
-% (It uses these only to populate args to Python pca_full.)
 result.maxiters = opts.maxiters;
 result.bias = opts.bias;
 result.uniquesv = opts.uniquesv;
@@ -99,5 +98,46 @@ result.uniquesv = opts.uniquesv;
 missing_path = fullfile(outdir, "legacy_pca_full_missing.mat");
 save(missing_path, save_format, "x", "k", "result");
 fprintf("Wrote %s\n", missing_path);
+
+% -------------------------------------------------------------------------
+% 3) RotateToPCA fixture (captures one realistic state + rotation result)
+% -------------------------------------------------------------------------
+% Goal: test Python rotate_to_pca directly against legacy RotateToPCA.m.
+%
+% We run pca_full for a few iterations with rotate2pca=0 so we can
+% capture (A,S,Av,Sv,Isv) BEFORE rotation, then call RotateToPCA once.
+
+rand("state", 3);
+randn("state", 3);
+
+x = randn(n_features, n_samples);
+k = 3;
+
+opts = _make_opts(5, 1, 0);     % short run is fine; we just need a state
+opts.rotate2pca = 0;            % CRITICAL: do NOT rotate inside pca_full
+
+out = pca_full(x, k, opts);     % returns struct when only one output
+
+A0 = out.A;
+S0 = out.S;
+Mu0 = out.Mu;
+V0 = out.V;
+Av0 = out.Av;
+Sv0 = out.Sv;
+Isv0 = out.Isv;
+
+% obscombj isn't returned by pca_full; in uniquesv=0 mode RotateToPCA
+% ignores it anyway, so pass an empty cell.
+obscombj0 = {};
+
+update_bias = 1;
+
+[dMu, A1, Av1, S1, Sv1] = RotateToPCA(A0, Av0, S0, Sv0, Isv0, obscombj0, update_bias);
+
+rotate_path = fullfile(outdir, "legacy_rotate_to_pca.mat");
+save(rotate_path, save_format, ...
+     "A0","S0","Mu0","V0","Av0","Sv0","Isv0","obscombj0","update_bias", ...
+     "dMu","A1","S1","Av1","Sv1");
+fprintf("Wrote %s\n", rotate_path);
 
 fprintf("Done.\n");
