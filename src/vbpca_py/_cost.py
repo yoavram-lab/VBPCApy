@@ -3,14 +3,13 @@ Full variational cost (free energy) computation for VB PCA.
 
 This module implements `compute_full_cost`, which evaluates the
 variational free energy (or negative ELBO) for the VB PCA model
-given current posterior parameters:
+given current posterior parameters.
 
-- x : observed data matrix
-- a, s : factor loadings and scores
-- params : grouped mean, noise, prior, and covariance parameters
-
-The function returns the total cost and its decomposed components:
-data term, mean term, loading term, and latent score term.
+MATLAB semantic alignment notes (cf_full.m):
+- The data term is computed on X that has been mean-centered on the observed set:
+    Dense:  Xc = X_clean - repmat(Mu,1,n2) .* M
+    Sparse: stored entries in row i are shifted by Mu[i] (mask ignored; observed set is structure)
+- Missing dense entries are encoded as NaN (when mask is None) and treated as unobserved.
 """
 
 from __future__ import annotations
@@ -21,6 +20,9 @@ import numpy as np
 import scipy.sparse as sp
 from numpy.linalg import slogdet
 
+from ._mean import (
+    subtract_mu as _subtract_mu_mean,  # sparse path uses stored-entry subtraction
+)
 from ._rms import RmsConfig, compute_rms
 
 # ============================================================
@@ -43,6 +45,11 @@ ERR_LOADING_PRIORS_REQUIRED = (
     "loading_priors must be provided when priors are enabled for A."
 )
 
+ERR_PATTERN_INDEX_SHAPE = "score_pattern_index must have shape (n_samples,)."
+ERR_PATTERN_INDEX_BOUNDS = (
+    "score_pattern_index contains out-of-range indices for score_covariances."
+)
+
 
 # ============================================================
 # Parameter containers
@@ -51,41 +58,7 @@ ERR_LOADING_PRIORS_REQUIRED = (
 
 @dataclass(slots=True)
 class CostParams:
-    """Grouped parameters for `compute_full_cost`.
-
-    Attributes:
-        mu:
-            Mean vector of the observation model. Shape (n_features,) or
-            (n_features, 1).
-        noise_variance:
-            Observation noise variance (V in the original code).
-        loading_covariances:
-            Optional list of Av[i] covariances for rows of A,
-            each of shape (n_components, n_components).
-        score_covariances:
-            Optional list of Sv[j] or Sv[pattern] covariances
-            for columns of S, each of shape (n_components, n_components).
-        score_pattern_index:
-            Optional mapping from sample index j into
-            score_covariances (pattern index).
-        mu_variances:
-            Optional posterior variances for mu (per feature).
-        loading_priors:
-            Prior variances for rows/columns of A (Va). Scalar or
-            array broadcastable to A.
-        mu_prior_variance:
-            Prior variance for mu (Vmu).
-        mask:
-            Optional mask matrix for X; ones/True mark observed entries.
-        s_xv:
-            Optional precomputed expected squared reconstruction error term.
-        n_data:
-            Optional number of observed entries; if None, inferred from
-            the mask.
-        num_cpu:
-            Number of CPU threads to use for the RMS computation on the
-            sparse path. Values < 1 are coerced to 1.
-    """
+    """Grouped parameters for `compute_full_cost`."""
 
     mu: np.ndarray
     noise_variance: float
@@ -138,6 +111,15 @@ def _normalize_mu(mu: np.ndarray, n_features: int) -> np.ndarray:
     return mu
 
 
+def _coerce_dense_mask_to_bool(mask: np.ndarray) -> np.ndarray:
+    """Normalize dense masks to boolean 'observed' semantics."""
+    m = np.asarray(mask)
+    if m.dtype == bool:
+        return m
+    # MATLAB uses numeric 0/1 masks frequently; treat nonzero as observed.
+    return m != 0
+
+
 def _build_mask_and_clean_x(
     x: np.ndarray | sp.spmatrix,
     mask: np.ndarray | sp.spmatrix | None,
@@ -146,24 +128,20 @@ def _build_mask_and_clean_x(
 
     Returns:
         x_clean:
-            x with NaNs replaced by zeros in the dense case; unchanged
-            for sparse.
+            Dense: NaNs replaced by zeros when mask is None; otherwise unchanged.
+            Sparse: unchanged.
         mask_out:
-            Mask with ones/True for observed entries and zeros/False
-            for missing.
-        row_idx:
-            Row indices of observed entries.
-        col_idx:
-            Column indices of observed entries.
+            Dense: boolean observed mask.
+            Sparse: sparse boolean mask with the same sparsity structure as x.
+        row_idx, col_idx:
+            Observed coordinates.
     """
     if mask is None:
         if sp.issparse(x):
-            # Sparse x: treat all stored entries as observed.
             mask_out = x.copy()
             mask_out.data = np.ones_like(mask_out.data, dtype=bool)
             x_clean = x
         else:
-            # Dense x: NaN indicates missing.
             mask_out = ~np.isnan(x)
             x_clean = np.where(mask_out, x, 0.0)
     else:
@@ -176,9 +154,58 @@ def _build_mask_and_clean_x(
     if sp.issparse(mask_out):
         row_idx, col_idx = mask_out.nonzero()
     else:
-        row_idx, col_idx = np.where(mask_out)
+        mask_bool = _coerce_dense_mask_to_bool(np.asarray(mask_out))
+        mask_out = mask_bool  # type: ignore[assignment]
+        row_idx, col_idx = np.where(mask_bool)
 
     return x_clean, mask_out, row_idx, col_idx
+
+
+def _validate_score_pattern_index(
+    score_pattern_index: np.ndarray | None,
+    score_covariances: list[np.ndarray] | None,
+    n_samples: int,
+) -> None:
+    if score_pattern_index is None:
+        return
+    idx = np.asarray(score_pattern_index)
+    if idx.shape != (n_samples,):
+        raise ValueError(ERR_PATTERN_INDEX_SHAPE)
+    if score_covariances is None or len(score_covariances) == 0:
+        return
+    if idx.size > 0:
+        if np.min(idx) < 0 or np.max(idx) >= len(score_covariances):
+            raise ValueError(ERR_PATTERN_INDEX_BOUNDS)
+
+
+def _center_x_by_mu(
+    x_clean: np.ndarray | sp.spmatrix,
+    mu: np.ndarray,
+    mask_out: np.ndarray | sp.spmatrix,
+) -> np.ndarray | sp.spmatrix:
+    """
+    MATLAB-aligned mean centering used for the data term (cost_x):
+
+    Dense:  Xc = X_clean - mu[:,None] * M   where M is boolean/0-1 observed mask.
+    Sparse: subtract mu[row] from each *stored* entry (mask ignored; structure is observed set).
+    """
+    # If Mu is empty in MATLAB, they skip; in Python we treat "all zeros" as a no-op fast path.
+    if mu.size == 0:
+        return x_clean
+
+    if sp.issparse(x_clean):
+        # Use the same semantics as subtract_mu MEX: shift stored entries by Mu[row].
+        # mask is ignored for sparse, but the API requires something; pass mask_out.
+        x_out, _ = _subtract_mu_mean(
+            mu, x_clean, mask_out, probe=None, update_bias=True
+        )
+        return x_out
+
+    # Dense
+    m_bool = mask_out if isinstance(mask_out, np.ndarray) else np.asarray(mask_out)
+    m_bool = _coerce_dense_mask_to_bool(np.asarray(m_bool))
+    x_arr = np.asarray(x_clean, dtype=float)
+    return x_arr - (mu[:, None] * m_bool)
 
 
 def _sxv_identity_contrib(
@@ -189,16 +216,13 @@ def _sxv_identity_contrib(
 ) -> float:
     """Contribution to s_xv when Sv = I for all columns."""
     _ = s  # scores only used when Av is provided
-
     contrib = 0.0
 
-    # a_i^T I a_i = ||a_i||^2, aggregated by row occurrence counts.
     n_features = a.shape[0]
     row_counts = np.bincount(obs.row_idx, minlength=n_features)
     row_norm_sq = np.sum(a * a, axis=1)
     contrib += float(np.sum(row_counts * row_norm_sq))
 
-    # If Av is present, per-observation terms depending on both i and j.
     if loading_covs is not None and len(loading_covs) > 0:
         for i, j in zip(obs.row_idx, obs.col_idx, strict=True):
             if i >= len(loading_covs):
@@ -217,14 +241,10 @@ def _sxv_patterned_fastpath(
     score_covs: list[np.ndarray],
     pattern_index: np.ndarray,
 ) -> float:
-    """Fast path for Sv with pattern indices and no Av.
-
-    Aggregates contributions a_i^T Sv_p a_i over (row, pattern) counts.
-    """
+    """Fast path for Sv with pattern indices and no Av."""
     n_features = a.shape[0]
     n_patterns = len(score_covs)
 
-    # For each observation (i, j), determine its pattern p and count (i, p).
     pat = pattern_index[obs.col_idx]
     counts = np.zeros((n_features, n_patterns), dtype=np.int64)
     np.add.at(counts, (obs.row_idx, pat), 1)
@@ -233,8 +253,8 @@ def _sxv_patterned_fastpath(
     for p, sv_p in enumerate(score_covs):
         if sv_p is None:
             continue
-        a_sv = a @ sv_p  # (n_features, k)
-        per_row = np.sum(a_sv * a, axis=1)  # a_i^T Sv_p a_i
+        a_sv = a @ sv_p
+        per_row = np.sum(a_sv * a, axis=1)
         contrib += float(np.sum(counts[:, p] * per_row))
 
     return contrib
@@ -282,15 +302,12 @@ def _sxv_score_covariance_contrib(
     loading_covs = cov.loading_covariances
     pattern_index = cov.score_pattern_index
 
-    # Case 1: No Sv provided => Sv = I.
     if score_covs is None:
         return _sxv_identity_contrib(a, s, obs, loading_covs)
 
-    # Case 2: Sv present, no Av, and pattern index available => fast path.
     if loading_covs is None and pattern_index is not None:
         return _sxv_patterned_fastpath(a, obs, score_covs, pattern_index)
 
-    # Case 3: General per-observation path.
     return _sxv_general_per_observation(a, s, obs, cov)
 
 
@@ -298,7 +315,6 @@ def _sxv_mu_variance_contrib(
     obs: ObservationInfo,
     cov: CovarianceInfo,
 ) -> float:
-    """Contribution from posterior variances of mu."""
     mu_vars = cov.mu_variances
     if mu_vars is None or mu_vars.size == 0:
         return 0.0
@@ -306,36 +322,32 @@ def _sxv_mu_variance_contrib(
 
 
 def _compute_sxv(
-    x: np.ndarray | sp.spmatrix,
+    x_centered: np.ndarray | sp.spmatrix,
     a: np.ndarray,
     s: np.ndarray,
     obs: ObservationInfo,
     cov: CovarianceInfo,
 ) -> tuple[float, int]:
     """
-    Compute or refine the expected squared reconstruction error s_xv.
+    Compute expected squared reconstruction error s_xv:
 
-    This includes:
-    - the deterministic residual contribution (via RMS), and
-    - contributions from the posterior covariances of A, S, and mu.
+      s_xv = (rms^2) * ndata  +  covariance contributions (Sv/Av/Muv)
+
+    IMPORTANT:
+    `x_centered` must already be mean-centered on observed entries to match MATLAB cf_full semantics.
     """
-    # Effective number of observed entries
     n_data_effective = len(obs.row_idx) if obs.n_data is None else obs.n_data
 
-    # If caller supplied s_xv explicitly, just use it.
     if cov.s_xv is not None:
         return float(cov.s_xv), n_data_effective
 
-    # RMS reconstruction error (handles sparse/dense internally),
-    # using the specified number of CPU threads.
     rms_config = RmsConfig(
         n_observed=n_data_effective,
         num_cpu=max(int(cov.num_cpu), 1),
     )
-    rms, _ = compute_rms(x, a, s, obs.mask, rms_config)
+    rms, _ = compute_rms(x_centered, a, s, obs.mask, rms_config)
     s_xv_local = float((rms**2) * n_data_effective)
 
-    # Add covariance contributions
     s_xv_local += _sxv_score_covariance_contrib(a, s, obs, cov)
     s_xv_local += _sxv_mu_variance_contrib(obs, cov)
 
@@ -349,22 +361,17 @@ def _compute_mu_cost(
     mu_prior_variance: float | None,
     loading_priors: np.ndarray | float | None,
 ) -> float:
-    """Compute the cost contribution from the mean parameter mu."""
     cost_mu = 0.0
-
     use_prior = loading_priors is not None and not np.any(np.isinf(loading_priors))
 
     if not use_prior:
         if mu_variances is not None and mu_variances.size > 0:
-            # cost if no prior
             cost_mu = -0.5 * float(np.sum(np.log(2.0 * np.pi * mu_variances))) - (
                 n_features / 2.0
             )
         return cost_mu
 
-    # Priors enabled
     if mu_variances is not None and mu_variances.size > 0:
-        # Full posterior variances given
         if mu_prior_variance is None or mu_prior_variance == 0:
             raise ValueError(ERR_MU_PRIOR_VAR)
         cost_mu = (
@@ -374,7 +381,6 @@ def _compute_mu_cost(
             - (n_features / 2.0)
         )
     elif mu_prior_variance not in (None, 0):
-        # Simple Gaussian prior: mu ~ N(0, mu_prior_variance I)
         cost_mu = 0.5 / mu_prior_variance * float(np.sum(mu**2)) + (
             n_features / 2.0
         ) * np.log(2.0 * np.pi * mu_prior_variance)
@@ -389,14 +395,11 @@ def _compute_loading_cost(
     n_features: int,
     n_components: int,
 ) -> float:
-    """Compute the cost contribution from the loading matrix A."""
     cost_a = 0.0
-
     use_prior = loading_priors is not None and not np.any(np.isinf(loading_priors))
 
     if not use_prior:
         if loading_covariances is not None and len(loading_covariances) > 0:
-            # cost if no prior
             cost_a = -(n_features * n_components / 2.0) * (1.0 + np.log(2.0 * np.pi))
             for i in range(n_features):
                 av_i = loading_covariances[i]
@@ -407,14 +410,12 @@ def _compute_loading_cost(
                     cost_a -= 0.5 * (-np.inf)
         return cost_a
 
-    # Priors enabled
     if loading_priors is None:
         raise ValueError(ERR_LOADING_PRIORS_REQUIRED)
 
     va_arr = np.asarray(loading_priors)
 
     if loading_covariances is not None and len(loading_covariances) > 0:
-        # Full Av given per row
         cost_a = (
             0.5 * float(np.sum(np.sum(a**2, axis=0) / va_arr))
             + (n_features / 2.0) * float(np.sum(np.log(va_arr)))
@@ -429,7 +430,6 @@ def _compute_loading_cost(
             else:
                 cost_a += trace_term - 0.5 * (-np.inf)
     else:
-        # No Av given: simple Gaussian prior on A with variance Va.
         cost_a = 0.5 * float(np.sum(a**2 / va_arr)) + (n_features / 2.0) * float(
             np.sum(np.log(2.0 * np.pi * va_arr))
         )
@@ -444,12 +444,10 @@ def _compute_score_cost(
     n_components: int,
     n_samples: int,
 ) -> float:
-    """Compute the cost contribution from the latent scores S."""
     cost_s = 0.5 * float(np.sum(s**2))
 
     if score_covariances is not None and len(score_covariances) > 0:
         if score_pattern_index is not None and len(score_pattern_index) > 0:
-            # Pattern-indexed Sv
             for j in range(n_samples):
                 sv_idx = score_pattern_index[j]
                 sv_j = score_covariances[sv_idx]
@@ -461,7 +459,6 @@ def _compute_score_cost(
                     else:
                         cost_s += trace_svj - 0.5 * (-np.inf)
         else:
-            # Direct Sv[j] per column
             for j in range(n_samples):
                 sv_j = score_covariances[j]
                 if sv_j is not None:
@@ -472,7 +469,6 @@ def _compute_score_cost(
                     else:
                         cost_s += trace_svj - 0.5 * (-np.inf)
 
-    # Subtract normalizing constant
     cost_s -= (n_components * n_samples) / 2.0
     return cost_s
 
@@ -488,41 +484,11 @@ def compute_full_cost(
     s: np.ndarray,
     params: CostParams,
 ) -> tuple[float, float, float, float, float]:
-    """Compute the full variational cost (free energy) for VB PCA.
+    """
+    Compute total cost and components (cost, cost_x, cost_a, cost_mu, cost_s).
 
-    This is a structured, typed port of Illin & Raiko's 2010 VB PCA
-    cost function, decomposed into:
-
-    - cost_x: data term (expected squared reconstruction error)
-    - cost_mu: mean term
-    - cost_a: loading matrix term
-    - cost_s: latent score term
-
-    Args:
-        x:
-            Observed data matrix of shape (n_features, n_samples). May contain
-            NaNs to indicate missing values when `params.mask` is None and
-            x is dense. For sparse x, missing entries are typically implicit
-            (unstored zeros).
-        a:
-            Factor loadings of shape (n_features, n_components).
-        s:
-            Factor scores of shape (n_components, n_samples).
-        params:
-            Grouped parameters controlling priors, posterior covariances,
-            masking, noise variance, and RMS threading.
-
-    Returns:
-        cost:
-            Total cost (sum of all components).
-        cost_x:
-            Data term.
-        cost_a:
-            Loading matrix term.
-        cost_mu:
-            Mean term.
-        cost_s:
-            Latent score term.
+    IMPORTANT MATLAB alignment:
+    - The data term is computed on mean-centered X (centered on observed set).
     """
     n_features, n_samples = x.shape
 
@@ -538,8 +504,14 @@ def compute_full_cost(
     n_components = a.shape[1]
     mu = _normalize_mu(params.mu, n_features)
 
-    # Mask / missing handling and observed indices
+    _validate_score_pattern_index(
+        params.score_pattern_index, params.score_covariances, n_samples
+    )
+
     x_clean, mask_out, row_idx, col_idx = _build_mask_and_clean_x(x, params.mask)
+
+    # Mean-center X on observed entries (MATLAB cf_full semantics)
+    x_centered = _center_x_by_mu(x_clean, mu, mask_out)
 
     obs = ObservationInfo(
         mask=mask_out,
@@ -558,21 +530,18 @@ def compute_full_cost(
         num_cpu=params.num_cpu,
     )
 
-    # Compute s_xv and n_data (data term core)
     s_xv_val, n_data_effective = _compute_sxv(
-        x_clean,
+        x_centered,
         a,
         s,
         obs,
         cov,
     )
 
-    # Data term
     cost_x = 0.5 * s_xv_val / params.noise_variance + 0.5 * n_data_effective * (
         np.log(2.0 * np.pi * params.noise_variance)
     )
 
-    # Mean term
     cost_mu = _compute_mu_cost(
         mu=mu,
         mu_variances=params.mu_variances,
@@ -581,7 +550,6 @@ def compute_full_cost(
         loading_priors=params.loading_priors,
     )
 
-    # Loading term
     cost_a = _compute_loading_cost(
         a=a,
         loading_covariances=params.loading_covariances,
@@ -590,7 +558,6 @@ def compute_full_cost(
         n_components=n_components,
     )
 
-    # Latent score term
     cost_s = _compute_score_cost(
         s=s,
         score_covariances=params.score_covariances,
