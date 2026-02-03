@@ -1,30 +1,21 @@
-"""Mean-subtraction utilities for Variational Bayesian PCA.
+"""
+Mean-subtraction utilities for Variational Bayesian PCA.
 
-This module provides :func:`subtract_mu`, a small helper that subtracts a
-row-wise mean vector from dense or sparse data matrices and an optional
-probe matrix.
+This module provides :func:`subtract_mu`, a helper that subtracts a row-wise
+mean vector from dense or sparse data matrices and an optional probe matrix.
 
-For sparse CSR inputs, the heavy lifting is delegated to the C++
-extension :mod:`vbpca_py.subtract_mu_from_sparse`, which operates
-directly on CSR components and preserves the sparsity structure
-(replacing exact zeros with a small epsilon for numerical stability).
+Behavior is aligned to the original MATLAB implementation:
 
-For dense inputs, the behavior mirrors the original MATLAB/Python
-implementation used in pca_full:
+    SubtractMu(Mu, X, M, Xprobe, Mprobe, update_bias)
 
-* For the main data matrix x:
+Dense:
+    X = X - repmat(Mu, 1, n2) .* M
+    Xprobe updated similarly with Mprobe.
 
-    x_out = x - (mu * mask)
-
-  where mu is broadcast along columns and mask is a 0/1 (or
-  boolean) mask of the same shape as x. Entries with mask == 0 are
-  left unchanged.
-
-* For the probe matrix x_probe (if provided):
-
-    x_probe_out = x_probe - (mu * mask_probe)
-
-  with an analogous mask.
+Sparse:
+    X = subtract_mu(X, Mu)  (mex / C++), which subtracts Mu[row] from each
+    stored entry in that row and replaces exact zeros with EPS.
+    Mask is ignored because missing entries are implicit in sparse storage.
 """
 
 from __future__ import annotations
@@ -48,6 +39,7 @@ ERR_MU_SHAPE = "mu must have shape (n_rows,) or (n_rows, 1)."
 ERR_MASK_SHAPE = "mask must have the same shape as x."
 ERR_MASK_PROBE_REQUIRED = "mask_probe must be provided when x_probe is not None."
 ERR_PROBE_ROWS = "x_probe must have the same number of rows as x."
+ERR_PROBE_SPARSE_TYPE = "x_probe must be sparse when x is sparse."
 
 
 # ============================================================
@@ -64,8 +56,8 @@ class ProbeMatrices:
             Probe data matrix with the same number of rows as x.
         mask:
             Mask for the probe matrix. Required (non-None) in the dense path
-            when update_bias is True. Ignored for sparse inputs, matching the
-            legacy behavior where missing entries are implicit.
+            when update_bias is True. Ignored for sparse inputs, matching
+            MATLAB behavior where missing entries are implicit.
     """
 
     x: Matrix
@@ -102,30 +94,13 @@ def _ensure_dense_mask(mask: Matrix, shape: tuple[int, int]) -> np.ndarray:
     return mask_arr
 
 
-def _subtract_dense(
-    mu_col: np.ndarray,
-    x: np.ndarray,
-    mask: np.ndarray,
-) -> np.ndarray:
-    """Subtract row-wise mu from dense x with a dense mask.
-
-    mu_col has shape (n_rows, 1), mask and x have shape (n_rows, n_cols).
-    The result mirrors x - (mu * mask) from the legacy implementation.
-    """
-    # Mask is usually 0/1 or boolean; broadcasting works as expected.
+def _subtract_dense(mu_col: np.ndarray, x: np.ndarray, mask: np.ndarray) -> np.ndarray:
+    """Subtract row-wise mu from dense x with a dense mask."""
     return x - mu_col * mask
 
 
-def _subtract_sparse(
-    mu_col: np.ndarray,
-    x: sp.spmatrix,
-) -> sp.csr_matrix:
-    """Subtract row-wise mu from sparse CSR x using the C++ helper.
-
-    The mask is intentionally ignored, matching the original behavior:
-    all stored entries in a given row are shifted by the corresponding
-    mu value.
-    """
+def _subtract_sparse(mu_col: np.ndarray, x: sp.spmatrix) -> sp.csr_matrix:
+    """Subtract row-wise mu from sparse CSR x using the C++ helper."""
     if not sp.isspmatrix_csr(x):
         x = x.tocsr()
 
@@ -135,16 +110,22 @@ def _subtract_sparse(
     indptr = x.indptr.astype(np.int32, copy=False)
     shape_tuple: tuple[int, int] = (n_rows, n_cols)
 
-    # C++ helper returns a new data array with the same nnz.
     new_data = subtract_mu_from_sparse(
         data,
         indices,
         indptr,
         shape_tuple,
-        mu_col[:, 0],  # pass as 1D (length n_rows)
+        mu_col[:, 0],  # 1D Mu
     )
 
     return sp.csr_matrix((new_data, indices, indptr), shape=x.shape)
+
+
+def _is_matlab_empty_matrix(mat: Matrix) -> bool:
+    """Match MATLAB isempty semantics: empty if any dimension is zero."""
+    # Works for both dense and sparse (SciPy sparse has .shape).
+    n_rows, n_cols = mat.shape
+    return n_rows == 0 or n_cols == 0
 
 
 # ============================================================
@@ -162,43 +143,9 @@ def subtract_mu(
 ) -> tuple[Matrix, Matrix | None]:
     """Subtract a row-wise mean vector from data and optional probe matrices.
 
-    This is the modern, typed version of the original inlined
-    subtract_mu from pca_full. It supports both dense and sparse
-    inputs, an optional probe matrix, and an explicit update_bias
-    flag.
-
-    Args:
-        mu:
-            Mean vector of shape (n_rows,) or (n_rows, 1).
-        x:
-            Data matrix of shape (n_rows, n_cols), dense or sparse.
-        mask:
-            Mask with the same shape as x. Entries equal to zero mark
-            positions where the mean should *not* be subtracted. For
-            sparse x, this mask is currently ignored (to match the
-            original MATLAB/Python behavior), since missing entries are
-            implicit.
-        probe:
-            Optional container with a probe/test data matrix and its mask.
-            The probe matrix must have the same number of rows as x.
-            For dense probes, probe.mask must be provided when update_bias
-            is True. For sparse probes, the mask is ignored.
-        update_bias:
-            If False, x and probe.x are returned unchanged and no
-            work is performed.
-
-    Returns:
-        x_out:
-            Matrix x with row-wise mean subtracted (if update_bias).
-        x_probe_out:
-            Probe matrix with mean subtracted, or None if no probe
-            was provided.
-
-    Raises:
-        ValueError:
-            If shapes of mu, x, or masks are incompatible.
+    Mirrors MATLAB SubtractMu.m behavior for dense and sparse inputs.
     """
-    # Fast path: do nothing (and do not validate shapes).
+    # Fast path: do nothing (and do not validate shapes), mirroring MATLAB.
     if not update_bias:
         probe_x = probe.x if probe is not None else None
         return x, probe_x
@@ -207,20 +154,25 @@ def subtract_mu(
     mu_col = _normalize_mu_column(mu, n_rows)
 
     # ------------------------------------------------------------------
-    # Sparse branch: ignore mask, match legacy behavior.
+    # Sparse branch (mask ignored, matching MATLAB behavior)
     # ------------------------------------------------------------------
     if sp.isspmatrix(x):
         x_out = _subtract_sparse(mu_col, x)
 
         x_probe_out: Matrix | None = None
-        if probe is not None and probe.x.size > 0:
+        if probe is not None:
             x_probe = probe.x
-            if not sp.isspmatrix(x_probe):
-                raise ValueError(ERR_PROBE_ROWS)
-            n_rows_probe, _ = x_probe.shape
-            if n_rows_probe != n_rows:
-                raise ValueError(ERR_PROBE_ROWS)
-            x_probe_out = _subtract_sparse(mu_col, x_probe)
+
+            # MATLAB: if isempty(Xprobe) do nothing.
+            if not _is_matlab_empty_matrix(x_probe):
+                if not sp.isspmatrix(x_probe):
+                    raise ValueError(ERR_PROBE_SPARSE_TYPE)
+
+                n_rows_probe, _ = x_probe.shape
+                if n_rows_probe != n_rows:
+                    raise ValueError(ERR_PROBE_ROWS)
+
+                x_probe_out = _subtract_sparse(mu_col, x_probe)
 
         return x_out, x_probe_out
 
@@ -229,20 +181,24 @@ def subtract_mu(
     # ------------------------------------------------------------------
     x_arr = np.asarray(x, dtype=float)
     mask_arr = _ensure_dense_mask(mask, (n_rows, n_cols))
-
     x_out = _subtract_dense(mu_col, x_arr, mask_arr)
 
     x_probe_out: Matrix | None = None
-    if probe is not None and probe.x.size > 0:
-        x_probe_arr = np.asarray(probe.x, dtype=float)
-        n_rows_probe, n_cols_probe = x_probe_arr.shape
-        if n_rows_probe != n_rows:
-            raise ValueError(ERR_PROBE_ROWS)
+    if probe is not None:
+        x_probe = probe.x
 
-        if probe.mask is None:
-            raise ValueError(ERR_MASK_PROBE_REQUIRED)
+        if not _is_matlab_empty_matrix(x_probe):
+            x_probe_arr = np.asarray(x_probe, dtype=float)
+            n_rows_probe, n_cols_probe = x_probe_arr.shape
+            if n_rows_probe != n_rows:
+                raise ValueError(ERR_PROBE_ROWS)
 
-        mask_probe_arr = _ensure_dense_mask(probe.mask, (n_rows_probe, n_cols_probe))
-        x_probe_out = _subtract_dense(mu_col, x_probe_arr, mask_probe_arr)
+            if probe.mask is None:
+                raise ValueError(ERR_MASK_PROBE_REQUIRED)
+
+            mask_probe_arr = _ensure_dense_mask(
+                probe.mask, (n_rows_probe, n_cols_probe)
+            )
+            x_probe_out = _subtract_dense(mu_col, x_probe_arr, mask_probe_arr)
 
     return x_out, x_probe_out
