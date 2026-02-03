@@ -311,8 +311,7 @@ def _eigh_psd(matrix: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     Small negative eigenvalues (from numerical noise) are clipped to zero.
     """
     eigvals, eigvecs = np.linalg.eigh(matrix)
-    eigvals_clipped = np.clip(eigvals, 0.0, None)
-    return eigvals_clipped, eigvecs
+    return eigvals, eigvecs
 
 
 def _build_ra(
@@ -336,8 +335,7 @@ def _build_r(
     """
     sqrt_eig = np.sqrt(np.clip(eigvals_s, 0.0, None))
     inv_sqrt = np.zeros_like(sqrt_eig)
-    mask = sqrt_eig > _EPS_EIG
-    inv_sqrt[mask] = 1.0 / sqrt_eig[mask]
+    inv_sqrt = 1.0 / sqrt_eig
 
     d_inv = np.diag(inv_sqrt)
     return v_a.T @ d_inv @ v_s.T

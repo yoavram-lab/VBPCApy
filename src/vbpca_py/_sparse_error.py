@@ -1,4 +1,10 @@
-"""Thin wrapper around the C++ errpca_pt extension, with a clearer name."""
+"""Thin wrapper around the C++ errpca_pt extension, with a clearer name.
+
+Guarantees:
+- Input is CSR.
+- Output is CSR with the SAME sparsity structure as x_csr.
+- Residuals computed only on stored entries: Err = X - A @ S on the CSR pattern.
+"""
 
 from __future__ import annotations
 
@@ -13,29 +19,29 @@ def sparse_reconstruction_error(
     scores: np.ndarray,
     num_cpu: int = 1,
 ) -> sp.csr_matrix:
-    """Compute sparse reconstruction error matrix (X - A @ S) on nonzeros of X.
+    """Compute sparse reconstruction error matrix (X - A @ S) on stored entries of X.
 
     Parameters
     ----------
     x_csr:
-        Input data in CSR format (shape (n_rows, n_cols)).
-    loadings, scores:
-        Factor matrices such that ``loadings @ scores`` approximates ``x_csr``.
-        In the notation of the original MATLAB code and paper, these correspond
-        to A (loadings) and S (scores).
+        Input data in CSR format, shape (n_rows, n_cols). The sparsity pattern
+        defines the observed set (legacy MATLAB semantics).
+    loadings:
+        A matrix of shape (n_rows, n_components).
+    scores:
+        S matrix of shape (n_components, n_cols).
     num_cpu:
-        Number of worker threads to use inside the C++ routine.
+        Worker threads used by the C++ routine.
 
-    Returns:
+    Returns
     -------
     err_csr:
-        CSR matrix with the same sparsity structure as ``x_csr`` containing
-        reconstruction errors.
+        CSR matrix with the same sparsity structure as x_csr containing residuals.
     """
     if not sp.isspmatrix_csr(x_csr):
-        msg = "x_csr must be a scipy.sparse.csr_matrix"
-        raise TypeError(msg)
+        raise TypeError("x_csr must be a scipy.sparse.csr_matrix")
 
+    # Ensure expected dtypes for the extension
     x_data = x_csr.data.astype(np.float64, copy=False)
     x_indices = x_csr.indices.astype(np.int32, copy=False)
     x_indptr = x_csr.indptr.astype(np.int32, copy=False)
@@ -43,15 +49,19 @@ def sparse_reconstruction_error(
     loadings = np.asarray(loadings, dtype=np.float64)
     scores = np.asarray(scores, dtype=np.float64)
 
-    # All heavy lifting is done in the C++ extension: CSR -> Eigen, A @ S,
-    # threaded error computation on the sparsity pattern of X, CSR back.
     result = _errpca_pt_ext(x_data, x_indices, x_indptr, loadings, scores, int(num_cpu))
 
-    return sp.csr_matrix(
-        (
-            np.asarray(result["data"]),
-            np.asarray(result["indices"]),
-            np.asarray(result["indptr"]),
-        ),
-        shape=tuple(result["shape"]),
-    )
+    data = np.asarray(result["data"], dtype=np.float64)
+    indices = np.asarray(result["indices"], dtype=np.int32)
+    indptr = np.asarray(result["indptr"], dtype=np.int32)
+    shape = tuple(result["shape"])
+
+    # Defensive: ensure the extension produced a shape consistent with the input
+    if shape != x_csr.shape:
+        raise ValueError(
+            f"Extension returned shape {shape}, expected {x_csr.shape}. "
+            "Check that scores.shape[1] matches x_csr.shape[1]."
+        )
+
+    # CSR construction; structure should match input by design
+    return sp.csr_matrix((data, indices, indptr), shape=shape)

@@ -445,6 +445,7 @@ def test_pca_full_matches_matlab_missing_fixture() -> None:
         autosave=0,
         display=0,
         verbose=0,
+        rotate2pca=1,
     )
 
     A_py = result["A"]
