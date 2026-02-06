@@ -177,7 +177,11 @@ def _prepare_data(
     x: Matrix,
     opts: MutableMapping[str, object],
 ) -> tuple[Matrix, Matrix | None, int, int, np.ndarray, np.ndarray]:
-    """Copy input, apply probe handling, and remove empty rows/cols."""
+    """Copy input, apply probe handling, and remove empty rows/cols.
+
+    Returns:
+        Data, probe data, original shapes, and kept row/col indices.
+    """
     x_probe_opt = opts.get("xprobe", None)
 
     if issparse(x):
@@ -213,7 +217,11 @@ def _build_masks_sparse(
     x_data: Matrix,
     x_probe: Matrix | None,
 ) -> tuple[Matrix, Matrix | None, Matrix, Matrix | None]:
-    """Build masks and normalized data for sparse inputs."""
+    """Build masks and normalized data for sparse inputs.
+
+    Returns:
+        Tuple of data, probe, mask, and probe mask.
+    """
     mask: Matrix = (x_data != 0).astype(float)
 
     if x_probe is not None and issparse(x_probe):
@@ -232,7 +240,11 @@ def _build_masks_dense(
     x_data: Matrix,
     x_probe: Matrix | None,
 ) -> tuple[Matrix, Matrix | None, Matrix, Matrix | None]:
-    """Build masks and normalized data for dense inputs."""
+    """Build masks and normalized data for dense inputs.
+
+    Returns:
+        Tuple of data, probe, mask, and probe mask.
+    """
     x_arr = np.array(x_data, dtype=float, copy=False)
     mask = ~np.isnan(x_arr)
 
@@ -258,7 +270,11 @@ def _build_masks_and_counts(
     x_probe: Matrix | None,
     opts: MutableMapping[str, object],
 ) -> tuple[Matrix, Matrix | None, Matrix, Matrix | None, np.ndarray, float, int]:
-    """Build missingness masks, handle NaNs/zeros, and count observations."""
+    """Build missingness masks, handle NaNs/zeros, and count observations.
+
+    Returns:
+        Data, probe, masks, per-row counts, total data count, probe count.
+    """
     if issparse(x_data):
         x_data, x_probe, mask, mask_probe = _build_masks_sparse(x_data, x_probe)
     else:
@@ -300,7 +316,11 @@ def _missing_patterns_info(
     opts: MutableMapping[str, object],
     n_samples: int,
 ) -> tuple[int, list[list[int]], np.ndarray | None]:
-    """Compute missingness-pattern information and Isv mapping."""
+    """Compute missingness-pattern information and Isv mapping.
+
+    Returns:
+        Number of patterns, pattern lists, and optional pattern index map.
+    """
     if opts.get("uniquesv"):
         n_patterns, obs_patterns, isv = _missing_patterns(mask)
         isv_arr = np.array(isv, dtype=int)
@@ -331,7 +351,11 @@ def _initialize_parameters(
     Matrix,
     Matrix | None,
 ]:
-    """Initialize loadings, scores, mu, V, Av, Sv, Muv, Va, Vmu and center data."""
+    """Initialize loadings, scores, mu, V, Av, Sv, Muv, Va, Vmu and center data.
+
+    Returns:
+        Initialized parameters and centered data/probe matrices.
+    """
     shapes = ctx.shapes
 
     # Use a deterministic RNG only when we fall back to random init; when
@@ -420,7 +444,11 @@ def _initialize_parameters(
 
 
 def _update_hyperpriors(ctx: HyperpriorContext) -> tuple[np.ndarray, float]:
-    """Update Va and Vmu after a broad-prior warmup period."""
+    """Update Va and Vmu after a broad-prior warmup period.
+
+    Returns:
+        Updated ``va`` and ``vmu`` hyperpriors.
+    """
     if not ctx.use_prior or ctx.iteration <= ctx.niter_broadprior:
         return ctx.va, ctx.vmu
 
@@ -436,7 +464,7 @@ def _update_hyperpriors(ctx: HyperpriorContext) -> tuple[np.ndarray, float]:
     va_new = np.sum(ctx.loadings**2, axis=0)
     if ctx.loading_covariances:
         for row_cov in ctx.loading_covariances:
-            va_new = va_new + np.diag(row_cov)
+            va_new += np.diag(row_cov)
 
     va_new = (va_new + 2.0 * ctx.hp_va) / denom
     va_new = np.maximum(va_new, _EPS_VAR)
@@ -456,7 +484,11 @@ def _update_bias(
     err_mx: np.ndarray,
     centering: CenteringState,
 ) -> tuple[BiasState, CenteringState]:
-    """Bias / mean update, including in-place centering of x / x_probe."""
+    """Bias / mean update, including in-place centering of x / x_probe.
+
+    Returns:
+        Updated bias state and centering state.
+    """
     if not bias_enabled:
         return bias_state, centering
 
@@ -539,7 +571,11 @@ def _update_bias(
 
 
 def _score_update_fast_dense_no_av(state: ScoreState) -> ScoreState:
-    """Fast path: fully observed dense data, no loading covariances."""
+    """Fast path: fully observed dense data, no loading covariances.
+
+    Returns:
+        Updated score state.
+    """
     x_is_sparse = issparse(state.x_data)
     _n_features, n_samples = state.x_data.shape
     n_components = state.loadings.shape[1]
@@ -579,7 +615,11 @@ def _score_update_fast_dense_no_av(state: ScoreState) -> ScoreState:
 
 
 def _score_update_general_no_patterns(state: ScoreState) -> ScoreState:
-    """General score update when there is no pattern sharing."""
+    """General score update when there is no pattern sharing.
+
+    Returns:
+        Updated score state.
+    """
     x_is_sparse = issparse(state.x_data)
     _n_features, n_samples = state.x_data.shape
     n_components = state.loadings.shape[1]
@@ -598,7 +638,7 @@ def _score_update_general_no_patterns(state: ScoreState) -> ScoreState:
         if state.loading_covariances:
             observed_rows = np.where(mask_col > 0)[0]
             for row_index in observed_rows:
-                psi = psi + state.loading_covariances[row_index]
+                psi += state.loading_covariances[row_index]
 
         psi = 0.5 * (psi + psi.T)
         try:
@@ -631,7 +671,11 @@ def _score_update_general_no_patterns(state: ScoreState) -> ScoreState:
 
 
 def _score_update_with_patterns(state: ScoreState) -> ScoreState:
-    """Score update when multiple columns share covariance patterns."""
+    """Score update when multiple columns share covariance patterns.
+
+    Returns:
+        Updated score state.
+    """
     x_is_sparse = issparse(state.x_data)
     _n_features, _n_samples = state.x_data.shape
     n_components = state.loadings.shape[1]
@@ -655,7 +699,7 @@ def _score_update_with_patterns(state: ScoreState) -> ScoreState:
         if state.loading_covariances:
             observed_rows = np.where(mask_col > 0)[0]
             for row_index in observed_rows:
-                psi = psi + state.loading_covariances[row_index]
+                psi += state.loading_covariances[row_index]
 
         psi = 0.5 * (psi + psi.T)
         try:
@@ -695,7 +739,11 @@ def _score_update_with_patterns(state: ScoreState) -> ScoreState:
 
 
 def _update_scores(state: ScoreState) -> ScoreState:
-    """Update scores and score covariances."""
+    """Update scores and score covariances.
+
+    Returns:
+        Updated score state.
+    """
     # Pattern-free branch
     if state.pattern_index is None:
         dense_mask = None
@@ -724,7 +772,11 @@ def _loadings_update_fast_dense_no_sv(
     np.ndarray,
     list[np.ndarray],
 ]:
-    """Fast path: fully observed dense data, no score covariances."""
+    """Fast path: fully observed dense data, no score covariances.
+
+    Returns:
+        Updated loadings and loading covariances.
+    """
     x_is_sparse = issparse(state.x_data)
     n_features, _ = state.x_data.shape
     n_components = state.scores.shape[0]
@@ -779,7 +831,11 @@ def _loadings_update_general(
     np.ndarray,
     list[np.ndarray],
 ]:
-    """General loading update, including masks and score covariances."""
+    """General loading update, including masks and score covariances.
+
+    Returns:
+        Updated loadings and loading covariances.
+    """
     x_is_sparse = issparse(state.x_data)
     n_features, _ = state.x_data.shape
     n_components = state.scores.shape[0]
@@ -812,7 +868,7 @@ def _loadings_update_general(
                 if state.pattern_index is None
                 else state.score_covariances[state.pattern_index[j_idx]]
             )
-            phi = phi + sv_j
+            phi += sv_j
 
         phi = 0.5 * (phi + phi.T)
         try:
@@ -852,7 +908,11 @@ def _update_loadings(
     np.ndarray,
     list[np.ndarray],
 ]:
-    """Update loadings and loading covariances."""
+    """Update loadings and loading covariances.
+
+    Returns:
+        Updated loadings and loading covariances.
+    """
     dense_mask = None
     fully_observed = False
     sv_contrib = bool(state.score_covariances)
@@ -873,7 +933,11 @@ def _update_loadings(
 
 
 def _recompute_rms(ctx: RmsContext) -> tuple[float, float, Matrix]:
-    """Recompute RMS and probe RMS after an update of loadings/scores."""
+    """Recompute RMS and probe RMS after an update of loadings/scores.
+
+    Returns:
+        RMS on data, RMS on probe, and error matrix.
+    """
     cfg_data = RmsConfig(n_observed=int(ctx.n_data), num_cpu=1)
     rms, err_mx = compute_rms(ctx.x_data, ctx.loadings, ctx.scores, ctx.mask, cfg_data)
 
@@ -904,7 +968,11 @@ def _update_noise_variance(
     jx: np.ndarray,
     hp_v: float = 0.001,
 ) -> tuple[NoiseState, float]:
-    """Update noise variance using current posterior covariances."""
+    """Update noise variance using current posterior covariances.
+
+    Returns:
+        Updated noise state and accumulated ``s_xv``.
+    """
     s_xv = 0.0
     loadings = noise_state.loadings
     scores = noise_state.scores
@@ -938,7 +1006,7 @@ def _update_noise_variance(
     if noise_state.mu_variances.size > 0:
         s_xv += float(np.sum(noise_state.mu_variances[ix, 0]))
 
-    s_xv = s_xv + (rms**2) * noise_state.n_data
+    s_xv += (rms**2) * noise_state.n_data
     v_new = (s_xv + 2.0 * hp_v) / (noise_state.n_data + 2.0 * hp_v)
     v_new = max(float(v_new), _EPS_VAR)
 
@@ -969,9 +1037,13 @@ def _final_rotation(
     list[np.ndarray],
     np.ndarray,
 ]:
-    """Final PCA rotation if no iterative rotation was applied."""
+    """Final PCA rotation if no iterative rotation was applied.
+
+    Returns:
+        Rotated loadings, loading covariances, scores, score covariances, and mu.
+    """
     # Only pass loadings covariances if we actually maintain them.
-    loading_covariances = ctx.loading_covariances if ctx.loading_covariances else None
+    loading_covariances = ctx.loading_covariances or None
 
     params = RotateParams(
         loading_covariances=loading_covariances,
@@ -992,6 +1064,6 @@ def _final_rotation(
 
     mu_out = ctx.mu
     if ctx.bias_enabled:
-        mu_out = mu_out + d_mu_final
+        mu_out += d_mu_final
 
     return loadings_rot, av_out, scores_rot, sv_rot, mu_out

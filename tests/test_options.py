@@ -48,7 +48,7 @@ def test_options_overrides_defaults_case_insensitive() -> None:
     assert opts["tol"] == pytest.approx(1e-4)
 
     # No warning for known keys
-    assert wrnmsg == ""
+    assert not wrnmsg
 
     # Original defopts not mutated
     assert defopts["maxiter"] == 100
@@ -78,7 +78,7 @@ def test_options_no_unknown_params_no_warning() -> None:
 
     _, wrnmsg = _options(defopts, maxiter=50, tol=1e-4)
 
-    assert wrnmsg == ""
+    assert not wrnmsg
 
 
 def test_options_handles_empty_kwargs() -> None:
@@ -88,7 +88,7 @@ def test_options_handles_empty_kwargs() -> None:
     opts, wrnmsg = _options(defopts)
 
     assert opts == defopts
-    assert wrnmsg == ""
+    assert not wrnmsg
 
 
 def test_options_mixed_known_and_unknown_keys() -> None:

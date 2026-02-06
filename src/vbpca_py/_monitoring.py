@@ -151,23 +151,25 @@ def init_params(
 
 
 def _normalize_init(init: str | Mapping[str, Any] | None) -> dict[str, Any]:
-    """Normalize init into a plain dictionary."""
+    """Normalize init into a plain dictionary.
+
+    Returns:
+        Dictionary of initialization values keyed by MATLAB-style names.
+
+    Raises:
+        ValueError: If ``init`` is neither ``None``, a string, nor a mapping.
+    """
     if isinstance(init, str):
         if init.lower() == "random":
             return {}
 
         mat_data = loadmat(init)
-        # If MATLAB stored a struct named "init", prefer that; otherwise
-        # use the whole dict.
+        # If MATLAB stored a struct named "init", prefer that; otherwise use the dict.
         if "init" in mat_data:
             raw = mat_data["init"]
             # MATLAB structs come in with dtype.names
             if getattr(raw, "dtype", None) is not None and raw.dtype.names:
-                # Convert MATLAB struct to dict[name -> value]
-                out: dict[str, Any] = {}
-                for name in raw.dtype.names:
-                    out[name] = raw[name].squeeze()
-                return out
+                return {name: raw[name].squeeze() for name in raw.dtype.names}
             return dict(raw)
 
         return dict(mat_data)
@@ -175,20 +177,23 @@ def _normalize_init(init: str | Mapping[str, Any] | None) -> dict[str, Any]:
     if init is None:
         return {}
 
-    # scipy.io.loadmat returns mat_struct; accept it as a mapping-like init.
-    if hasattr(init, "_fieldnames"):
-        init_dict = {name: getattr(init, name) for name in init._fieldnames}
-        return _coerce_mat_cells(init_dict)
-
-    if isinstance(init, Mapping):
+    field_names = getattr(init, "_fieldnames", None)
+    if field_names is not None:
+        init_dict = {name: getattr(init, name) for name in field_names}
+    elif isinstance(init, Mapping):
         init_dict = dict(init)
-        return _coerce_mat_cells(init_dict)
+    else:
+        raise ValueError(ERR_INIT_TYPE)
 
-    raise ValueError(ERR_INIT_TYPE)
+    return _coerce_mat_cells(init_dict)
 
 
 def _coerce_mat_cells(init_dict: dict[str, Any]) -> dict[str, Any]:
-    """Convert MATLAB-style cell arrays (object ndarrays) to Python lists."""
+    """Convert MATLAB-style cell arrays (object ndarrays) to Python lists.
+
+    Returns:
+        The mutated ``init_dict`` with any object arrays converted to lists.
+    """
     for key in ("Av", "Sv"):
         val = init_dict.get(key)
         if isinstance(val, np.ndarray) and val.dtype == object:
@@ -201,7 +206,11 @@ def _init_a_av(
     shapes: InitShapes,
     rng: np.random.Generator,
 ) -> tuple[np.ndarray, list[np.ndarray]]:
-    """Initialize loading matrix A and its covariances Av."""
+    """Initialize loading matrix A and its covariances Av.
+
+    Returns:
+        Tuple of loading matrix ``A`` and list of covariance matrices ``Av``.
+    """
     n_features = shapes.n_features
     n_components = shapes.n_components
 
@@ -230,7 +239,14 @@ def _expand_av_array(
     n_features: int,
     n_components: int,
 ) -> list[np.ndarray]:
-    """Convert an Av array into a list of covariance matrices."""
+    """Convert an Av array into a list of covariance matrices.
+
+    Returns:
+        List of covariance matrices, one per feature.
+
+    Raises:
+        ValueError: If ``av_arr`` has an unsupported shape.
+    """
     if av_arr.ndim == 2 and av_arr.shape == (n_features, n_components):
         # Diagonal variances for each row of A.
         return [np.diag(av_arr[i, :]) for i in range(n_features)]
@@ -248,7 +264,14 @@ def _init_mu_muv_v(
     init_dict: Mapping[str, Any],
     n_features: int,
 ) -> tuple[np.ndarray, np.ndarray, float]:
-    """Initialize mean vector mu, its variance muv, and noise variance v."""
+    """Initialize mean vector mu, its variance muv, and noise variance v.
+
+    Returns:
+        Tuple of ``(mu, Muv, V)``.
+
+    Raises:
+        ValueError: If ``Muv`` has an incompatible shape.
+    """
     mu = np.asarray(
         init_dict.get("Mu", np.zeros(n_features)),
         dtype=float,
@@ -276,7 +299,14 @@ def _init_s_sv(
     score_pattern_index: np.ndarray | Sequence[int] | None,
     rng: np.random.Generator,
 ) -> tuple[np.ndarray, list[np.ndarray]]:
-    """Initialize score matrix S and its covariances Sv."""
+    """Initialize score matrix S and its covariances Sv.
+
+    Returns:
+        Tuple of score matrix ``S`` and list of covariance matrices ``Sv``.
+
+    Raises:
+        ValueError: If required pattern information is missing or shapes mismatch.
+    """
     n_samples = shapes.n_samples
     n_components = shapes.n_components
     n_obs_patterns = shapes.n_obs_patterns
@@ -322,7 +352,11 @@ def _resolve_score_pattern_index(
     isv_init: np.ndarray | Sequence[int] | None,
     n_samples: int,
 ) -> np.ndarray | None:
-    """Resolve the score pattern index from explicit argument or init dict."""
+    """Resolve the score pattern index from explicit argument or init dict.
+
+    Returns:
+        Array of pattern indices or ``None`` when not provided.
+    """
     if score_pattern_index is not None:
         return np.asarray(score_pattern_index, dtype=int)
     if isv_init is not None:
@@ -337,7 +371,11 @@ def _init_sv_pattern_mode(
     isv: np.ndarray,
     n_obs_patterns: int,
 ) -> list[np.ndarray]:
-    """Initialize Sv when multiple columns share covariance patterns."""
+    """Initialize Sv when multiple columns share covariance patterns.
+
+    Returns:
+        List of covariance matrices, one per observed pattern.
+    """
     _, first_idx = np.unique(isv, return_index=True)
 
     if not isinstance(sv_raw, list):
@@ -361,7 +399,14 @@ def _expand_sv_array(
     n_samples: int,
     n_components: int,
 ) -> list[np.ndarray]:
-    """Convert an Sv array into a list of covariance matrices."""
+    """Convert an Sv array into a list of covariance matrices.
+
+    Returns:
+        List of covariance matrices, one per sample.
+
+    Raises:
+        ValueError: If ``sv_arr`` has an unsupported shape.
+    """
     if sv_arr.ndim == 2 and sv_arr.shape == (n_components, n_samples):
         return [np.diag(sv_arr[:, j]) for j in range(n_samples)]
     if sv_arr.ndim == 3 and sv_arr.shape[0] == n_samples:
@@ -550,24 +595,32 @@ class InitialMonitoringInputs:
 def _initial_monitoring(
     inputs: InitialMonitoringInputs,
 ) -> tuple[float, Any, float, dict[str, list[float]], dict[str, Any]]:
-    """Compute initial RMS / probe RMS and set up logging / display."""
-    x_data = inputs.x_data
-    x_probe = inputs.x_probe
-    mask = inputs.mask
-    n_data = inputs.n_data
-    n_probe = inputs.n_probe
-    a = inputs.a
-    s = inputs.s
-    opts = inputs.opts
+    """Compute initial RMS / probe RMS and set up logging / display.
 
+    Returns:
+        Tuple of ``(rms, err_matrix, prms, lc, dsph)`` for downstream use.
+    """
+    opts = inputs.opts
     num_cpu = int(opts.get("num_cpu", 1))
 
-    cfg_data = RmsConfig(n_observed=int(n_data), num_cpu=num_cpu)
-    rms, err_matrix = compute_rms(x_data, a, s, mask, cfg_data)
+    cfg_data = RmsConfig(n_observed=int(inputs.n_data), num_cpu=num_cpu)
+    rms, err_matrix = compute_rms(
+        inputs.x_data,
+        inputs.a,
+        inputs.s,
+        inputs.mask,
+        cfg_data,
+    )
 
-    if n_probe > 0 and x_probe is not None:
-        cfg_probe = RmsConfig(n_observed=int(n_probe), num_cpu=num_cpu)
-        prms, _ = compute_rms(x_probe, a, s, mask, cfg_probe)
+    if inputs.n_probe > 0 and inputs.x_probe is not None:
+        cfg_probe = RmsConfig(n_observed=int(inputs.n_probe), num_cpu=num_cpu)
+        prms, _ = compute_rms(
+            inputs.x_probe,
+            inputs.a,
+            inputs.s,
+            inputs.mask,
+            cfg_probe,
+        )
     else:
         prms = float("nan")
 

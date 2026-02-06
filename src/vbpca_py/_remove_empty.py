@@ -34,6 +34,10 @@ def _nonempty_indices(x: Matrix) -> tuple[np.ndarray, np.ndarray]:
 
     For dense ``x``, emptiness means all-NaN.
     For sparse ``x``, emptiness means zero-sum row/column.
+
+    Returns:
+        A tuple ``(ir, ic)`` where ``ir`` are the kept row indices and
+        ``ic`` are the kept column indices (both 1D integer arrays).
     """
     if sp.isspmatrix(x):
         col_sums = np.asarray(x.sum(axis=0)).ravel()
@@ -58,6 +62,10 @@ def _slice_matrix_like(
     """Slice a matrix or sparse matrix using kept row/column indices.
 
     If both dimensions are unchanged, return ``mat`` unchanged.
+
+    Returns:
+        The sliced matrix (or the original object if no slicing is needed),
+        or ``None`` if ``mat`` was ``None``.
     """
     if mat is None:
         return None
@@ -106,6 +114,9 @@ def _update_init_dict(
     """Update an init dict in-place to match removed rows/columns.
 
     If ``init`` is not a dict (or is None), it is returned unchanged.
+
+    Returns:
+        The updated init object (dict or passthrough of the original).
     """
     if init is None or not isinstance(init, dict):
         return init
@@ -160,7 +171,9 @@ def remove_empty_entries(
             values are passed through unchanged.
 
     Returns:
-        x_out, x_probe_out, ir, ic, init_out
+        A tuple ``(x_out, x_probe_out, ir, ic, init_out)`` where matrices
+        and init payload are sliced consistently with the retained rows and
+        columns.
     """
     n_rows_orig, n_cols_orig = x.shape
 

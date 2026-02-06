@@ -57,12 +57,13 @@ def _make_toy_dense_with_nans(
 def _dense_preprocess_like_impl(x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Mirror the dense preprocessing in _full_update._build_masks_dense.
 
+    Args:
+        x: Dense matrix with possible NaN entries.
+
     Returns:
-    -------
-    x_proc : ndarray
-        Copy of x with NaNs replaced by 0 and exact zeros replaced by eps.
-    mask : ndarray[bool]
-        Observed mask (~np.isnan(x)).
+        Tuple ``(x_proc, mask)`` where ``x_proc`` has NaNs replaced by
+        zeros and exact zeros replaced by ``eps``, and ``mask`` is the
+        observed boolean mask (``~np.isnan(x)``).
     """
     x_proc = np.array(x, dtype=float, copy=True)
     mask = ~np.isnan(x_proc)
@@ -155,7 +156,8 @@ def test_pca_full_dense_vb_basic() -> None:
     # RMS should be non-negative (or NaN)
     assert all(r >= 0.0 or np.isnan(r) for r in lc["rms"])
 
-    # Explicit RMS reconstruction on observed entries should roughly match last lc["rms"]
+    # Explicit RMS reconstruction on observed entries should roughly
+    # match last lc["rms"].
     last_rms = float(lc["rms"][-1])
     explicit_rms = _compute_masked_rms_dense_like_impl(x, loadings, scores, mean)
     if not np.isnan(last_rms) and not np.isnan(explicit_rms):

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import numpy as np
 import scipy.sparse as sp
+
 from vbpca_py.errpca_pt import errpca_pt as _errpca_pt_ext
 
 
@@ -37,27 +38,32 @@ def sparse_reconstruction_error(
     -------
     err_csr:
         CSR matrix with the same sparsity structure as x_csr containing residuals.
+
+    Raises:
+        TypeError: If ``x_csr`` is not a CSR matrix.
+        ValueError: If shapes of ``loadings`` or ``scores`` are incompatible
+            with ``x_csr``.
     """
     if not sp.isspmatrix_csr(x_csr):
-        raise TypeError("x_csr must be a scipy.sparse.csr_matrix")
+        err_msg = "x_csr must be a scipy.sparse.csr_matrix"
+        raise TypeError(err_msg)
 
     n_rows, n_cols = x_csr.shape
     loadings = np.asarray(loadings, dtype=np.float64)
     scores = np.asarray(scores, dtype=np.float64)
 
     if loadings.shape[0] != n_rows:
-        raise ValueError(
-            f"loadings has {loadings.shape[0]} rows but data has {n_rows} rows."
-        )
+        err_msg = f"loadings has {loadings.shape[0]} rows but data has {n_rows} rows."
+        raise ValueError(err_msg)
     if scores.shape[1] != n_cols:
-        raise ValueError(
-            f"scores has {scores.shape[1]} columns but data has {n_cols} columns."
-        )
+        err_msg = f"scores has {scores.shape[1]} columns but data has {n_cols} columns."
+        raise ValueError(err_msg)
     if loadings.shape[1] != scores.shape[0]:
-        raise ValueError(
+        err_msg = (
             "Incompatible latent dims: "
             f"loadings.shape[1]={loadings.shape[1]}, scores.shape[0]={scores.shape[0]}."
         )
+        raise ValueError(err_msg)
 
     num_cpu = max(int(num_cpu), 1)
 
@@ -75,10 +81,11 @@ def sparse_reconstruction_error(
 
     # Defensive: ensure the extension produced a shape consistent with the input
     if shape != x_csr.shape:
-        raise ValueError(
+        err_msg = (
             f"Extension returned shape {shape}, expected {x_csr.shape}. "
             "Check that scores.shape[1] matches x_csr.shape[1]."
         )
+        raise ValueError(err_msg)
 
     # CSR construction; structure should match input by design
     return sp.csr_matrix((data, indices, indptr), shape=shape)

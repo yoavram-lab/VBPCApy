@@ -67,7 +67,8 @@ ERR_INDEX_1D = "index array must be 1-D."
 ERR_ISV_LENGTH = "isv must have length equal to n_samples when provided."
 ERR_ZERO_SAMPLES = "scores (S) must have at least one sample (n_samples > 0)."
 
-# Numerical floor for eigenvalues used in 1/sqrt(eig) to avoid inf/NaN in rank-deficient cases.
+# Numerical floor for eigenvalues used in 1/sqrt(eig) to avoid inf/NaN in
+# rank-deficient cases.
 _EPS_EIG = 1e-20
 
 
@@ -93,7 +94,14 @@ class RotateParams:
 
 
 def _as_int_array(idx: Iterable[int] | np.ndarray | None) -> np.ndarray:
-    """Convert an index-like iterable to a 1D int array (possibly empty)."""
+    """Convert an index-like iterable to a 1D int array (possibly empty).
+
+    Returns:
+        One-dimensional integer array (may be empty).
+
+    Raises:
+        ValueError: If ``idx`` is not one-dimensional.
+    """
     if idx is None:
         return np.array([], dtype=int)
 
@@ -132,8 +140,11 @@ def _validate_av_shapes(
 ) -> None:
     """Validate Av only when provided and non-empty.
 
-    MATLAB treats an empty Av the same as not providing loadings covariances at all;
-    mirror that behavior by skipping length/shape checks when Av is empty.
+    MATLAB treats an empty Av the same as not providing loadings covariances at
+    all; mirror that behavior by skipping length/shape checks when Av is empty.
+
+    Raises:
+        ValueError: If provided covariances have wrong length or shape.
     """
     if loading_covariances is None or len(loading_covariances) == 0:
         return
@@ -187,7 +198,14 @@ def _build_cov_s(
     isv: np.ndarray,
     obscombj: list[list[int]] | None,
 ) -> np.ndarray:
-    """CovS = (S Sᵀ + sum_j Sv_j) / n_samples, with pattern-mode weighting."""
+    """CovS = (S Sᵀ + sum_j Sv_j) / n_samples, with pattern-mode weighting.
+
+    Returns:
+        Score covariance matrix.
+
+    Raises:
+        ValueError: If pattern indices or covariance lengths are invalid.
+    """
     _, n_samples = scores.shape
     if isv.size > 0 and isv.size != n_samples:
         raise ValueError(ERR_ISV_LENGTH)
@@ -223,20 +241,32 @@ def _build_cov_s(
 
 
 def _eigh_psd(matrix: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """Eigen-decompose symmetric PSD matrix, clipping tiny negative eigenvalues (recommended)."""
+    """Eigen-decompose symmetric PSD matrix, clipping tiny negative eigenvalues.
+
+    Returns:
+        Eigenvalues and eigenvectors with eigenvalues clipped to be non-negative.
+    """
     w, v = np.linalg.eigh(matrix)
     w = np.clip(w, 0.0, None)
     return w, v
 
 
 def _build_ra(eigvals: np.ndarray, eigvecs: np.ndarray) -> np.ndarray:
-    """RA = V_S * sqrt(D) using broadcasting."""
+    """RA = V_S * sqrt(D) using broadcasting.
+
+    Returns:
+        Matrix ``RA`` for rotating loadings.
+    """
     sqrt_eig = np.sqrt(np.clip(eigvals, 0.0, None))
     return eigvecs * sqrt_eig[np.newaxis, :]
 
 
 def _build_r(eigvals_s: np.ndarray, v_s: np.ndarray, v_a: np.ndarray) -> np.ndarray:
-    """R = V_A.T * diag(1/sqrt(eigvals_s)) * V_S.T with eigenvalue floor (required)."""
+    """R = V_A.T * diag(1/sqrt(eigvals_s)) * V_S.T with eigenvalue floor.
+
+    Returns:
+        Rotation matrix R.
+    """
     sqrt_eig = np.sqrt(np.clip(eigvals_s, 0.0, None))
     inv_sqrt = 1.0 / np.maximum(sqrt_eig, _EPS_EIG)
     d_inv = np.diag(inv_sqrt)
@@ -255,10 +285,13 @@ def rotate_to_pca(
 ) -> tuple[
     np.ndarray, np.ndarray, list[np.ndarray] | None, np.ndarray, list[np.ndarray]
 ]:
-    """Rotate the VB-PCA latent space to a PCA-like orientation (RotateToPCA.m)."""
+    """Rotate the VB-PCA latent space to a PCA-like orientation (RotateToPCA.m).
+
+    Returns:
+        Tuple of rotated ``(A, dMu, Av, S, Sv)`` (covariances optional).
+    """
     loading_covariances = params.loading_covariances
     score_covariances = params.score_covariances
-    isv_arr = _as_int_array(params.isv)
 
     n_features, _, _ = _validate_shapes(
         loadings,
@@ -269,52 +302,54 @@ def rotate_to_pca(
 
     # 1) Optional centering of S and dMu propagation
     if params.update_bias:
-        mean_scores = np.mean(scores, axis=1, keepdims=True)
-        d_mu = loadings @ mean_scores
-        scores -= mean_scores
+        scores_mean = np.mean(scores, axis=1, keepdims=True)
+        d_mu = loadings @ scores_mean
+        scores -= scores_mean
     else:
         d_mu = np.zeros((n_features, 1), dtype=loadings.dtype)
 
     # 2) covS and eigen-decomposition
-    cov_s = _build_cov_s(scores, score_covariances, isv_arr, params.obscombj)
+    cov_s = _build_cov_s(
+        scores,
+        score_covariances,
+        _as_int_array(params.isv),
+        params.obscombj,
+    )
     cov_s = 0.5 * (cov_s + cov_s.T)
     eigvals_s, v_s = _eigh_psd(cov_s)
 
-    # RA = VS*sqrt(D)
+    # Build RA = VS * sqrt(D) to rotate loadings.
     ra = _build_ra(eigvals_s, v_s)
 
     # Apply RA to A and Av
     loadings[:] = loadings @ ra
-    if loading_covariances is not None and len(loading_covariances) > 0:
-        for i in range(n_features):
-            av_i = np.asarray(loading_covariances[i], dtype=float)
-            loading_covariances[i] = ra.T @ av_i @ ra
+    if loading_covariances:
+        loading_covariances[:] = [
+            ra.T @ np.asarray(av_i, dtype=float) @ ra for av_i in loading_covariances
+        ]
 
     # 3) covA in rotated basis, eigen-decompose, sort descending
     cov_a = loadings.T @ loadings
-    if loading_covariances is not None and len(loading_covariances) > 0:
-        for av_i in loading_covariances:
-            cov_a += np.asarray(av_i, dtype=float)
+    if loading_covariances:
+        cov_a += sum(np.asarray(av_i, dtype=float) for av_i in loading_covariances)
     cov_a /= float(n_features)
     cov_a = 0.5 * (cov_a + cov_a.T)
 
     eigvals_a, v_a = _eigh_psd(cov_a)
-    order = np.argsort(-eigvals_a)
-    v_a = v_a[:, order]
+    v_a = v_a[:, np.argsort(-eigvals_a)]
 
     # Apply VA to A and Av
     loadings[:] = loadings @ v_a
-    if loading_covariances is not None and len(loading_covariances) > 0:
-        for i in range(n_features):
-            av_i = np.asarray(loading_covariances[i], dtype=float)
-            loading_covariances[i] = v_a.T @ av_i @ v_a
+    if loading_covariances:
+        loading_covariances[:] = [
+            v_a.T @ np.asarray(av_i, dtype=float) @ v_a for av_i in loading_covariances
+        ]
 
     # 4) Build and apply R to S and Sv
     r = _build_r(eigvals_s, v_s, v_a)
     scores[:] = r @ scores
-
-    for j, sv_j in enumerate(score_covariances):
-        sv_j_arr = np.asarray(sv_j, dtype=float)
-        score_covariances[j] = r @ sv_j_arr @ r.T
+    score_covariances[:] = [
+        r @ np.asarray(sv_j, dtype=float) @ r.T for sv_j in score_covariances
+    ]
 
     return d_mu, loadings, loading_covariances, scores, score_covariances

@@ -15,7 +15,8 @@ class RmsConfig:
     # If provided, we validate it; for sparse we primarily derive from data.nnz
     n_observed: int | None = None
     num_cpu: int = 1
-    # If True, enforce MATLAB legacy rule that sparse observation set is the structure of X
+    # If True, enforce MATLAB legacy rule that sparse observation set is the
+    # structure of X.
     validate_sparse_mask: bool = True
 
 
@@ -26,20 +27,25 @@ def compute_rms(
     mask: np.ndarray | sp.spmatrix | None,
     config: RmsConfig,
 ) -> tuple[float, np.ndarray | sp.spmatrix]:
-    """
-    MATLAB-compatible compute_rms:
+    """MATLAB-compatible compute_rms.
 
-      Dense:
+    Dense:
         err = (X - A @ S) ⊙ M
         rms = sqrt(sum(err^2) / ndata)   where ndata = sum(M)
 
-      Sparse:
+    Sparse:
         err = errpca_pt(X, A, S, numCPU)   (mask ignored)
         rms = sqrt(sum(err^2) / ndata)     where ndata = nnz(X)
 
     Notes:
-    - For sparse, the observation set is the sparsity pattern of `data`.
-      (Observed zeros must be stored explicitly as eps, as in legacy code.)
+        - For sparse, the observation set is the sparsity pattern of ``data``.
+          (Observed zeros must be stored explicitly as eps, as in legacy code.)
+
+    Returns:
+        Tuple of ``(rms, err)`` where ``err`` matches MATLAB semantics.
+
+    Raises:
+        ValueError: If shapes are incompatible or mask validation fails.
     """
     # MATLAB: if isempty(X), errMx=[]; rms=NaN
     if data.size == 0:
@@ -61,9 +67,11 @@ def compute_rms(
 
         n_obs = int(data.nnz)
         if config.n_observed is not None and int(config.n_observed) != n_obs:
-            raise ValueError(
-                f"n_observed mismatch for sparse data: config={config.n_observed}, data.nnz={n_obs}"
+            msg = (
+                "n_observed mismatch for sparse data: "
+                f"config={config.n_observed}, data.nnz={n_obs}"
             )
+            raise ValueError(msg)
 
         # MATLAB: rms = sqrt(sum(sum(errMx.^2))/ndata)
         rms = float(np.sqrt(np.sum(err.data**2) / n_obs))
@@ -71,7 +79,8 @@ def compute_rms(
 
     # Dense path: mask is applied
     if mask is None:
-        raise ValueError("mask must be provided for dense data.")
+        msg = "mask must be provided for dense data."
+        raise ValueError(msg)
 
     if sp.issparse(mask):
         mask = mask.toarray()
@@ -82,11 +91,14 @@ def compute_rms(
     # MATLAB caller passes ndata; for Python we can validate / derive
     n_obs = int(np.sum(mask))
     if n_obs == 0:
-        raise ValueError("mask must mark at least one observed entry (n_obs > 0).")
+        msg = "mask must mark at least one observed entry (n_obs > 0)."
+        raise ValueError(msg)
     if config.n_observed is not None and int(config.n_observed) != n_obs:
-        raise ValueError(
-            f"n_observed mismatch for dense data: config={config.n_observed}, sum(mask)={n_obs}"
+        msg = (
+            "n_observed mismatch for dense data: "
+            f"config={config.n_observed}, sum(mask)={n_obs}"
         )
+        raise ValueError(msg)
 
     rms = float(np.sqrt(np.sum(err**2) / n_obs))
     return rms, err
@@ -97,55 +109,77 @@ def _validate_shapes(
     loadings: np.ndarray,
     scores: np.ndarray,
 ) -> None:
+    """Validate matrix shapes for RMS computation.
+
+    Raises:
+        ValueError: If dimensionalities are incompatible.
+    """
     if loadings.ndim != 2 or scores.ndim != 2:
-        raise ValueError("loadings and scores must be 2-D arrays.")
+        msg = "loadings and scores must be 2-D arrays."
+        raise ValueError(msg)
 
     n_features, n_samples = data.shape
     if loadings.shape[0] != n_features:
-        raise ValueError(
-            f"loadings has {loadings.shape[0]} rows but data has {n_features} rows."
-        )
+        msg = f"loadings has {loadings.shape[0]} rows but data has {n_features} rows."
+        raise ValueError(msg)
     if scores.shape[1] != n_samples:
-        raise ValueError(
-            f"scores has {scores.shape[1]} columns but data has {n_samples} columns."
-        )
+        msg = f"scores has {scores.shape[1]} columns but data has {n_samples} columns."
+        raise ValueError(msg)
     if loadings.shape[1] != scores.shape[0]:
-        raise ValueError(
-            f"Incompatible latent dims: loadings.shape[1]={loadings.shape[1]}, scores.shape[0]={scores.shape[0]}."
+        msg = (
+            "Incompatible latent dims: "
+            f"loadings.shape[1]={loadings.shape[1]}, "
+            f"scores.shape[0]={scores.shape[0]}."
         )
+        raise ValueError(msg)
 
 
 def _validate_sparse_mask_matches_structure(
     x: sp.csr_matrix,
     mask: np.ndarray | sp.spmatrix,
 ) -> None:
-    """
-    Enforce MATLAB-legacy sparse semantics: observed set is encoded by X itself.
-    Therefore a provided mask must match spones(X) exactly (or be None).
+    """Enforce MATLAB-legacy sparse semantics.
+
+    Observed set is encoded by ``X`` itself. Therefore a provided mask must
+    match ``spones(X)`` exactly (or be ``None``).
+
+    Raises:
+        ValueError: If the provided mask does not match the sparsity pattern.
     """
     if sp.issparse(mask):
         if not sp.isspmatrix_csr(mask):
             mask = mask.tocsr()
-        # Compare structure (indptr/indices); mask values are irrelevant beyond nonzero-ness
+        # Compare structure (indptr/indices); mask values are irrelevant beyond
+        # nonzero-ness.
         if not (
             np.array_equal(mask.indptr, x.indptr)
             and np.array_equal(mask.indices, x.indices)
         ):
-            raise ValueError(
-                "For sparse data, mask must match the sparsity pattern of data (spones(X))."
+            msg = (
+                "For sparse data, mask must match the sparsity pattern of "
+                "data (spones(X))."
             )
+            raise ValueError(msg)
     else:
-        # Dense mask: must be 1 on all nonzeros of X and 0 elsewhere to match structure exactly.
-        # Strict check (exact spones): mask must be 0/1 and sum must equal nnz and cover all nnz coords.
+        # Dense mask: must be 1 on all nonzeros of X and 0 elsewhere to match
+        # structure exactly. Strict check (exact spones): mask must be 0/1 and
+        # sum must equal nnz and cover all nnz coords.
         m = np.asarray(mask)
         if m.shape != x.shape:
-            raise ValueError("mask shape must match data shape.")
+            msg = "mask shape must match data shape."
+            raise ValueError(msg)
         rows, cols = x.nonzero()
         if not np.all(m[rows, cols] == 1):
-            raise ValueError(
-                "For sparse data, mask must match the sparsity pattern of data (spones(X)): it must be 1 on all observed (stored) entries of X."
+            msg = (
+                "For sparse data, mask must match the sparsity pattern of "
+                "data (spones(X)): it must be 1 on all observed (stored) "
+                "entries of X."
             )
+            raise ValueError(msg)
         if int(np.sum(m != 0)) != int(x.nnz):
-            raise ValueError(
-                "For sparse data, mask must match the sparsity pattern of data (spones(X)): it must be zero everywhere except stored entries of X."
+            msg = (
+                "For sparse data, mask must match the sparsity pattern of "
+                "data (spones(X)): it must be zero everywhere except stored "
+                "entries of X."
             )
+            raise ValueError(msg)

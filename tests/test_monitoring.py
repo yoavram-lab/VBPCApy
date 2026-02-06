@@ -28,7 +28,11 @@ from vbpca_py._rms import RmsConfig
 
 
 def _rng() -> np.random.Generator:
-    """Deterministic RNG for tests."""
+    """Deterministic RNG for tests.
+
+    Returns:
+        A seeded NumPy random number generator.
+    """
     return np.random.default_rng(1234)
 
 

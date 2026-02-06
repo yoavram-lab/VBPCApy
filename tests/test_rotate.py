@@ -294,7 +294,7 @@ def _python_rotate(
     Sv = [x.copy() for x in case.Sv0]
 
     params = RotateParams(
-        loading_covariances=Av if Av else [],
+        loading_covariances=Av or [],
         score_covariances=Sv,
         isv=None if case.Isv.size == 0 else case.Isv.astype(int),
         obscombj=None if case.Isv.size == 0 else case.obscombj,  # 0-based for Python

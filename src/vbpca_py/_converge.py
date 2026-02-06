@@ -99,6 +99,10 @@ def _plateau_stop(
 
     Returns a message if the series is flat over the configured window,
     otherwise None.
+
+    Returns:
+        Either a human-readable stop message or ``None`` when no plateau
+        condition is met.
     """
     if stop_cfg is None or series.size == 0:
         return None
@@ -164,6 +168,10 @@ def convergence_check(
     3. RMS plateau stop (``rmsstop = [window, abs_tol, rel_tol]``).
     4. Cost plateau stop (``cfstop = [window, abs_tol, rel_tol]``).
     5. “Slowing-down'' stop based on ``sd_iter`` (gradient backtracking).
+
+    Returns:
+        A non-empty convergence message when a criterion triggers,
+        otherwise an empty string.
     """
     # 1. Angle-based stop
     angle_msg = _angle_stop_message(opts, angle_a)
@@ -211,7 +219,12 @@ def _log_and_check_convergence(
     rms: float,
     prms: float,
 ) -> tuple[dict[str, list[float]], float, str, np.ndarray]:
-    """Update learning curves, compute cost (if requested), and check convergence."""
+    """Update learning curves, compute cost (if requested), and check convergence.
+
+    Returns:
+        Updated learning-curve dict, latest subspace angle, convergence
+        message, and a copy of ``state.loadings`` for the next iteration.
+    """
     verbose = int(state.opts["verbose"])
     elapsed = time.time() - state.time_start
 
@@ -230,9 +243,7 @@ def _log_and_check_convergence(
             mu=state.mu.ravel(),
             noise_variance=float(state.noise_var),
             loading_priors=state.va,
-            loading_covariances=state.loading_covariances
-            if state.loading_covariances
-            else None,
+            loading_covariances=state.loading_covariances or None,
             mu_prior_variance=float(state.vmu),
             mu_variances=state.mu_variances.ravel()
             if state.mu_variances.size > 0

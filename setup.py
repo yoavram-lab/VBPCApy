@@ -1,4 +1,7 @@
+"""Build configuration for the vbpca_py package."""
+
 import os
+from pathlib import Path
 
 import pybind11
 from setuptools import Extension, find_packages, setup
@@ -19,19 +22,19 @@ def get_eigen_include_path() -> str:
     4. /usr/local/include/eigen3 (fallback)
     """
     env_path = os.environ.get("EIGEN_INCLUDE_DIR")
-    if env_path and os.path.exists(env_path):
+    if env_path and pathlib.Path(env_path).exists():
         return env_path
 
     conda_prefix = os.environ.get("CONDA_PREFIX")
     if conda_prefix:
-        potential_path = os.path.join(conda_prefix, "include", "eigen3")
-        if os.path.exists(potential_path):
-            return potential_path
+        potential_path = Path(conda_prefix, "include", "eigen3")
+        if potential_path.exists():
+            return str(potential_path)
 
     # Homebrew (Apple Silicon)
-    hb_path = "/opt/homebrew/include/eigen3"
-    if os.path.exists(hb_path):
-        return hb_path
+    hb_path = Path("/opt/homebrew/include/eigen3")
+    if hb_path.exists():
+        return str(hb_path)
 
     # Fallback
     return "/usr/local/include/eigen3"
@@ -62,7 +65,9 @@ ext_modules = [
 setup(
     name="vbpca_py",
     version="0.1.0",
-    description="Variational Bayesian PCA (Illin & Raiko 2010) with support for missing data.",
+    description=(
+        "Variational Bayesian PCA (Illin & Raiko 2010) with support for missing data."
+    ),
     author="Shany Naim and Joshua Macdonald",
     author_email="shany215.sn@gmail.com, jmacdo16@jh.edu",
     package_dir={"": "src"},

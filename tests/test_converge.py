@@ -19,7 +19,12 @@ def _lc(
     prms: list[float],
     cost: list[float],
 ) -> dict[str, Any]:
-    """Helper to build a minimal lc dict."""
+    """Helper to build a minimal lc dict.
+
+    Returns:
+        Dictionary containing ``rms``, ``prms``, ``cost``, and ``time``
+        sequences with matching lengths.
+    """
     n = len(rms)
     return {
         "rms": list(rms),
@@ -68,7 +73,7 @@ def test_no_angle_no_earlystop_no_plateau() -> None:
     )
 
     msg = convergence_check(opts, lc, angle_a=1.0, sd_iter=None)
-    assert msg == ""
+    assert not msg
 
 
 def test_early_stop_triggers_when_prms_increases() -> None:
@@ -110,7 +115,7 @@ def test_rms_plateau_requires_enough_iterations() -> None:
 
     msg = convergence_check(opts, lc, angle_a=1.0, sd_iter=None)
     # Not enough history; should not stop on RMS plateau yet.
-    assert msg == ""
+    assert not msg
 
 
 def test_rms_plateau_absolute_tolerance() -> None:
@@ -176,7 +181,7 @@ def test_cost_plateau_requires_enough_iterations() -> None:
     )
 
     msg = convergence_check(opts, lc, angle_a=1.0, sd_iter=None)
-    assert msg == ""
+    assert not msg
 
 
 def test_cost_plateau_after_rms() -> None:

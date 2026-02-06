@@ -64,6 +64,11 @@ ignore = [
 "tests/**/*" = [
     "INP001",  # Implicit namespace package
     "S101",    # Use of assert in tests
+    "PLC2701", # Importing private modules is OK in tests
+    "N806",    # Uppercase matrix-style symbols in tests
+    "N803",    # Uppercase argument names in tests
+    "D103",    # Test functions don't need docstrings
+    "PLR0914", # Many locals in test scaffolding
 ]
 
 [tool.ruff.lint.pydocstyle]

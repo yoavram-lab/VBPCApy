@@ -65,6 +65,9 @@ def _compute_kept_and_missing_indices(
     Returns:
         kept_idx: 1D array of kept indices (0-based).
         missing_idx: 1D array of missing indices (0-based).
+
+    Raises:
+        ValueError: If ``kept_indices`` is not 1D or contains out-of-range values.
     """
     kept_idx = np.asarray(kept_indices, dtype=int)
     if kept_idx.ndim != 1:
@@ -93,7 +96,14 @@ def _expand_score_covs_list_per_column(
     n_components: int,
     dtype: np.dtype,
 ) -> tuple[list[np.ndarray], list[int] | None]:
-    """Expand list-based per-column covariances to all columns."""
+    """Expand list-based per-column covariances to all columns.
+
+    Returns:
+        Tuple of expanded covariance list and an empty pattern index mapping.
+
+    Raises:
+        ValueError: If the length of ``score_covs`` does not match kept columns.
+    """
     n_kept_cols = kept_cols_idx.size
     if len(score_covs) != n_kept_cols:
         raise ValueError(ERR_COVS_LIST_LENGTH)
@@ -123,7 +133,15 @@ def _expand_score_covs_list_unique_pattern(
     n_total_cols: int,
     n_components: int,
 ) -> tuple[list[np.ndarray], list[int]]:
-    """Expand list-based covariances in unique-pattern mode."""
+    """Expand list-based covariances in unique-pattern mode.
+
+    Returns:
+        Tuple of expanded covariance list and per-column covariance index map.
+
+    Raises:
+        ValueError: If ``score_cov_indices`` shape is invalid or contains
+            out-of-range entries.
+    """
     n_kept_cols = kept_cols_idx.size
     if score_cov_indices.ndim != 1 or score_cov_indices.size != n_kept_cols:
         raise ValueError(ERR_COV_INDICES_LENGTH)
@@ -155,7 +173,14 @@ def _expand_score_covs_diagonal(
     n_total_cols: int,
     kept_cols_idx: np.ndarray,
 ) -> tuple[np.ndarray, None]:
-    """Expand diagonal covariance specification to all columns."""
+    """Expand diagonal covariance specification to all columns.
+
+    Returns:
+        Tuple of expanded diagonal covariance array and ``None`` for indices.
+
+    Raises:
+        ValueError: If ``score_covs`` is not 1D of length ``n_components``.
+    """
     if score_covs.ndim != 1 or score_covs.shape[0] != n_components:
         raise ValueError(ERR_DIAG_COV_1D)
 
@@ -209,6 +234,9 @@ def _add_m_cols(
         expanded_score_cov_indices:
             Updated mapping from column index to covariance index (0-based)
             in the unique-patterns case, or ``[]`` / ``None`` otherwise.
+
+    Raises:
+        ValueError: If inputs have incompatible shapes or indices are invalid.
     """
     scores = np.asarray(scores)
     if scores.ndim != 2:
@@ -271,7 +299,14 @@ def _normalize_row_variances(
     n_components: int,
     row_variances: np.ndarray | list[float] | float | None,
 ) -> np.ndarray:
-    """Normalize row_variances into a 1D array of length n_components."""
+    """Normalize row_variances into a 1D array of length n_components.
+
+    Returns:
+        1D array of per-component variances.
+
+    Raises:
+        ValueError: If ``row_variances`` length mismatches ``n_components``.
+    """
     if n_components == 0:
         return np.array([], dtype=float)
 
@@ -292,7 +327,11 @@ def _init_expanded_rows(
     kept_rows_idx: np.ndarray,
     variances: np.ndarray,
 ) -> np.ndarray:
-    """Initialize the expanded row matrix, inserting kept rows."""
+    """Initialize the expanded row matrix, inserting kept rows.
+
+    Returns:
+        Expanded row matrix with placeholders for missing rows.
+    """
     n_kept_rows, n_components = rows.shape
 
     if n_components == 0:
@@ -316,7 +355,14 @@ def _expand_row_covs_list(
     missing_rows_idx: np.ndarray,
     variances: np.ndarray,
 ) -> list[np.ndarray]:
-    """Expand list-based per-row covariance matrices to all rows."""
+    """Expand list-based per-row covariance matrices to all rows.
+
+    Returns:
+        List of covariance matrices aligned to ``n_total_rows``.
+
+    Raises:
+        ValueError: If the length of ``row_covs`` does not match kept rows.
+    """
     if len(row_covs) != kept_rows_idx.size:
         raise ValueError(ERR_ROW_COV_LIST_LENGTH)
 
@@ -342,7 +388,14 @@ def _expand_row_covs_array(
     kept_rows_idx: np.ndarray,
     variances: np.ndarray,
 ) -> np.ndarray:
-    """Expand array-like per-row diagonal variances to all rows."""
+    """Expand array-like per-row diagonal variances to all rows.
+
+    Returns:
+        Expanded covariance array aligned to ``n_total_rows``.
+
+    Raises:
+        ValueError: If ``row_covs`` does not have shape ``(n_kept_rows, n_components)``.
+    """
     if row_covs.ndim != 2 or row_covs.shape[1] != n_components:
         raise ValueError(ERR_ROW_COV_ARRAY_SHAPE)
 
@@ -396,6 +449,9 @@ def _add_m_rows(
             - 2D ndarray (n_total_rows, n_components) when ``row_covs`` is an
               array,
             - empty list if no covariances are tracked.
+
+    Raises:
+                ValueError: If inputs have incompatible shapes or indices are invalid.
     """
     rows = np.asarray(rows)
     if rows.ndim != 2:

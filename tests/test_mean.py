@@ -22,6 +22,7 @@ import pytest
 import scipy.sparse as sp
 from numpy.testing import assert_allclose
 from scipy.io import loadmat, savemat
+
 from vbpca_py._mean import ProbeMatrices, subtract_mu
 
 # MATLAB / mex uses EPS=1e-15

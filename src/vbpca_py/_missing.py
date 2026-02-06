@@ -59,6 +59,9 @@ def _missing_patterns(
             ``column_pattern_index[i]`` is the pattern index (0-based)
             for column ``i``.
 
+    Raises:
+        ValueError: If ``mask`` is not a 2D array.
+
     Notes:
         This behaviour differs slightly from the original MATLAB
         ``miscomb`` helper, which returned empty groupings when all
