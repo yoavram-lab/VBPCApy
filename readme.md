@@ -8,6 +8,8 @@ Variational Bayesian PCA (Illin and Raiko, 2010) with support for missing data, 
 - Support for shared observation patterns to reuse factorizations and speed inference.
 - Posterior covariances for scores and loadings; probe-set RMS for held-out validation.
 - C++ extensions via pybind11 for performance-critical routines.
+- Missing-aware preprocessing utilities (one-hot encode, standardize, min-max, auto-routing) that preserve NaNs/masks for generative reconstruction.
+- `VBPCA` sklearn-like wrapper for `pca_full` (fit/transform/inverse_transform) with mask support.
 
 ## Installation
 Requirements: Python >= 3.11, a C++14 compiler, and Eigen headers. Eigen is located automatically via `EIGEN_INCLUDE_DIR`, `$CONDA_PREFIX/include/eigen3`, `/opt/homebrew/include/eigen3`, or `/usr/local/include/eigen3`.
@@ -28,6 +30,8 @@ pip install .[octave]
 ```python
 import numpy as np
 from vbpca_py.pca_full import pca_full
+from vbpca_py.estimators import VBPCA
+from vbpca_py.preprocessing import AutoEncoder
 
 # 50 features, 200 samples
 x = np.random.randn(50, 200)
@@ -41,6 +45,19 @@ loadings = result["a"]       # shape (features, components)
 scores = result["s"]         # shape (components, samples)
 mu = result["mu"]            # feature means (bias)
 rms = result["rms"]          # reconstruction RMS on the data
+
+# Sklearn-like wrapper
+model = VBPCA(n_components=5, maxiters=100)
+scores = model.fit_transform(x, mask=mask)
+recon = model.inverse_transform()
+
+# Missing-aware preprocessing pipeline (categorical + continuous)
+auto = AutoEncoder(cardinality_threshold=10, continuous_scaler="standard")
+z = auto.fit_transform(x, mask=mask)
+model = VBPCA(n_components=5, maxiters=100)
+scores = model.fit_transform(z, mask=np.ones_like(z, dtype=bool))
+z_recon = model.inverse_transform()
+x_recon = auto.inverse_transform(z_recon)
 ```
 
 ### Options highlights
