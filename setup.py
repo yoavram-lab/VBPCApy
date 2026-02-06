@@ -22,7 +22,7 @@ def get_eigen_include_path() -> str:
     4. /usr/local/include/eigen3 (fallback)
     """
     env_path = os.environ.get("EIGEN_INCLUDE_DIR")
-    if env_path and pathlib.Path(env_path).exists():
+    if env_path and Path(env_path).exists():
         return env_path
 
     conda_prefix = os.environ.get("CONDA_PREFIX")
