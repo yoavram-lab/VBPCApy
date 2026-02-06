@@ -7,6 +7,7 @@ Variational Bayesian PCA (Illin and Raiko, 2010) with support for missing data, 
 - Optional bias (per-feature mean) estimation and rotation to a PCA-aligned solution.
 - Support for shared observation patterns to reuse factorizations and speed inference.
 - Posterior covariances for scores and loadings; probe-set RMS for held-out validation.
+- Direct access to reconstructions and per-entry marginal variances from `pca_full` or `VBPCA`.
 - C++ extensions via pybind11 for performance-critical routines.
 - Missing-aware preprocessing utilities (one-hot encode, standardize, min-max, auto-routing) that preserve NaNs/masks for generative reconstruction.
 - `VBPCA` sklearn-like wrapper for `pca_full` (fit/transform/inverse_transform) with mask support.
@@ -42,6 +43,15 @@ model = VBPCA(n_components=5, maxiters=100)
 scores = model.fit_transform(x, mask=mask)
 recon = model.inverse_transform()
 
+# Access reconstruction + marginal variance directly from the estimator
+recon = model.reconstruction_
+var = model.variance_
+
+# Learning-curve summaries
+print("RMS", model.rms_)
+print("Probe RMS", model.prms_)
+print("Final cost", model.cost_)
+
 # Missing-aware preprocessing pipeline (categorical + continuous)
 auto = AutoEncoder(cardinality_threshold=10, continuous_scaler="standard")
 z = auto.fit_transform(x, mask=mask)
@@ -58,8 +68,26 @@ x_recon = auto.inverse_transform(z_recon)
 - `maxiters`, `tol`, `verbose`: convergence control and logging.
 - `rotation`: final orthogonal rotation to a PCA-aligned solution.
 
-See `src/vbpca_py/pca_full.py` for the full set of options.
+See [src/vbpca_py/_pca_full.py](src/vbpca_py/_pca_full.py) for the full set of options.
 See `vbpca_py.estimators.VBPCA` for the stable public API.
+
+### Direct access via `pca_full`
+
+```python
+from vbpca_py import pca_full
+
+result = pca_full(x, 5, maxiters=200)
+
+# Reconstruction and marginal variance
+xrec = result["Xrec"]
+vr = result["Vr"]
+
+# Monitoring metrics
+rms = result["RMS"]             # last lc["rms"]
+probe_rms = result["PRMS"]      # last lc["prms"]
+cost = result["Cost"]           # last lc["cost"] (NaN if not computed)
+lc = result["lc"]               # full learning curves
+```
 
 ## Testing and development
 Run the test suite:

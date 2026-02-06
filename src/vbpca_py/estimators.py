@@ -33,6 +33,9 @@ class VBPCA:
         self.rms_: float | None = None
         self.prms_: float | None = None
         self.noise_variance_: float | None = None
+        self.cost_: float | None = None
+        self.reconstruction_: np.ndarray | None = None
+        self.variance_: np.ndarray | None = None
         self.n_features_in_: int | None = None
 
     def fit(self, x: Matrix, mask: np.ndarray | None = None) -> VBPCA:
@@ -60,6 +63,14 @@ class VBPCA:
         self.rms_ = float(result.get("RMS", np.nan))
         self.prms_ = float(result.get("PRMS", np.nan))
         self.noise_variance_ = float(result.get("V", np.nan))
+        self.cost_ = float(result.get("Cost", np.nan))
+        self.reconstruction_ = None
+        if result.get("Xrec") is not None:
+            self.reconstruction_ = np.asarray(result["Xrec"], dtype=float)
+
+        self.variance_ = None
+        if result.get("Vr") is not None:
+            self.variance_ = np.asarray(result["Vr"], dtype=float)
         self.n_features_in_ = int(self.components_.shape[0])
         return self
 

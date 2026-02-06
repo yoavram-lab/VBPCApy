@@ -683,12 +683,92 @@ def _restore_original_shape(
     )
 
 
+def _reconstruct_data(a: np.ndarray, s: np.ndarray, mu: np.ndarray) -> np.ndarray:
+    """Reconstruct data matrix using loadings, scores, and bias."""
+    mu_arr = np.asarray(mu, dtype=float)
+    if mu_arr.ndim == 1:
+        mu_arr = mu_arr[:, None]
+
+    recon = np.asarray(a, dtype=float) @ np.asarray(s, dtype=float)
+    if mu_arr.size:
+        recon = recon + mu_arr
+    return recon
+
+
+def _marginal_variance(
+    a: np.ndarray,
+    s: np.ndarray,
+    av: list[np.ndarray],
+    sv: list[np.ndarray],
+    muv: np.ndarray,
+    pattern_index: np.ndarray | None,
+) -> np.ndarray:
+    """Compute marginal variance for each observed entry.
+
+    Vectorized version of the legacy MATLAB reference:
+    ``Vr(i,j) = a_i Sv_j a_i' + s_j' Av_i s_j + sum(sum(Sv_j .* Av_i)) + Muv(i)``.
+    """
+    loadings = np.asarray(a, dtype=float)
+    scores = np.asarray(s, dtype=float)
+    n_features, n_samples = loadings.shape[0], scores.shape[1]
+    n_components = loadings.shape[1]
+
+    av_stack = (
+        np.stack([np.asarray(x, dtype=float) for x in av], axis=0)
+        if av
+        else np.zeros((n_features, n_components, n_components), dtype=float)
+    )
+
+    if not sv:
+        sv_stack = np.zeros((n_samples, n_components, n_components), dtype=float)
+    elif pattern_index is None:
+        sv_stack = np.stack([np.asarray(x, dtype=float) for x in sv], axis=0)
+    else:
+        pattern_stack = np.stack([np.asarray(x, dtype=float) for x in sv], axis=0)
+        pattern_index_arr = np.asarray(pattern_index, dtype=int)
+        sv_stack = pattern_stack[pattern_index_arr]
+
+    term_loadings = np.einsum("ik,jkl,il->ij", loadings, sv_stack, loadings)
+    term_scores = np.einsum("ikl,kj,lj->ij", av_stack, scores, scores)
+    term_cross = np.einsum("ikl,jkl->ij", av_stack, sv_stack)
+
+    mu_var = np.asarray(muv, dtype=float)
+    if mu_var.size == 0:
+        mu_var = np.zeros((n_features, 1), dtype=float)
+    elif mu_var.ndim == 1:
+        mu_var = mu_var[:, None]
+
+    return term_loadings + term_scores + term_cross + mu_var
+
+
+def _last_metric(lc: dict[str, list[float]], key: str) -> float:
+    values = lc.get(key, [])
+    if not values:
+        return float("nan")
+    try:
+        return float(values[-1])
+    except (TypeError, ValueError):
+        return float("nan")
+
+
 def _pack_result(final: FinalState) -> dict[str, object]:
     """Pack final values into the historical PCA_FULL result dictionary.
 
     Returns:
         Dictionary mirroring the legacy MATLAB output structure.
     """
+    xrec = _reconstruct_data(final.a, final.s, final.mu)
+    vr = _marginal_variance(
+        final.a,
+        final.s,
+        final.av,
+        final.sv,
+        final.muv,
+        final.pattern_index,
+    )
+
+    lc = final.lc
+
     return {
         "A": final.a,
         "S": final.s,
@@ -701,6 +781,11 @@ def _pack_result(final: FinalState) -> dict[str, object]:
         "Va": final.va,
         "Vmu": float(final.vmu),
         "lc": final.lc,
+        "Xrec": xrec,
+        "Vr": vr,
+        "RMS": _last_metric(lc, "rms"),
+        "PRMS": _last_metric(lc, "prms"),
+        "Cost": _last_metric(lc, "cost"),
         "cv": {
             "A": final.av,
             "S": final.sv,
