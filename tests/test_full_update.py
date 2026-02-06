@@ -23,12 +23,15 @@ explicitly designed to catch any accidental reliance on nonzeros.
 from __future__ import annotations
 
 import numpy as np
+import pytest
 import scipy.sparse as sp
 from numpy.testing import assert_allclose
 
+import vbpca_py.pca_full as pca_mod
+
 # Import internal branch functions for equivalence tests.
 # These are intentionally private but stable enough for diagnostic testing.
-from vbpca_py._full_update import (  # noqa: E402
+from vbpca_py._full_update import (
     BiasState,
     CenteringState,
     HyperpriorContext,
@@ -55,8 +58,8 @@ from vbpca_py._full_update import (  # noqa: E402
     _update_noise_variance,
     _update_scores,
 )
-from vbpca_py._mean import subtract_mu  # noqa: E402
-from vbpca_py._monitoring import InitShapes  # noqa: E402
+from vbpca_py._mean import subtract_mu
+from vbpca_py._monitoring import InitShapes
 
 # ----------------------------------------------------------------------
 # Helpers for tests
@@ -196,6 +199,70 @@ def test_missing_patterns_info_uniquesv_true() -> None:
     assert len(obs_patterns) == 1
     assert pattern_index is not None
     assert np.all(pattern_index == 0)
+
+
+def test_iteration_order_scores_rotate_loadings(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ensure iteration keeps MATLAB ordering: scores -> rotate -> loadings."""
+    rng = np.random.default_rng(42)
+    x = rng.standard_normal((3, 4))
+
+    init = {
+        "A": rng.standard_normal((3, 2)),
+        "S": rng.standard_normal((2, 4)),
+        "Mu": np.zeros(3, dtype=float),
+        "V": 1.0,
+    }
+
+    opts = pca_mod._build_options(
+        {
+            "init": init,
+            "maxiters": 1,
+            "bias": 1,
+            "verbose": 0,
+            "autosave": 0,
+            "rotate2pca": 1,
+        }
+    )
+
+    prepared = pca_mod._prepare_problem(x, opts)
+    training = pca_mod._initialize_model(
+        prepared=prepared,
+        n_components=2,
+        use_prior=True,
+        use_postvar=True,
+        opts=opts,
+    )
+
+    order: list[str] = []
+
+    orig_scores = pca_mod._update_scores
+    orig_rotate = pca_mod._rotate_towards_pca
+    orig_loadings = pca_mod._update_loadings
+
+    def patched_scores(state):
+        order.append("scores")
+        return orig_scores(state)
+
+    def patched_rotate(**kwargs):
+        order.append("rotate")
+        return orig_rotate(**kwargs)
+
+    def patched_loadings(state):
+        order.append("loadings")
+        return orig_loadings(state)
+
+    monkeypatch.setattr(pca_mod, "_update_scores", patched_scores)
+    monkeypatch.setattr(pca_mod, "_rotate_towards_pca", patched_rotate)
+    monkeypatch.setattr(pca_mod, "_update_loadings", patched_loadings)
+
+    _ = pca_mod._run_training_loop(
+        prepared=prepared,
+        training=training,
+        use_prior=True,
+        opts=opts,
+    )
+
+    assert order == ["scores", "rotate", "loadings"]
 
 
 # ----------------------------------------------------------------------
@@ -370,6 +437,122 @@ def test_initialize_parameters_basic_centering() -> None:
     assert x_centered.shape == x_data.shape
     assert np.all(np.isfinite(x_centered))
     assert x_probe_centered is None
+
+
+def test_initialize_parameters_respects_provided_init_without_rng() -> None:
+    """When init is provided, parameters should pass through unchanged."""
+    n_features, n_samples, n_components = 3, 4, 2
+    x = np.ones((n_features, n_samples), dtype=float)
+    mask = np.ones_like(x, dtype=bool)
+    mask_probe = None
+    n_obs_row = np.sum(mask, axis=1).astype(float)
+
+    init = {
+        "A": np.full((n_features, n_components), 2.0, dtype=float),
+        "S": np.full((n_components, n_samples), -1.0, dtype=float),
+        "Mu": np.full(n_features, 0.5, dtype=float),
+        "V": 0.7,
+        "Av": [np.eye(n_components, dtype=float) * 0.1 for _ in range(n_features)],
+        "Sv": [np.eye(n_components, dtype=float) * 0.2 for _ in range(n_samples)],
+    }
+
+    opts: dict[str, object] = {"init": init, "bias": 1, "verbose": 0}
+    shapes = InitShapes(
+        n_features=n_features,
+        n_samples=n_samples,
+        n_components=n_components,
+        n_obs_patterns=n_samples,
+    )
+    ctx = InitContext(
+        x_data=x,
+        x_probe=None,
+        mask=mask,
+        mask_probe=mask_probe,
+        shapes=shapes,
+        pattern_index=None,
+        n_obs_row=n_obs_row,
+        use_prior=True,
+        use_postvar=True,
+        opts=opts,
+    )
+
+    (
+        loadings,
+        scores,
+        mu,
+        noise_var,
+        loading_covariances,
+        score_covariances,
+        mu_variances,
+        va,
+        vmu,
+        x_centered,
+        x_probe_centered,
+    ) = _initialize_parameters(ctx)
+
+    assert_allclose(loadings, init["A"])
+    assert_allclose(scores, init["S"])
+    assert_allclose(mu, np.full((n_features, 1), 0.5), atol=0.0)
+    assert noise_var == pytest.approx(0.7)
+    assert len(loading_covariances) == n_features
+    assert len(score_covariances) == n_samples
+    assert_allclose(mu_variances, np.ones((n_features, 1)))
+    assert np.all(np.isfinite(va))
+    assert np.isfinite(vmu)
+    assert x_probe_centered is None
+
+    # Centering should match subtract_mu with the provided Mu.
+    expected_centered, _ = subtract_mu(
+        mu,
+        x,
+        mask,
+        probe=None,
+        update_bias=True,
+    )
+    assert_allclose(x_centered, expected_centered)
+
+
+def test_initialize_model_centers_prepared_data_once() -> None:
+    """PreparedProblem should carry the initially centered data into the loop."""
+    x = np.array([[1.0, 2.0], [3.0, 4.0]], dtype=float)
+    init = {
+        "A": np.ones((2, 1), dtype=float),
+        "S": np.ones((1, 2), dtype=float),
+        "Mu": np.array([0.25, -0.5], dtype=float),
+        "V": 1.0,
+    }
+
+    opts = pca_mod._build_options(
+        {
+            "init": init,
+            "maxiters": 1,
+            "bias": 1,
+            "verbose": 0,
+            "autosave": 0,
+            "rotate2pca": 0,
+        }
+    )
+
+    prepared = pca_mod._prepare_problem(x, opts)
+    x_uncentered = np.array(prepared.x_data, copy=True)
+
+    _ = pca_mod._initialize_model(
+        prepared=prepared,
+        n_components=1,
+        use_prior=True,
+        use_postvar=True,
+        opts=opts,
+    )
+
+    expected_centered, _ = subtract_mu(
+        init["Mu"].reshape(-1, 1),
+        x_uncentered,
+        prepared.mask,
+        probe=None,
+        update_bias=True,
+    )
+
+    assert_allclose(prepared.x_data, expected_centered)
 
 
 # ----------------------------------------------------------------------

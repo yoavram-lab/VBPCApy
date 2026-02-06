@@ -81,6 +81,8 @@ def compute_rms(
 
     # MATLAB caller passes ndata; for Python we can validate / derive
     n_obs = int(np.sum(mask))
+    if n_obs == 0:
+        raise ValueError("mask must mark at least one observed entry (n_obs > 0).")
     if config.n_observed is not None and int(config.n_observed) != n_obs:
         raise ValueError(
             f"n_observed mismatch for dense data: config={config.n_observed}, sum(mask)={n_obs}"
@@ -141,9 +143,9 @@ def _validate_sparse_mask_matches_structure(
         rows, cols = x.nonzero()
         if not np.all(m[rows, cols] == 1):
             raise ValueError(
-                "For sparse data, mask must be 1 on all observed (stored) entries of X."
+                "For sparse data, mask must match the sparsity pattern of data (spones(X)): it must be 1 on all observed (stored) entries of X."
             )
         if int(np.sum(m != 0)) != int(x.nnz):
             raise ValueError(
-                "For sparse data, mask must be zero everywhere except stored entries of X."
+                "For sparse data, mask must match the sparsity pattern of data (spones(X)): it must be zero everywhere except stored entries of X."
             )

@@ -334,11 +334,15 @@ def _initialize_parameters(
     """Initialize loadings, scores, mu, V, Av, Sv, Muv, Va, Vmu and center data."""
     shapes = ctx.shapes
 
+    # Use a deterministic RNG only when we fall back to random init; when
+    # init is provided (e.g., MATLAB fixture), pass through without forcing a
+    # new seed.
+    rng = None if ctx.opts.get("init") else np.random.default_rng()
     init_result: InitResult = init_params(
         ctx.opts["init"],
         shapes,
         score_pattern_index=ctx.pattern_index,
-        rng=np.random.default_rng(),
+        rng=rng,
     )
     loadings = init_result.a
     scores = init_result.s

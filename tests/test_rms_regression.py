@@ -29,10 +29,6 @@ from scipy.io import loadmat, savemat
 from vbpca_py._rms import RmsConfig, compute_rms
 from vbpca_py._sparse_error import sparse_reconstruction_error
 
-# Skip module if Python extension isn't available
-pytest.importorskip("vbpca_py.errpca_pt")
-
-
 # ----------------------------
 # Repo helpers
 # ----------------------------
@@ -340,6 +336,82 @@ def test_python_compute_rms_sparse_invariants() -> None:
 
     expected_rms = float(np.sqrt(np.sum(err.data**2) / case["ndata"]))
     np.testing.assert_allclose(rms, expected_rms, rtol=0.0, atol=0.0)
+
+
+def test_compute_rms_dense_raises_on_zero_observed_mask() -> None:
+    rng = np.random.default_rng(123)
+    X = rng.standard_normal((3, 4))
+    M = np.zeros_like(X)
+    A = rng.standard_normal((3, 2))
+    S = rng.standard_normal((2, 4))
+    cfg = RmsConfig(n_observed=None, num_cpu=1)
+
+    with pytest.raises(ValueError, match=r"n_obs > 0"):
+        compute_rms(X, A, S, M, cfg)
+
+
+def test_compute_rms_dense_shape_and_mask_validation() -> None:
+    rng = np.random.default_rng(321)
+    X = rng.standard_normal((3, 4))
+    M = np.ones_like(X)
+    A = rng.standard_normal((2, 2))  # wrong rows
+    S = rng.standard_normal((2, 4))
+    cfg = RmsConfig(n_observed=None, num_cpu=1)
+
+    with pytest.raises(ValueError, match=r"loadings has 2 rows"):
+        compute_rms(X, A, S, M, cfg)
+
+    A_ok = rng.standard_normal((3, 2))
+    S_bad_cols = rng.standard_normal((2, 3))
+    with pytest.raises(ValueError, match=r"scores has 3 columns"):
+        compute_rms(X, A_ok, S_bad_cols, M, cfg)
+
+    S_bad_latent = rng.standard_normal((3, 4))
+    with pytest.raises(ValueError, match=r"Incompatible latent dims"):
+        compute_rms(X, A_ok, S_bad_latent, M, cfg)
+
+    cfg_mismatch = RmsConfig(n_observed=5, num_cpu=1)
+    with pytest.raises(ValueError, match=r"n_observed mismatch"):
+        compute_rms(X, A_ok, S, M, cfg_mismatch)
+
+
+def test_compute_rms_sparse_validation_errors() -> None:
+    rng = np.random.default_rng(999)
+    X_dense = (rng.random((4, 5)) > 0.6).astype(float)
+    X = sp.csr_matrix(X_dense)
+    A = rng.standard_normal((4, 3))
+    S = rng.standard_normal((3, 5))
+
+    cfg_mismatch = RmsConfig(n_observed=X.nnz + 1, num_cpu=1)
+    with pytest.raises(ValueError, match=r"n_observed mismatch for sparse"):
+        compute_rms(X, A, S, None, cfg_mismatch)
+
+    # Mask structure mismatch when validate_sparse_mask=True
+    bad_mask = np.ones_like(X_dense)
+    bad_mask[0, 0] = 0.0  # alters structure
+    cfg = RmsConfig(n_observed=None, num_cpu=1, validate_sparse_mask=True)
+    with pytest.raises(ValueError, match=r"sparsity pattern"):
+        compute_rms(X, A, S, bad_mask, cfg)
+
+
+def test_sparse_reconstruction_error_validates_shapes() -> None:
+    rng = np.random.default_rng(42)
+    X_dense = (rng.random((3, 4)) > 0.5).astype(float)
+    X = sp.csr_matrix(X_dense)
+    A = rng.standard_normal((2, 3))
+    S = rng.standard_normal((3, 4))
+
+    with pytest.raises(ValueError, match=r"loadings has 2 rows"):
+        sparse_reconstruction_error(X, A, S)
+
+    A_ok = rng.standard_normal((3, 3))
+    S_bad = rng.standard_normal((3, 3))
+    with pytest.raises(ValueError, match=r"scores has 3 columns"):
+        sparse_reconstruction_error(X, A_ok, S_bad)
+
+    S_bad_latent = rng.standard_normal((2, 4))
+    with pytest.raises(ValueError, match=r"Incompatible latent dims"):
+        sparse_reconstruction_error(X, A_ok, S_bad_latent)
 
 
 # ----------------------------

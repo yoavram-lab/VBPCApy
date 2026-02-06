@@ -64,6 +64,7 @@ ERR_OBSCOMB_COVERAGE = (
 )
 
 ERR_INDEX_1D = "index array must be 1-D."
+ERR_ISV_LENGTH = "isv must have length equal to n_samples when provided."
 ERR_ZERO_SAMPLES = "scores (S) must have at least one sample (n_samples > 0)."
 
 # Numerical floor for eigenvalues used in 1/sqrt(eig) to avoid inf/NaN in rank-deficient cases.
@@ -129,7 +130,12 @@ def _validate_av_shapes(
     n_features: int,
     n_components: int,
 ) -> None:
-    if loading_covariances is None:
+    """Validate Av only when provided and non-empty.
+
+    MATLAB treats an empty Av the same as not providing loadings covariances at all;
+    mirror that behavior by skipping length/shape checks when Av is empty.
+    """
+    if loading_covariances is None or len(loading_covariances) == 0:
         return
 
     if len(loading_covariances) != n_features:
@@ -181,8 +187,10 @@ def _build_cov_s(
     isv: np.ndarray,
     obscombj: list[list[int]] | None,
 ) -> np.ndarray:
-    """covS = (S Sᵀ + sum_j Sv_j) / n_samples, with pattern-mode weighting."""
+    """CovS = (S Sᵀ + sum_j Sv_j) / n_samples, with pattern-mode weighting."""
     _, n_samples = scores.shape
+    if isv.size > 0 and isv.size != n_samples:
+        raise ValueError(ERR_ISV_LENGTH)
     cov_s = scores @ scores.T
 
     if isv.size == 0:

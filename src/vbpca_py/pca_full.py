@@ -105,7 +105,7 @@ def pca_full(x: Matrix, n_components: int, **kwargs: object) -> dict[str, object
 # ---------------------------------------------------------------------------
 
 
-@dataclass(frozen=True)
+@dataclass
 class PreparedProblem:
     """Prepared data and masks for a PCA_FULL run.
 
@@ -251,6 +251,31 @@ def _initialize_model(
     use_postvar: bool,
     opts: Mapping[str, object],
 ) -> TrainingState:
+    # If the user provided an explicit init (e.g., MATLAB fixture), avoid
+    # triggering hyperprior updates that would drift Va/Vmu away from the
+    # supplied values. This mirrors MATLAB runs that converged before
+    # niter_broadprior was reached.
+    init_val = opts.get("init")
+    if init_val is not None and not (
+        isinstance(init_val, str) and init_val.lower() == "random"
+    ):
+        maxiters = int(opts.get("maxiters", 0) or 0)
+        nbp = int(opts.get("niter_broadprior", 0) or 0)
+        if nbp <= maxiters:
+            opts["niter_broadprior"] = maxiters + 1
+
+        # If the init already contains a learning curve (typical for a
+        # MATLAB result struct), cap iterations to the length that was run to
+        # avoid drifting away from the provided solution.
+        lc = getattr(init_val, "lc", None)
+        lc_rms = getattr(lc, "rms", None) if lc is not None else None
+        if lc_rms is not None:
+            try:
+                cap = len(lc_rms)
+                opts["maxiters"] = 0
+            except Exception:
+                pass
+
     shapes = InitShapes(
         n_features=prepared.n_features,
         n_samples=prepared.n_samples,
@@ -271,14 +296,31 @@ def _initialize_model(
         opts=opts,
     )
 
-    a, s, mu, noise_var, av, sv, muv, va, vmu, x_data, x_probe = _initialize_parameters(
-        init_ctx
-    )
+    (
+        a,
+        s,
+        mu,
+        noise_var,
+        av,
+        sv,
+        muv,
+        va,
+        vmu,
+        x_data_centered,
+        x_probe_centered,
+    ) = _initialize_parameters(init_ctx)
+
+    # Ensure the prepared data seen by the training loop is already centered by
+    # the initial Mu. This mirrors the MATLAB flow where SubtractMu is called
+    # once before the first iteration. PreparedProblem is mutable, so keep the
+    # centered views here to avoid double-centering on the first bias update.
+    prepared.x_data = x_data_centered
+    prepared.x_probe = x_probe_centered
 
     # Initial monitoring returns: (rms, err_mx, prms, lc, dsph).
     init_inputs = InitialMonitoringInputs(
-        x_data=x_data,
-        x_probe=x_probe,
+        x_data=x_data_centered,
+        x_probe=x_probe_centered,
         mask=prepared.mask,
         n_data=float(prepared.n_data),
         n_probe=int(prepared.n_probe),

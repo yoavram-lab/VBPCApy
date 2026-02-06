@@ -128,7 +128,8 @@ def init_params(
         Dataclass containing initialized A, S, mu, V, Av, Sv, Muv.
     """
     if rng is None:
-        rng = np.random.default_rng()
+        # Use a fixed seed for deterministic, MATLAB-stable init.
+        rng = np.random.default_rng(0)
 
     init_dict = _normalize_init(init)
 
@@ -174,10 +175,25 @@ def _normalize_init(init: str | Mapping[str, Any] | None) -> dict[str, Any]:
     if init is None:
         return {}
 
+    # scipy.io.loadmat returns mat_struct; accept it as a mapping-like init.
+    if hasattr(init, "_fieldnames"):
+        init_dict = {name: getattr(init, name) for name in init._fieldnames}
+        return _coerce_mat_cells(init_dict)
+
     if isinstance(init, Mapping):
-        return dict(init)
+        init_dict = dict(init)
+        return _coerce_mat_cells(init_dict)
 
     raise ValueError(ERR_INIT_TYPE)
+
+
+def _coerce_mat_cells(init_dict: dict[str, Any]) -> dict[str, Any]:
+    """Convert MATLAB-style cell arrays (object ndarrays) to Python lists."""
+    for key in ("Av", "Sv"):
+        val = init_dict.get(key)
+        if isinstance(val, np.ndarray) and val.dtype == object:
+            init_dict[key] = [np.asarray(v, dtype=float) for v in val.ravel()]
+    return init_dict
 
 
 def _init_a_av(
@@ -242,7 +258,11 @@ def _init_mu_muv_v(
         init_dict.get("Muv", np.ones((n_features, 1))),
         dtype=float,
     )
-    if muv.shape != (n_features, 1):
+    if muv.ndim == 1 and muv.shape[0] == n_features:
+        muv = muv.reshape(n_features, 1)
+    elif muv.size == 0:
+        muv = np.zeros((n_features, 1), dtype=float)
+    elif muv.shape != (n_features, 1):
         raise ValueError(ERR_MUV_SHAPE)
 
     v_raw = init_dict.get("V", 1.0)

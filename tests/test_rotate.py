@@ -30,6 +30,7 @@ import numpy as np
 import pytest
 from numpy.testing import assert_allclose
 from scipy.io import loadmat, savemat
+
 from vbpca_py._rotate import RotateParams, _build_cov_s, rotate_to_pca
 
 # --------------------------------------------------------------------------------------
@@ -112,7 +113,7 @@ def _run_octave_rotatetopca(mat_in: Path, mat_out: Path) -> None:
 
 
 def _cov_a_from_outputs(A: np.ndarray, Av: list[np.ndarray]) -> np.ndarray:
-    """covA = (A' A + sum_i Av[i]) / n_features (n1 in MATLAB)."""
+    """CovA = (A' A + sum_i Av[i]) / n_features (n1 in MATLAB)."""
     n_features = A.shape[0]
     cov_a = A.T @ A
     for av_i in Av:
@@ -224,7 +225,7 @@ def _mk_case_pattern(seed: int = 1) -> _Case:
         Av0.append(m @ m.T + 0.05 * np.eye(k))
 
     # 3 patterns covering all samples
-    obscombj = [list(range(0, 4)), list(range(4, 7)), list(range(7, 10))]
+    obscombj = [list(range(4)), list(range(4, 7)), list(range(7, 10))]
     Isv = np.zeros(n, dtype=int)
     for g, cols in enumerate(obscombj):
         for j in cols:
@@ -465,6 +466,35 @@ def test_rotate_python_data_space_invariance_update_bias_true() -> None:
     assert_allclose(X1, X0, rtol=1e-10, atol=1e-12)
 
 
+def test_rotate_python_data_space_invariance_update_bias_false() -> None:
+    rng = np.random.default_rng(321)
+    n_features, k, n = 5, 3, 7
+
+    A0 = rng.standard_normal((n_features, k))
+    S0 = rng.standard_normal((k, n))
+    Mu0 = rng.standard_normal((n_features, 1))
+
+    Sv0 = [np.eye(k) for _ in range(n)]
+
+    A = A0.copy()
+    S = S0.copy()
+    Sv = [x.copy() for x in Sv0]
+
+    params = RotateParams(
+        loading_covariances=None,
+        score_covariances=Sv,
+        isv=None,
+        obscombj=None,
+        update_bias=False,
+    )
+    dMu, A1, _Av1, S1, _Sv1 = rotate_to_pca(A, S, params)
+
+    X0 = A0 @ S0 + Mu0
+    X1 = A1 @ S1 + Mu0 + dMu  # dMu should be zeros when update_bias=False
+    assert_allclose(dMu, np.zeros_like(dMu), atol=0.0)
+    assert_allclose(X1, X0, rtol=1e-10, atol=1e-12)
+
+
 def test_rotate_errors_on_zero_samples() -> None:
     rng = np.random.default_rng(13)
     n_features, k = 4, 2
@@ -547,3 +577,242 @@ def test_pattern_case_obscombj_covers_all_samples_exactly_once() -> None:
 
     assert all_cols_arr.size == expected.size
     assert np.array_equal(np.sort(all_cols_arr), expected)
+
+
+def test_rotate_rejects_invalid_inputs() -> None:
+    rng = np.random.default_rng(2024)
+    n_features, k, n = 4, 2, 3
+
+    A = rng.standard_normal((n_features, k))
+    S = rng.standard_normal((k, n))
+    sv = [np.eye(k) for _ in range(n)]
+
+    bad_av_len = [np.eye(k) for _ in range(n_features - 1)]
+    with pytest.raises(ValueError, match=r"length must match"):
+        rotate_to_pca(A.copy(), S.copy(), RotateParams(bad_av_len, sv))
+
+    bad_av_shape = [np.eye(k) for _ in range(n_features)]
+    bad_av_shape[0] = np.eye(k + 1)
+    with pytest.raises(ValueError, match=r"shape=.*index=0"):
+        rotate_to_pca(A.copy(), S.copy(), RotateParams(bad_av_shape, sv))
+
+    short_sv = [np.eye(k) for _ in range(n - 1)]
+    with pytest.raises(ValueError, match=r"must have length equal to n_samples"):
+        rotate_to_pca(A.copy(), S.copy(), RotateParams(None, short_sv))
+
+    bad_sv_shape = [np.eye(k) for _ in range(n)]
+    bad_sv_shape[1] = np.eye(k + 1)
+    with pytest.raises(ValueError, match=r"shape=.*index=1"):
+        rotate_to_pca(A.copy(), S.copy(), RotateParams(None, bad_sv_shape))
+
+    # Pattern-mode: missing obscombj
+    isv = np.zeros(n, dtype=int)
+    with pytest.raises(ValueError, match=r"obscombj must be provided"):
+        rotate_to_pca(
+            A.copy(),
+            S.copy(),
+            RotateParams(None, sv, isv=isv, obscombj=None),
+        )
+
+    # Pattern-mode: length mismatch
+    obscombj = [list(range(n))]
+    with pytest.raises(ValueError, match=r"length must match len\(obscombj\)"):
+        rotate_to_pca(
+            A.copy(),
+            S.copy(),
+            RotateParams(None, sv + [np.eye(k)], isv=isv, obscombj=obscombj),
+        )
+
+    # Pattern-mode: coverage error / duplicates
+    obscombj_bad = [list(range(n - 1)), list(range(1, n))]
+    with pytest.raises(ValueError, match=r"cover all sample indices"):
+        rotate_to_pca(
+            A.copy(),
+            S.copy(),
+            RotateParams(None, [np.eye(k)] * 2, isv=isv, obscombj=obscombj_bad),
+        )
+
+    # Pattern-mode: isv length mismatch
+    isv_short = np.zeros(n - 1, dtype=int)
+    with pytest.raises(ValueError, match=r"isv must have length equal"):
+        rotate_to_pca(
+            A.copy(),
+            S.copy(),
+            RotateParams(None, [np.eye(k)] * 2, isv=isv_short, obscombj=obscombj_bad),
+        )
+
+
+def test_rotate_handles_rank_deficient_covs_without_nan() -> None:
+    rng = np.random.default_rng(4242)
+    n_features, k, n = 4, 3, 3
+
+    # Make S rank-1 to introduce zero eigenvalues in covS
+    s_base = rng.standard_normal(n)
+    S0 = np.vstack([s_base, np.zeros_like(s_base), np.zeros_like(s_base)])
+    A0 = rng.standard_normal((n_features, k))
+
+    Sv0 = [np.zeros((k, k)) for _ in range(n)]
+
+    dMu, A1, Av1, S1, Sv1 = rotate_to_pca(
+        A0.copy(), S0.copy(), RotateParams(None, Sv0, isv=None, obscombj=None)
+    )
+
+    assert np.all(np.isfinite(dMu))
+    assert np.all(np.isfinite(A1))
+    assert Av1 is None
+    assert np.all(np.isfinite(S1))
+    for sv in Sv1:
+        sv_arr = np.asarray(sv, dtype=float)
+        assert np.all(np.isfinite(sv_arr))
+        assert np.allclose(sv_arr, sv_arr.T, atol=1e-12)
+
+
+def test_rotate_pattern_mode_python_only() -> None:
+    case = _mk_case_pattern(seed=99)
+
+    A = case.A0.copy()
+    S = case.S0.copy()
+    Av = [x.copy() for x in case.Av0]
+    Sv = [x.copy() for x in case.Sv0]
+
+    params = RotateParams(
+        loading_covariances=Av,
+        score_covariances=Sv,
+        isv=case.Isv,
+        obscombj=case.obscombj,
+        update_bias=case.update_bias,
+    )
+
+    dMu, A1, Av1, S1, Sv1 = rotate_to_pca(A, S, params)
+
+    X0 = case.A0 @ case.S0 + case.Mu0
+    X1 = A1 @ S1 + (case.Mu0 + dMu)
+    assert_allclose(X1, X0, rtol=1e-10, atol=1e-12)
+
+    isv = case.Isv
+    covs = _build_cov_s(S1, Sv1, isv, case.obscombj)
+    assert_allclose(covs, np.eye(covs.shape[0]), rtol=1e-7, atol=1e-9)
+
+    if Av1:
+        cova = _cov_a_from_outputs(A1, Av1)
+        d_norm, off_norm = _diag_offdiag_norms(cova)
+        assert off_norm <= 1e-7 * np.linalg.norm(cova, ord="fro") + 1e-10
+        d = np.diag(cova)
+        assert np.all(d[:-1] >= d[1:] - 1e-10)
+
+
+@pytest.mark.parametrize("av_kind", [None, []])
+def test_rotate_handles_absent_av(av_kind: list[np.ndarray] | None) -> None:
+    rng = np.random.default_rng(777)
+    n_features, k, n = 5, 2, 6
+
+    A0 = rng.standard_normal((n_features, k))
+    S0 = rng.standard_normal((k, n))
+    Sv0 = [np.eye(k) * 0.2 for _ in range(n)]
+
+    A = A0.copy()
+    S = S0.copy()
+    Sv = [x.copy() for x in Sv0]
+
+    params = RotateParams(
+        loading_covariances=av_kind,
+        score_covariances=Sv,
+        isv=None,
+        obscombj=None,
+        update_bias=True,
+    )
+    dMu, A1, Av1, S1, Sv1 = rotate_to_pca(A, S, params)
+
+    X0 = A0 @ S0
+    X1 = A1 @ S1 + dMu  # bias update applies when update_bias=True
+    assert_allclose(X1, X0, rtol=1e-10, atol=1e-12)
+    assert Av1 is None or len(Av1) == 0
+    for sv in Sv1:
+        sv_arr = np.asarray(sv, dtype=float)
+        assert np.all(np.isfinite(sv_arr))
+        assert np.allclose(sv_arr, sv_arr.T, atol=1e-12)
+
+
+def test_rotate_regression_python_only_fixture() -> None:
+    # Deterministic small-case regression guard that runs even without Octave.
+    A0 = np.array(
+        [
+            [-2.221253875745, 0.02599965265],
+            [-0.538969020353, -1.129192775482],
+            [-2.441866645633, 0.765391403162],
+            [-0.759709345383, 0.266996194927],
+        ],
+        dtype=float,
+    )
+    S0 = np.array(
+        [
+            [
+                0.701780851885,
+                0.292121315819,
+                -0.198093083842,
+                0.658771263358,
+                0.519957431003,
+            ],
+            [
+                0.599011418567,
+                -1.65158095341,
+                -0.392440699326,
+                -0.677316958821,
+                2.936010765698,
+            ],
+        ],
+        dtype=float,
+    )
+    Sv0 = [np.eye(2) * 0.2 for _ in range(S0.shape[1])]
+
+    params = RotateParams(
+        loading_covariances=None,
+        score_covariances=[s.copy() for s in Sv0],
+        isv=None,
+        obscombj=None,
+        update_bias=True,
+    )
+
+    dMu, A1, _Av1, S1, Sv1 = rotate_to_pca(A0.copy(), S0.copy(), params)
+
+    expected_dmu = np.array(
+        [[-0.872958840486], [-0.396604060762], [-0.839754305948], [-0.256564877028]],
+        dtype=float,
+    )
+    expected_A1 = np.array(
+        [
+            [0.365309717115, -1.171205809652],
+            [-1.578904758864, -1.071504963959],
+            [1.483635844814, -0.77664794818],
+            [0.503981802265, -0.22161254337],
+        ],
+        dtype=float,
+    )
+    expected_S1 = np.array(
+        [
+            [
+                0.023413824745,
+                -1.013210637934,
+                0.128250782708,
+                -0.712222485487,
+                1.573768515968,
+            ],
+            [
+                0.579619568117,
+                -0.470693016891,
+                -1.072330141602,
+                0.296931239223,
+                0.666472351153,
+            ],
+        ],
+        dtype=float,
+    )
+    expected_Sv0 = np.array(
+        [[0.194479904408, -0.238069440142], [-0.238069440142, 0.552048750368]],
+        dtype=float,
+    )
+
+    assert_allclose(dMu, expected_dmu, rtol=5e-12, atol=5e-12)
+    assert_allclose(A1, expected_A1, rtol=5e-12, atol=5e-12)
+    assert_allclose(S1, expected_S1, rtol=5e-12, atol=5e-12)
+    assert_allclose(Sv1[0], expected_Sv0, rtol=5e-12, atol=5e-12)

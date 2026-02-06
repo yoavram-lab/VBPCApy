@@ -27,6 +27,7 @@ import numpy as np
 import pytest
 import scipy.sparse as sp
 from scipy.io import loadmat, savemat
+
 from vbpca_py._cost import CostParams, compute_full_cost
 
 
@@ -266,6 +267,125 @@ def test_cost_shape_errors() -> None:
     s = np.zeros((2, 3))
     with pytest.raises(ValueError, match=r"S columns must match X columns."):
         compute_full_cost(x, a, s, params)
+
+
+def test_cost_requires_positive_noise_variance() -> None:
+    x = np.zeros((2, 2))
+    a = np.eye(2)
+    s = np.zeros((2, 2))
+    mu = np.zeros(2)
+
+    with pytest.raises(ValueError, match="noise_variance must be positive"):
+        compute_full_cost(x, a, s, CostParams(mu=mu, noise_variance=0.0))
+
+    with pytest.raises(ValueError, match="noise_variance must be positive"):
+        compute_full_cost(x, a, s, CostParams(mu=mu, noise_variance=-1.0))
+
+
+def test_cost_loading_covariances_validation() -> None:
+    x = np.zeros((2, 2))
+    a = np.eye(2)
+    s = np.zeros((2, 2))
+    mu = np.zeros(2)
+
+    bad_len = [np.eye(2)]  # length 1 instead of 2
+    with pytest.raises(ValueError, match="loading_covariances length"):
+        compute_full_cost(
+            x,
+            a,
+            s,
+            CostParams(mu=mu, noise_variance=1.0, loading_covariances=bad_len),
+        )
+
+    bad_shape = [np.eye(2), np.ones((2, 1))]
+    with pytest.raises(ValueError, match="loading covariance must have shape"):
+        compute_full_cost(
+            x,
+            a,
+            s,
+            CostParams(mu=mu, noise_variance=1.0, loading_covariances=bad_shape),
+        )
+
+
+def test_cost_score_covariances_validation() -> None:
+    x = np.zeros((2, 3))
+    a = np.eye(2)
+    s = np.zeros((2, 3))
+    mu = np.zeros(2)
+
+    # Non-patterned: length mismatch
+    sv_list_short = [np.eye(2)]
+    with pytest.raises(ValueError, match="score_covariances length"):
+        compute_full_cost(
+            x,
+            a,
+            s,
+            CostParams(
+                mu=mu,
+                noise_variance=1.0,
+                score_covariances=sv_list_short,
+                score_pattern_index=None,
+            ),
+        )
+
+    # Patterned: list too short for pattern index
+    sv_list = [np.eye(2)]
+    pat = np.array([0, 1, 0], dtype=int)
+    with pytest.raises(ValueError, match="out-of-range"):
+        compute_full_cost(
+            x,
+            a,
+            s,
+            CostParams(
+                mu=mu,
+                noise_variance=1.0,
+                score_covariances=sv_list,
+                score_pattern_index=pat,
+            ),
+        )
+
+    # Shape mismatch
+    sv_bad_shape = [np.eye(2), np.ones((1, 1))]
+    pat_ok = np.array([0, 1, 0], dtype=int)
+    with pytest.raises(ValueError, match="score covariance must have shape"):
+        compute_full_cost(
+            x,
+            a,
+            s,
+            CostParams(
+                mu=mu,
+                noise_variance=1.0,
+                score_covariances=sv_bad_shape,
+                score_pattern_index=pat_ok,
+            ),
+        )
+
+
+def test_cost_nan_observed_with_mask_raises() -> None:
+    x = np.array([[np.nan, 1.0], [2.0, 3.0]])
+    a = np.eye(2)
+    s = np.zeros((2, 2))
+    mu = np.zeros(2)
+    mask = np.ones_like(x, dtype=bool)
+
+    with pytest.raises(ValueError, match="NaN on observed entries"):
+        compute_full_cost(x, a, s, CostParams(mu=mu, noise_variance=1.0, mask=mask))
+
+
+def test_cost_sxv_requires_positive_n_data() -> None:
+    x = np.zeros((2, 2))
+    a = np.eye(2)
+    s = np.zeros((2, 2))
+    mu = np.zeros(2)
+    mask = np.zeros_like(x, dtype=bool)  # zero observed entries
+
+    with pytest.raises(ValueError, match="n_data must be positive"):
+        compute_full_cost(
+            x,
+            a,
+            s,
+            CostParams(mu=mu, noise_variance=1.0, mask=mask, s_xv=1.0),
+        )
 
 
 def test_cost_loading_nondiagonal_covariances() -> None:
@@ -924,7 +1044,7 @@ def test_cost_regression_dense_cf_full_octave(tmp_path: Path) -> None:
     S = rng.standard_normal((k, n2)).astype(np.float64)
 
     Mu = rng.standard_normal(n1).astype(np.float64)
-    V = float(0.8)
+    V = 0.8
 
     # --- IMPORTANT: cf_full.m requires Sv non-empty if it recomputes sXv ---
     # Make Sv a 1 x n2 cell array of eye(k).
@@ -941,7 +1061,7 @@ def test_cost_regression_dense_cf_full_octave(tmp_path: Path) -> None:
 
     # Priors disabled (Va = inf => no prior)
     Va = np.array([np.inf] * k, dtype=np.float64)
-    Vmu = float(0.0)
+    Vmu = 0.0
 
     # Python: to match cf_full precisely, provide explicit Sv=I per column
     params_py = CostParams(
@@ -1012,7 +1132,7 @@ def test_cost_regression_dense_patterned_sv_cf_full_octave(tmp_path: Path) -> No
     A = rng.standard_normal((n1, k)).astype(np.float64)
     S = rng.standard_normal((k, n2)).astype(np.float64)
     Mu = rng.standard_normal(n1).astype(np.float64)
-    V = float(1.1)
+    V = 1.1
 
     # Patterned Sv
     Sv_list = []
@@ -1038,7 +1158,7 @@ def test_cost_regression_dense_patterned_sv_cf_full_octave(tmp_path: Path) -> No
     Sv_cell = _as_cell_1xn(Sv_list)
 
     Va = np.array([np.inf] * k, dtype=np.float64)
-    Vmu = float(0.0)
+    Vmu = 0.0
     Av = np.array([], dtype=object)
     Muv = np.array([], dtype=np.float64)
 
@@ -1098,7 +1218,7 @@ def test_cost_regression_sparse_cf_full_octave_optional(
     A = rng.standard_normal((n1, k)).astype(np.float64)
     S = rng.standard_normal((k, n2)).astype(np.float64)
     Mu = rng.standard_normal(n1).astype(np.float64)
-    V = float(0.9)
+    V = 0.9
 
     # For Python sparse semantics: mask must match structure (spones(X))
     M = X.copy()
@@ -1113,7 +1233,7 @@ def test_cost_regression_sparse_cf_full_octave_optional(
     Av = np.empty((0, 0), dtype=object)
     Muv = np.array([], dtype=np.float64)
     Va = np.array([np.inf] * k, dtype=np.float64)
-    Vmu = float(0.0)
+    Vmu = 0.0
 
     # Python: match cf_full exactly by providing explicit Sv=I per column
     params_py = CostParams(

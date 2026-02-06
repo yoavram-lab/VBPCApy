@@ -33,7 +33,7 @@ def sparse_reconstruction_error(
     num_cpu:
         Worker threads used by the C++ routine.
 
-    Returns
+    Returns:
     -------
     err_csr:
         CSR matrix with the same sparsity structure as x_csr containing residuals.
@@ -41,15 +41,32 @@ def sparse_reconstruction_error(
     if not sp.isspmatrix_csr(x_csr):
         raise TypeError("x_csr must be a scipy.sparse.csr_matrix")
 
+    n_rows, n_cols = x_csr.shape
+    loadings = np.asarray(loadings, dtype=np.float64)
+    scores = np.asarray(scores, dtype=np.float64)
+
+    if loadings.shape[0] != n_rows:
+        raise ValueError(
+            f"loadings has {loadings.shape[0]} rows but data has {n_rows} rows."
+        )
+    if scores.shape[1] != n_cols:
+        raise ValueError(
+            f"scores has {scores.shape[1]} columns but data has {n_cols} columns."
+        )
+    if loadings.shape[1] != scores.shape[0]:
+        raise ValueError(
+            "Incompatible latent dims: "
+            f"loadings.shape[1]={loadings.shape[1]}, scores.shape[0]={scores.shape[0]}."
+        )
+
+    num_cpu = max(int(num_cpu), 1)
+
     # Ensure expected dtypes for the extension
     x_data = x_csr.data.astype(np.float64, copy=False)
     x_indices = x_csr.indices.astype(np.int32, copy=False)
     x_indptr = x_csr.indptr.astype(np.int32, copy=False)
 
-    loadings = np.asarray(loadings, dtype=np.float64)
-    scores = np.asarray(scores, dtype=np.float64)
-
-    result = _errpca_pt_ext(x_data, x_indices, x_indptr, loadings, scores, int(num_cpu))
+    result = _errpca_pt_ext(x_data, x_indices, x_indptr, loadings, scores, num_cpu)
 
     data = np.asarray(result["data"], dtype=np.float64)
     indices = np.asarray(result["indices"], dtype=np.int32)

@@ -49,6 +49,10 @@ ERR_PATTERN_INDEX_SHAPE = "score_pattern_index must have shape (n_samples,)."
 ERR_PATTERN_INDEX_BOUNDS = (
     "score_pattern_index contains out-of-range indices for score_covariances."
 )
+ERR_LOADING_COV_LEN = "loading_covariances length must equal number of features."
+ERR_LOADING_COV_SHAPE = (
+    "Each loading covariance must have shape (n_components, n_components)."
+)
 
 
 # ============================================================
@@ -158,6 +162,18 @@ def _build_mask_and_clean_x(
         mask_out = mask_bool  # type: ignore[assignment]
         row_idx, col_idx = np.where(mask_bool)
 
+    # Reject NaNs on observed entries when caller provides a mask.
+    if mask is not None:
+        if sp.issparse(mask_out):
+            if not sp.issparse(x_clean):
+                rows, cols = mask_out.nonzero()
+                if rows.size and np.isnan(np.asarray(x_clean))[rows, cols].any():
+                    raise ValueError(
+                        "X contains NaN on observed entries specified by mask."
+                    )
+        elif np.isnan(np.asarray(x_clean))[row_idx, col_idx].any():
+            raise ValueError("X contains NaN on observed entries specified by mask.")
+
     return x_clean, mask_out, row_idx, col_idx
 
 
@@ -176,6 +192,53 @@ def _validate_score_pattern_index(
     if idx.size > 0:
         if np.min(idx) < 0 or np.max(idx) >= len(score_covariances):
             raise ValueError(ERR_PATTERN_INDEX_BOUNDS)
+
+
+def _validate_score_covariances(
+    score_covariances: list[np.ndarray] | None,
+    n_components: int,
+    n_samples: int,
+    score_pattern_index: np.ndarray | None,
+) -> None:
+    if score_covariances is None:
+        return
+
+    for sv in score_covariances:
+        if sv is None:
+            continue
+        if sv.shape != (n_components, n_components):
+            raise ValueError(
+                "Each score covariance must have shape (n_components, n_components)."
+            )
+
+    if score_pattern_index is None:
+        if len(score_covariances) != n_samples:
+            raise ValueError(
+                "score_covariances length must equal number of samples when no pattern index is provided."
+            )
+        return
+
+    idx = np.asarray(score_pattern_index)
+    if idx.size == 0:
+        return
+    if len(score_covariances) <= int(np.max(idx)):
+        raise ValueError("score_covariances length must cover all pattern indices.")
+
+
+def _validate_loading_covariances(
+    loading_covariances: list[np.ndarray] | None,
+    n_features: int,
+    n_components: int,
+) -> None:
+    if loading_covariances is None:
+        return
+
+    if len(loading_covariances) != n_features:
+        raise ValueError(ERR_LOADING_COV_LEN)
+
+    for av in loading_covariances:
+        if av.shape != (n_components, n_components):
+            raise ValueError(ERR_LOADING_COV_SHAPE)
 
 
 def _center_x_by_mu(
@@ -333,10 +396,13 @@ def _compute_sxv(
 
       s_xv = (rms^2) * ndata  +  covariance contributions (Sv/Av/Muv)
 
-    IMPORTANT:
+    Important:
     `x_centered` must already be mean-centered on observed entries to match MATLAB cf_full semantics.
     """
     n_data_effective = len(obs.row_idx) if obs.n_data is None else obs.n_data
+
+    if n_data_effective <= 0:
+        raise ValueError("n_data must be positive for cost computation.")
 
     if cov.s_xv is not None:
         return float(cov.s_xv), n_data_effective
@@ -397,6 +463,17 @@ def _compute_loading_cost(
 ) -> float:
     cost_a = 0.0
     use_prior = loading_priors is not None and not np.any(np.isinf(loading_priors))
+
+    if loading_covariances is not None:
+        if len(loading_covariances) != n_features:
+            raise ValueError(
+                "loading_covariances length must equal number of features."
+            )
+        for av in loading_covariances:
+            if av.shape != (n_components, n_components):
+                raise ValueError(
+                    "Each loading covariance must have shape (n_components, n_components)."
+                )
 
     if not use_prior:
         if loading_covariances is not None and len(loading_covariances) > 0:
@@ -492,6 +569,9 @@ def compute_full_cost(
     """
     n_features, n_samples = x.shape
 
+    if params.noise_variance <= 0:
+        raise ValueError("noise_variance must be positive.")
+
     if a.ndim != 2 or s.ndim != 2:
         raise ValueError(ERR_A_S_2D)
     if a.shape[0] != n_features:
@@ -507,6 +587,10 @@ def compute_full_cost(
     _validate_score_pattern_index(
         params.score_pattern_index, params.score_covariances, n_samples
     )
+    _validate_score_covariances(
+        params.score_covariances, n_components, n_samples, params.score_pattern_index
+    )
+    _validate_loading_covariances(params.loading_covariances, n_features, n_components)
 
     x_clean, mask_out, row_idx, col_idx = _build_mask_and_clean_x(x, params.mask)
 
