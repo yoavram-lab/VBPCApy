@@ -216,10 +216,7 @@ def _prepare_problem(x: Matrix, opts: Mapping[str, object]) -> PreparedProblem:
     )
     ix_obs, jx_obs = _observed_indices(x_data)
 
-    n_features, n_samples = x_data.shape
-    n_patterns, obs_patterns, pattern_index = _missing_patterns_info(
-        mask, opts, n_samples=n_samples
-    )
+    pattern_info = _missing_patterns_info(mask, opts, n_samples=x_data.shape[1])
 
     return PreparedProblem(
         x_data=x_data,
@@ -231,16 +228,43 @@ def _prepare_problem(x: Matrix, opts: Mapping[str, object]) -> PreparedProblem:
         n_probe=int(n_probe),
         ix_obs=ix_obs,
         jx_obs=jx_obs,
-        n_features=int(n_features),
-        n_samples=int(n_samples),
+        n_features=int(x_data.shape[0]),
+        n_samples=int(x_data.shape[1]),
         n1x=int(n1x),
         n2x=int(n2x),
         row_idx=row_idx,
         col_idx=col_idx,
-        n_patterns=int(n_patterns),
-        obs_patterns=obs_patterns,
-        pattern_index=pattern_index,
+        n_patterns=int(pattern_info[0]),
+        obs_patterns=pattern_info[1],
+        pattern_index=pattern_info[2],
     )
+
+
+def _adjust_opts_for_explicit_init(opts: Mapping[str, object]) -> None:
+    """Align hyperparameters when an explicit init is provided.
+
+    Avoids drifting away from supplied MATLAB-style initializations by
+    extending ``niter_broadprior`` and optionally capping ``maxiters`` when
+    a learning curve is present in ``init``.
+    """
+    init_val = opts.get("init")
+    if init_val is None or (isinstance(init_val, str) and init_val.lower() == "random"):
+        return
+
+    maxiters = int(opts.get("maxiters", 0) or 0)
+    nbp = int(opts.get("niter_broadprior", 0) or 0)
+    if nbp <= maxiters:
+        opts["niter_broadprior"] = maxiters + 1
+
+    lc = getattr(init_val, "lc", None)
+    lc_rms = getattr(lc, "rms", None) if lc is not None else None
+    if lc_rms is None:
+        return
+
+    try:
+        opts["maxiters"] = 0
+    except (TypeError, ValueError):
+        logger.debug("init.lc.rms length not usable; leaving maxiters unchanged.")
 
 
 def _initialize_model(
@@ -251,30 +275,7 @@ def _initialize_model(
     use_postvar: bool,
     opts: Mapping[str, object],
 ) -> TrainingState:
-    # If the user provided an explicit init (e.g., MATLAB fixture), avoid
-    # triggering hyperprior updates that would drift Va/Vmu away from the
-    # supplied values. This mirrors MATLAB runs that converged before
-    # niter_broadprior was reached.
-    init_val = opts.get("init")
-    if init_val is not None and not (
-        isinstance(init_val, str) and init_val.lower() == "random"
-    ):
-        maxiters = int(opts.get("maxiters", 0) or 0)
-        nbp = int(opts.get("niter_broadprior", 0) or 0)
-        if nbp <= maxiters:
-            opts["niter_broadprior"] = maxiters + 1
-
-        # If the init already contains a learning curve (typical for a
-        # MATLAB result struct), cap iterations to the length that was run to
-        # avoid drifting away from the provided solution.
-        lc = getattr(init_val, "lc", None)
-        lc_rms = getattr(lc, "rms", None) if lc is not None else None
-        if lc_rms is not None:
-            try:
-                cap = len(lc_rms)
-                opts["maxiters"] = 0
-            except Exception:
-                pass
+    _adjust_opts_for_explicit_init(opts)
 
     shapes = InitShapes(
         n_features=prepared.n_features,
@@ -296,57 +297,46 @@ def _initialize_model(
         opts=opts,
     )
 
-    (
-        a,
-        s,
-        mu,
-        noise_var,
-        av,
-        sv,
-        muv,
-        va,
-        vmu,
-        x_data_centered,
-        x_probe_centered,
-    ) = _initialize_parameters(init_ctx)
+    init_params = _initialize_parameters(init_ctx)
 
     # Ensure the prepared data seen by the training loop is already centered by
     # the initial Mu. This mirrors the MATLAB flow where SubtractMu is called
     # once before the first iteration. PreparedProblem is mutable, so keep the
     # centered views here to avoid double-centering on the first bias update.
-    prepared.x_data = x_data_centered
-    prepared.x_probe = x_probe_centered
+    prepared.x_data = init_params[9]
+    prepared.x_probe = init_params[10]
 
     # Initial monitoring returns: (rms, err_mx, prms, lc, dsph).
-    init_inputs = InitialMonitoringInputs(
-        x_data=x_data_centered,
-        x_probe=x_probe_centered,
-        mask=prepared.mask,
-        n_data=float(prepared.n_data),
-        n_probe=int(prepared.n_probe),
-        a=a,
-        s=s,
-        opts=opts,
+    _, err_mx, _, lc, dsph = _initial_monitoring(
+        InitialMonitoringInputs(
+            x_data=init_params[9],
+            x_probe=init_params[10],
+            mask=prepared.mask,
+            n_data=float(prepared.n_data),
+            n_probe=int(prepared.n_probe),
+            a=init_params[0],
+            s=init_params[1],
+            opts=opts,
+        )
     )
-    _rms0, err_mx, _prms0, lc, dsph = _initial_monitoring(init_inputs)
 
     model = ModelState(
-        a=a,
-        s=s,
-        mu=mu,
-        noise_var=float(noise_var),
-        av=av,
-        sv=sv,
-        muv=muv,
-        va=va,
-        vmu=float(vmu),
+        a=init_params[0],
+        s=init_params[1],
+        mu=init_params[2],
+        noise_var=float(init_params[3]),
+        av=init_params[4],
+        sv=init_params[5],
+        muv=init_params[6],
+        va=init_params[7],
+        vmu=float(init_params[8]),
     )
     return TrainingState(
         model=model,
         lc=lc,
         dsph=dsph,
         err_mx=err_mx,
-        a_old=a.copy(),
+        a_old=init_params[0].copy(),
         time_start=time.time(),
     )
 
@@ -358,7 +348,11 @@ def _run_training_loop(
     use_prior: bool,
     opts: Mapping[str, object],
 ) -> TrainingState:
-    """Run the VB / EM iterations, mutating and returning the training state."""
+    """Run the VB / EM iterations, mutating and returning the training state.
+
+    Returns:
+        The updated ``TrainingState`` after running iterations or hitting a stop.
+    """
     # Hyperparameters for Va, Vmu, V (kept here for compatibility).
     cfg = IterationConfig(
         hp_va=0.001,
@@ -407,29 +401,28 @@ def _run_training_loop(
 
 def _iteration_step(ctx: IterationContext) -> None:
     """One full iteration of updates; mutates ``ctx.training`` in place."""
-    prepared = ctx.prepared
     training = ctx.training
     m = training.model
     cfg = ctx.cfg
-    opts = cfg.opts
 
     # 1) Hyperpriors
-    hp_ctx = HyperpriorContext(
-        iteration=ctx.iteration,
-        use_prior=cfg.use_prior,
-        niter_broadprior=int(opts["niter_broadprior"]),
-        bias_enabled=bool(opts["bias"]),
-        mu=ctx.bias_state.mu,
-        mu_variances=ctx.bias_state.muv,
-        loadings=m.a,
-        loading_covariances=m.av,
-        n_features=prepared.n_features,
-        hp_va=cfg.hp_va,
-        hp_vb=cfg.hp_vb,
-        va=m.va,
-        vmu=float(m.vmu),
+    m.va, m.vmu = _update_hyperpriors(
+        HyperpriorContext(
+            iteration=ctx.iteration,
+            use_prior=cfg.use_prior,
+            niter_broadprior=int(cfg.opts["niter_broadprior"]),
+            bias_enabled=bool(cfg.opts["bias"]),
+            mu=ctx.bias_state.mu,
+            mu_variances=ctx.bias_state.muv,
+            loadings=m.a,
+            loading_covariances=m.av,
+            n_features=ctx.prepared.n_features,
+            hp_va=cfg.hp_va,
+            hp_vb=cfg.hp_vb,
+            va=m.va,
+            vmu=float(m.vmu),
+        )
     )
-    m.va, m.vmu = _update_hyperpriors(hp_ctx)
 
     # 2) Bias / mean update + recenter.
     ctx.bias_state.noise_var = float(m.noise_var)
@@ -437,7 +430,7 @@ def _iteration_step(ctx: IterationContext) -> None:
 
     err_mx_arr = _as_dense_err_matrix(training.err_mx)
     ctx.bias_state, ctx.centering_state = _update_bias(
-        bias_enabled=bool(opts["bias"]),
+        bias_enabled=bool(cfg.opts["bias"]),
         bias_state=ctx.bias_state,
         err_mx=err_mx_arr,
         centering=ctx.centering_state,
@@ -451,13 +444,13 @@ def _iteration_step(ctx: IterationContext) -> None:
     # 3) Scores
     score_state = ScoreState(
         x_data=x_data,
-        mask=prepared.mask,
+        mask=ctx.prepared.mask,
         loadings=m.a,
         scores=m.s,
         loading_covariances=m.av,
         score_covariances=m.sv,
-        pattern_index=prepared.pattern_index,
-        obs_patterns=prepared.obs_patterns,
+        pattern_index=ctx.prepared.pattern_index,
+        obs_patterns=ctx.prepared.obs_patterns,
         noise_var=float(m.noise_var),
         eye_components=cfg.eye_components,
         verbose=cfg.verbose,
@@ -469,42 +462,44 @@ def _iteration_step(ctx: IterationContext) -> None:
     # 3b) Optional rotate-to-PCA
     if cfg.rotate_each_iter:
         x_data, x_probe = _rotate_towards_pca(
-            prepared=prepared,
+            prepared=ctx.prepared,
             training=training,
             bias_state=ctx.bias_state,
             x_data=x_data,
             x_probe=x_probe,
-            opts=opts,
+            opts=cfg.opts,
         )
         ctx.centering_state.x_data = x_data
         ctx.centering_state.x_probe = x_probe
 
     # 4) Loadings
-    load_state = LoadingsUpdateState(
-        x_data=x_data,
-        mask=prepared.mask,
-        scores=m.s,
-        loading_covariances=m.av,
-        score_covariances=m.sv,
-        pattern_index=prepared.pattern_index,
-        va=m.va,
-        noise_var=float(m.noise_var),
-        verbose=cfg.verbose,
+    m.a, m.av = _update_loadings(
+        LoadingsUpdateState(
+            x_data=x_data,
+            mask=ctx.prepared.mask,
+            scores=m.s,
+            loading_covariances=m.av,
+            score_covariances=m.sv,
+            pattern_index=ctx.prepared.pattern_index,
+            va=m.va,
+            noise_var=float(m.noise_var),
+            verbose=cfg.verbose,
+        )
     )
-    m.a, m.av = _update_loadings(load_state)
 
     # 5) RMS (and error matrix)
-    rms_ctx = RmsContext(
-        x_data=x_data,
-        x_probe=x_probe,
-        mask=prepared.mask,
-        mask_probe=prepared.mask_probe,
-        n_data=float(prepared.n_data),
-        n_probe=int(prepared.n_probe),
-        loadings=m.a,
-        scores=m.s,
+    rms, prms, err_mx = _recompute_rms(
+        RmsContext(
+            x_data=x_data,
+            x_probe=x_probe,
+            mask=ctx.prepared.mask,
+            mask_probe=ctx.prepared.mask_probe,
+            n_data=float(ctx.prepared.n_data),
+            n_probe=int(ctx.prepared.n_probe),
+            loadings=m.a,
+            scores=m.s,
+        )
     )
-    rms, prms, err_mx = _recompute_rms(rms_ctx)
     training.err_mx = err_mx
 
     # 6) Noise variance
@@ -514,44 +509,43 @@ def _iteration_step(ctx: IterationContext) -> None:
         loading_covariances=m.av,
         score_covariances=m.sv,
         mu_variances=m.muv,
-        pattern_index=prepared.pattern_index,
-        n_data=float(prepared.n_data),
+        pattern_index=ctx.prepared.pattern_index,
+        n_data=float(ctx.prepared.n_data),
         noise_var=float(m.noise_var),
     )
     noise_state, s_xv = _update_noise_variance(
         noise_state,
         float(rms),
-        prepared.ix_obs,
-        prepared.jx_obs,
+        ctx.prepared.ix_obs,
+        ctx.prepared.jx_obs,
         hp_v=float(cfg.hp_v),
     )
     m.noise_var = float(noise_state.noise_var)
     ctx.bias_state.noise_var = float(m.noise_var)
 
     # 7) Logging + convergence
-    conv_state = ConvergenceState(
-        opts=dict(opts),
-        x_data=x_data,
-        loadings=m.a,
-        scores=m.s,
-        mu=m.mu,
-        noise_var=float(m.noise_var),
-        va=m.va,
-        loading_covariances=m.av,
-        vmu=float(m.vmu),
-        mu_variances=m.muv,
-        score_covariances=m.sv,
-        pattern_index=prepared.pattern_index,
-        mask=prepared.mask,
-        s_xv=float(s_xv),
-        n_data=float(prepared.n_data),
-        time_start=float(training.time_start),
-        lc=training.lc,
-        loadings_old=training.a_old,
-        dsph=training.dsph,
-    )
-    training.lc, _angle_a, convmsg, training.a_old = _log_and_check_convergence(
-        conv_state,
+    training.lc, _, convmsg, training.a_old = _log_and_check_convergence(
+        ConvergenceState(
+            opts=dict(cfg.opts),
+            x_data=x_data,
+            loadings=m.a,
+            scores=m.s,
+            mu=m.mu,
+            noise_var=float(m.noise_var),
+            va=m.va,
+            loading_covariances=m.av,
+            vmu=float(m.vmu),
+            mu_variances=m.muv,
+            score_covariances=m.sv,
+            pattern_index=ctx.prepared.pattern_index,
+            mask=ctx.prepared.mask,
+            s_xv=float(s_xv),
+            n_data=float(ctx.prepared.n_data),
+            time_start=float(training.time_start),
+            lc=training.lc,
+            loadings_old=training.a_old,
+            dsph=training.dsph,
+        ),
         float(rms),
         float(prms),
     )
@@ -560,7 +554,7 @@ def _iteration_step(ctx: IterationContext) -> None:
     # the public learning-curve schema.
     stop_now = ""
     if convmsg:
-        if cfg.use_prior and ctx.iteration <= int(opts["niter_broadprior"]):
+        if cfg.use_prior and ctx.iteration <= int(cfg.opts["niter_broadprior"]):
             stop_now = ""
         else:
             if cfg.verbose:
@@ -583,6 +577,9 @@ def _rotate_towards_pca(  # noqa: PLR0913
 
     Returns the (possibly re-centered) x_data and x_probe so the caller can keep
     a consistent view of the centered matrices.
+
+    Returns:
+        Tuple of rotated ``(x_data, x_probe)`` with bias adjustment applied.
     """
     m = training.model
     mu_before = m.mu.copy()
@@ -646,7 +643,11 @@ def _maybe_finalize_rotation(
 def _restore_original_shape(
     *, prepared: PreparedProblem, training: TrainingState
 ) -> FinalState:
-    """Undo row/column removal performed during preparation."""
+    """Undo row/column removal performed during preparation.
+
+    Returns:
+        FinalState containing parameters expanded back to original dimensions.
+    """
     m = training.model
     a, av, s, sv, mu, muv, pattern_index = (
         m.a,
@@ -683,7 +684,11 @@ def _restore_original_shape(
 
 
 def _pack_result(final: FinalState) -> dict[str, object]:
-    """Pack final values into the historical PCA_FULL result dictionary."""
+    """Pack final values into the historical PCA_FULL result dictionary.
+
+    Returns:
+        Dictionary mirroring the legacy MATLAB output structure.
+    """
     return {
         "A": final.a,
         "S": final.s,
@@ -712,6 +717,9 @@ def _as_dense_err_matrix(err_mx: object) -> np.ndarray:
     In sparse-input modes, the RMS helper may return sparse matrices or other
     wrappers. :func:`_update_bias` expects a dense array with shape
     (n_features, n_samples) so it can sum over axis=1.
+
+    Returns:
+        Dense ndarray version of ``err_mx`` (empty array when ``err_mx`` is None).
     """
     if err_mx is None:
         return np.zeros((0, 0), dtype=float)
@@ -726,7 +734,11 @@ def _as_dense_err_matrix(err_mx: object) -> np.ndarray:
 
 
 def _build_options(kwargs: Mapping[str, object]) -> dict[str, object]:
-    """Merge user kwargs with defaults using _options (case-insensitive)."""
+    """Merge user kwargs with defaults using _options (case-insensitive).
+
+    Returns:
+        Options dictionary after applying defaults and user overrides.
+    """
     opts_default: dict[str, object] = {
         "init": "random",
         "maxiters": 1000,
@@ -753,7 +765,14 @@ def _build_options(kwargs: Mapping[str, object]) -> dict[str, object]:
 
 
 def _select_algorithm(opts: Mapping[str, object]) -> tuple[bool, bool]:
-    """Decode algorithm mode into (use_prior, use_postvar)."""
+    """Decode algorithm mode into (use_prior, use_postvar).
+
+    Returns:
+        Tuple ``(use_prior, use_postvar)`` decoded from ``opts['algorithm']``.
+
+    Raises:
+        ValueError: If ``algorithm`` is not one of {"ppca", "map", "vb"}.
+    """
     algorithm = str(opts["algorithm"]).lower()
     if algorithm == "ppca":
         return False, False

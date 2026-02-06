@@ -356,17 +356,14 @@ def _initialize_parameters(
     Returns:
         Initialized parameters and centered data/probe matrices.
     """
-    shapes = ctx.shapes
-
     # Use a deterministic RNG only when we fall back to random init; when
     # init is provided (e.g., MATLAB fixture), pass through without forcing a
     # new seed.
-    rng = None if ctx.opts.get("init") else np.random.default_rng()
     init_result: InitResult = init_params(
         ctx.opts["init"],
-        shapes,
+        ctx.shapes,
         score_pattern_index=ctx.pattern_index,
-        rng=rng,
+        rng=None if ctx.opts.get("init") else np.random.default_rng(),
     )
     loadings = init_result.a
     scores = init_result.s
@@ -378,10 +375,10 @@ def _initialize_parameters(
 
     # Priors on loadings and mu
     if ctx.use_prior:
-        va = np.full(shapes.n_components, 1000.0, dtype=float)
+        va = np.full(ctx.shapes.n_components, 1000.0, dtype=float)
         vmu = 1000.0
     else:
-        va = np.full(shapes.n_components, np.inf, dtype=float)
+        va = np.full(ctx.shapes.n_components, np.inf, dtype=float)
         vmu = float("inf")
 
     # MAP / PPCA: disable posterior variances if needed
@@ -413,18 +410,18 @@ def _initialize_parameters(
                 )
             mu = mu_vec.reshape(-1, 1)
         else:
-            mu = np.zeros((shapes.n_features, 1), dtype=float)
+            mu = np.zeros((ctx.shapes.n_features, 1), dtype=float)
 
     # Initial centering using subtract_mu helper.
-    probe_container: ProbeMatrices | None = None
-    if ctx.x_probe is not None and ctx.mask_probe is not None:
-        probe_container = ProbeMatrices(x=ctx.x_probe, mask=ctx.mask_probe)
-
     x_data_centered, x_probe_centered = subtract_mu(
         mu,
         ctx.x_data,
         ctx.mask,
-        probe=probe_container,
+        probe=(
+            ProbeMatrices(x=ctx.x_probe, mask=ctx.mask_probe)
+            if ctx.x_probe is not None and ctx.mask_probe is not None
+            else None
+        ),
         update_bias=bool(ctx.opts.get("bias", 1)),
     )
 
@@ -510,13 +507,12 @@ def _update_bias(
     if mu_variances.size > 0 and vmu > 0.0:
         denom = n_obs_row + noise_var / vmu
         with np.errstate(divide="ignore", invalid="ignore"):
-            muv_vec = np.divide(
+            mu_variances = np.divide(
                 noise_var,
                 denom,
                 out=np.zeros_like(denom, dtype=float),
                 where=denom > 0,
-            )
-        mu_variances = muv_vec.reshape(-1, 1)
+            ).reshape(-1, 1)
 
     # Shrinkage factor for mu update, stable even for zero n_obs_row.
     if vmu > 0.0:
@@ -528,24 +524,20 @@ def _update_bias(
         shrink = np.zeros_like(n_obs_row, dtype=float)
     shrink = shrink.reshape(-1, 1)
 
-    d_mu_vec = d_mu.reshape(-1, 1)
-    mu_old = mu
-    mu = shrink * (mu + d_mu_vec)
-    d_mu_update = mu - mu_old
+    mu_new = shrink * (mu + d_mu.reshape(-1, 1))
+    d_mu_update = mu_new - mu
+    mu = mu_new
 
     # Recentre data and probe using the updated mean increment.
-    probe_container: ProbeMatrices | None = None
-    if centering.x_probe is not None and centering.mask_probe is not None:
-        probe_container = ProbeMatrices(
-            x=centering.x_probe,
-            mask=centering.mask_probe,
-        )
-
     x_data_new, x_probe_new = subtract_mu(
         d_mu_update,
         centering.x_data,
         centering.mask,
-        probe=probe_container,
+        probe=(
+            ProbeMatrices(x=centering.x_probe, mask=centering.mask_probe)
+            if centering.x_probe is not None and centering.mask_probe is not None
+            else None
+        ),
         update_bias=True,
     )
 
@@ -677,9 +669,7 @@ def _score_update_with_patterns(state: ScoreState) -> ScoreState:
         Updated score state.
     """
     x_is_sparse = issparse(state.x_data)
-    _n_features, _n_samples = state.x_data.shape
     n_components = state.loadings.shape[1]
-    n_patterns = len(state.obs_patterns)
 
     for pattern_index, cols in enumerate(state.obs_patterns):
         if not cols:
@@ -705,8 +695,11 @@ def _score_update_with_patterns(state: ScoreState) -> ScoreState:
         try:
             cho = cho_factor(psi, lower=True, check_finite=False)
         except LinAlgError:
-            jitter = _EPS_VAR * np.eye(n_components)
-            cho = cho_factor(psi + jitter, lower=True, check_finite=False)
+            cho = cho_factor(
+                psi + _EPS_VAR * np.eye(n_components),
+                lower=True,
+                check_finite=False,
+            )
 
         sv_pattern = state.noise_var * cho_solve(
             cho,
@@ -715,7 +708,6 @@ def _score_update_with_patterns(state: ScoreState) -> ScoreState:
         )
         state.score_covariances[pattern_index] = sv_pattern
 
-        loadings_masked_t = loadings_masked.T
         for j_idx in cols:
             if x_is_sparse:
                 x_col = state.x_data[:, j_idx].toarray().ravel()
@@ -725,13 +717,13 @@ def _score_update_with_patterns(state: ScoreState) -> ScoreState:
                     dtype=float,
                     copy=False,
                 )
-            rhs = loadings_masked_t @ x_col
+            rhs = loadings_masked.T @ x_col
             state.scores[:, j_idx] = cho_solve(cho, rhs, check_finite=False)
 
         log_progress(
             state.verbose,
             current=pattern_index + 1,
-            total=n_patterns,
+            total=len(state.obs_patterns),
             phase="Updating scores (patterns)",
         )
 
@@ -778,7 +770,7 @@ def _loadings_update_fast_dense_no_sv(
         Updated loadings and loading covariances.
     """
     x_is_sparse = issparse(state.x_data)
-    n_features, _ = state.x_data.shape
+    n_features = state.x_data.shape[0]
     n_components = state.scores.shape[0]
 
     if state.verbose == 2:
@@ -846,7 +838,6 @@ def _loadings_update_general(
     prior_prec_diag = np.zeros_like(state.va, dtype=float)
     finite_mask = np.isfinite(state.va) & (state.va > 0)
     prior_prec_diag[finite_mask] = state.noise_var / state.va[finite_mask]
-    prior_prec = np.diag(prior_prec_diag)
 
     loadings = np.empty((n_features, n_components), dtype=float)
 
@@ -857,7 +848,7 @@ def _loadings_update_general(
             mask_row = np.array(state.mask[i, :], dtype=float, copy=False)
 
         scores_masked = mask_row[None, :] * state.scores
-        phi = scores_masked @ scores_masked.T + prior_prec
+        phi = scores_masked @ scores_masked.T + np.diag(prior_prec_diag)
 
         observed_cols = np.where(mask_row > 0)[0]
         for j_idx in observed_cols:
@@ -874,8 +865,11 @@ def _loadings_update_general(
         try:
             cho = cho_factor(phi, lower=True, check_finite=False)
         except LinAlgError:
-            jitter = _EPS_VAR * np.eye(n_components)
-            cho = cho_factor(phi + jitter, lower=True, check_finite=False)
+            cho = cho_factor(
+                phi + _EPS_VAR * np.eye(n_components),
+                lower=True,
+                check_finite=False,
+            )
 
         if x_is_sparse:
             x_row = state.x_data[i, :].toarray().ravel()
@@ -980,31 +974,28 @@ def _update_noise_variance(
     score_covariances = noise_state.score_covariances
     pattern_index = noise_state.pattern_index
 
+    def _accumulate_entry(i: int, j: int, sv_j: np.ndarray) -> None:
+        nonlocal s_xv
+        a_i = loadings[i, :][None, :]  # (1, k)
+        s_xv += float((a_i @ sv_j @ a_i.T)[0, 0].item())
+        if not loading_covariances:
+            return
+
+        s_j = scores[:, j][:, None]
+        cov_term = s_j.T @ loading_covariances[i] @ s_j
+        cov_term += np.sum(sv_j * loading_covariances[i])
+        s_xv += float(np.asarray(cov_term).item())
+
     if pattern_index is None:
         for i, j in zip(ix, jx, strict=True):
-            a_i = loadings[i, :][None, :]  # (1, k)
-            sv_j = score_covariances[j]
-            s_xv += float((a_i @ sv_j @ a_i.T)[0, 0])
-            if loading_covariances:
-                s_j = scores[:, j][:, None]
-                s_xv += float(
-                    s_j.T @ loading_covariances[i] @ s_j
-                    + np.sum(sv_j * loading_covariances[i]),
-                )
+            _accumulate_entry(int(i), int(j), score_covariances[int(j)])
     else:
         for i, j in zip(ix, jx, strict=True):
-            a_i = loadings[i, :][None, :]
-            sv_j = score_covariances[pattern_index[j]]
-            s_xv += float((a_i @ sv_j @ a_i.T)[0, 0])
-            if loading_covariances:
-                s_j = scores[:, j][:, None]
-                s_xv += float(
-                    s_j.T @ loading_covariances[i] @ s_j
-                    + np.sum(sv_j * loading_covariances[i]),
-                )
+            sv_j = score_covariances[int(pattern_index[int(j)])]
+            _accumulate_entry(int(i), int(j), sv_j)
 
     if noise_state.mu_variances.size > 0:
-        s_xv += float(np.sum(noise_state.mu_variances[ix, 0]))
+        s_xv += float(np.sum(noise_state.mu_variances[ix, 0]).item())
 
     s_xv += (rms**2) * noise_state.n_data
     v_new = (s_xv + 2.0 * hp_v) / (noise_state.n_data + 2.0 * hp_v)
