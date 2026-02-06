@@ -27,7 +27,7 @@ import pytest
 import scipy.sparse as sp
 from numpy.testing import assert_allclose
 
-import vbpca_py.pca_full as pca_mod
+import vbpca_py._pca_full as pca_mod
 
 # Import internal branch functions for equivalence tests.
 # These are intentionally private but stable enough for diagnostic testing.
@@ -201,7 +201,9 @@ def test_missing_patterns_info_uniquesv_true() -> None:
     assert np.all(pattern_index == 0)
 
 
-def test_iteration_order_scores_rotate_loadings(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_iteration_order_scores_rotate_loadings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Ensure iteration keeps MATLAB ordering: scores -> rotate -> loadings."""
     rng = np.random.default_rng(42)
     x = rng.standard_normal((3, 4))

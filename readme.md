@@ -29,7 +29,6 @@ pip install .[octave]
 ## Quick start
 ```python
 import numpy as np
-from vbpca_py.pca_full import pca_full
 from vbpca_py.estimators import VBPCA
 from vbpca_py.preprocessing import AutoEncoder
 
@@ -39,14 +38,6 @@ x = np.random.randn(50, 200)
 # Optional mask (1 = observed, 0 = missing); omit for fully observed data
 mask = np.ones_like(x)
 
-result = pca_full(x, n_components=5, mask=mask, bias=True, maxiters=100)
-
-loadings = result["a"]       # shape (features, components)
-scores = result["s"]         # shape (components, samples)
-mu = result["mu"]            # feature means (bias)
-rms = result["rms"]          # reconstruction RMS on the data
-
-# Sklearn-like wrapper
 model = VBPCA(n_components=5, maxiters=100)
 scores = model.fit_transform(x, mask=mask)
 recon = model.inverse_transform()
@@ -68,6 +59,7 @@ x_recon = auto.inverse_transform(z_recon)
 - `rotation`: final orthogonal rotation to a PCA-aligned solution.
 
 See `src/vbpca_py/pca_full.py` for the full set of options.
+See `vbpca_py.estimators.VBPCA` for the stable public API.
 
 ## Testing and development
 Run the test suite:

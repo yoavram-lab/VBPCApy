@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from vbpca_py.pca_full import Matrix, pca_full
+from vbpca_py._pca_full import Matrix, pca_full
 
 
 class VBPCA:

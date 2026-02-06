@@ -33,7 +33,7 @@ import scipy.sparse as sp
 from numpy.testing import assert_allclose
 from scipy.io import loadmat
 
-from vbpca_py.pca_full import pca_full
+from vbpca_py._pca_full import pca_full
 
 # ----------------------------------------------------------------------
 # Helpers

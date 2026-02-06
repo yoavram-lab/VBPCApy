@@ -1,6 +1,6 @@
 """Top-level orchestration for Variational Bayesian PCA (PCA_FULL).
 
-This module provides :func:`vbpca_py.pca_full.pca_full`, an idiomatic Python
+This module provides :func:`vbpca_py._pca_full.pca_full`, an idiomatic Python
 translation of Ilin & Raiko's PCA_FULL (JMLR 2010).
 
 The function itself is intentionally thin: the mathematical update steps live
