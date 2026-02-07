@@ -73,7 +73,7 @@ x_recon = auto.inverse_transform(z_recon)
 
 All options are consumed via the `VBPCA` estimator. Call `model.get_options()` after construction to view the merged defaults and your overrides. The canonical reference list lives in [src/vbpca_py/_pca_full.py](src/vbpca_py/_pca_full.py). See `vbpca_py.estimators.VBPCA` for the stable public API.
 
-### Autoencoding workflow (for JOSS completeness)
+### Autoencoding workflow 
 
 The package includes missing-aware preprocessing and an autoencoder-style inverse transform to map back to the original feature space:
 
