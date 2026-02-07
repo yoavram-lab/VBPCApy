@@ -4,7 +4,7 @@ set shell := ["bash", "-lc"]
 lint:
 	ruff check --preview src
 
-# Type-check library code, allowing external/native modules to be missing.
+# Type-check library code.
 typecheck:
 	mypy src
 
