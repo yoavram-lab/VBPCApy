@@ -11,6 +11,7 @@ Variational Bayesian PCA (Illin and Raiko, 2010) with support for missing data, 
 - C++ extensions via pybind11 for performance-critical routines.
 - Missing-aware preprocessing utilities (one-hot encode, standardize, min-max, auto-routing) that preserve NaNs/masks for generative reconstruction.
 - `VBPCA` sklearn-like wrapper (fit/transform/inverse_transform) with mask support.
+- Empirical risk minimzation based model selector for number of PCs which best reconstruct the empirical data.
 
 ## Installation
 Requirements: Python >= 3.11, a C++14 compiler, and Eigen headers. Eigen is located automatically via `EIGEN_INCLUDE_DIR`, `$CONDA_PREFIX/include/eigen3`, `/opt/homebrew/include/eigen3`, or `/usr/local/include/eigen3`.
