@@ -807,6 +807,34 @@ def _marginal_variance(final: FinalState) -> np.ndarray:
     return term_loadings + term_scores + term_cross + mu_var
 
 
+def _explained_variance(
+    xrec: np.ndarray, n_components: int
+) -> tuple[np.ndarray, np.ndarray]:
+    """Compute per-component explained variance from the reconstruction.
+
+    Mirrors the legacy MATLAB workflow (eigenvalues of cov(Xrec')).
+    Returns raw eigenvalues and their normalized ratios.
+
+    Returns:
+        Tuple of (eigenvalues, explained variance ratios) truncated to
+        ``n_components`` entries each. Empty arrays are returned when no
+        variance can be computed.
+    """
+    if xrec.size == 0 or n_components <= 0:
+        empty = np.zeros((0,), dtype=float)
+        return empty, empty
+
+    cov = np.cov(np.asarray(xrec, dtype=float))
+    eigvals = np.linalg.eigvalsh(cov)
+    eigvals_sorted = np.flip(np.sort(np.real(eigvals)))
+
+    eigvals_top = eigvals_sorted[:n_components]
+    total = float(np.sum(eigvals_sorted))
+    ratios = np.zeros_like(eigvals_top) if total <= 0.0 else eigvals_top / total
+
+    return eigvals_top, ratios
+
+
 def _last_metric(lc: dict[str, list[float]], key: str) -> float:
     values = lc.get(key, [])
     if not values:
@@ -825,6 +853,7 @@ def _pack_result(final: FinalState) -> dict[str, object]:
     """
     xrec = _reconstruct_data(final.a, final.s, final.mu)
     vr = _marginal_variance(final)
+    ev, evr = _explained_variance(xrec, final.a.shape[1])
 
     lc = final.lc
 
@@ -842,6 +871,8 @@ def _pack_result(final: FinalState) -> dict[str, object]:
         "lc": final.lc,
         "Xrec": xrec,
         "Vr": vr,
+        "ExplainedVar": ev,
+        "ExplainedVarRatio": evr,
         "RMS": _last_metric(lc, "rms"),
         "PRMS": _last_metric(lc, "prms"),
         "Cost": _last_metric(lc, "cost"),

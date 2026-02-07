@@ -71,6 +71,28 @@ x_recon = auto.inverse_transform(z_recon)
 - `maxiters`, `tol`, `verbose`: convergence control and logging.
 - `rotation`: final orthogonal rotation to a PCA-aligned solution.
 
+### Convergence and stopping
+Each fit (including every k tried in `select_n_components`) runs the PCA_FULL EM loop until one of these criteria triggers or `maxiters` is reached:
+- Subspace angle below `minangle` (default `1e-8`).
+- Probe RMS increase when `earlystop` is truthy.
+- RMS plateau via `rmsstop = [window, abs_tol, rel_tol]` (default `[100, 1e-4, 1e-3]`, enabled). Meaning: compare the latest RMS to the value `window` iterations ago; stop if the absolute change is < `abs_tol` or, when finite, the relative change is < `rel_tol`.
+- Cost plateau via `cfstop = [window, abs_tol, rel_tol]` (default `[]`, disabled). Same interpretation as `rmsstop` but on cost.
+- Slowing-down guard when internal backtracking hits 40 steps.
+- Hard cap `maxiters` (default 1000).
+
+Notes:
+- `niter_broadprior` (default 100) suppresses stopping messages while the broad-prior warmup runs when `use_prior` is on.
+- All options are case-insensitive and passed through the `VBPCA` constructor (or forwarded by `select_n_components`).
+- Reference implementation lives in [src/vbpca_py/_pca_full.py](src/vbpca_py/_pca_full.py) and [src/vbpca_py/_converge.py](src/vbpca_py/_converge.py).
+
+### Model selection API
+- `select_n_components(x, *, mask=None, components=None, config=None, **opts)`: sweeps candidate component counts, returning `(best_k, best_metrics, trace, best_model)`.
+	- `components`: iterable of ks or `None` for `1..min(n_features, n_samples)`.
+	- `config`: `SelectionConfig(metric="prms"|"rms"|"cost", patience=None, max_trials=None, compute_explained_variance=True, return_best_model=False)` controls the sweep stopping logic and what is retained.
+	- `**opts`: forwarded to `VBPCA`/`pca_full` (e.g., `maxiters`, `minangle`, `rmsstop`, `cfstop`, `earlystop`, `rotate2pca`).
+- `VBPCA` estimator: sklearn-like interface with `fit`, `transform`, `inverse_transform`, learned attributes (`components_`, `scores_`, `mean_`, `rms_`, `prms_`, `cost_`, `variance_`, `explained_variance_`, `explained_variance_ratio_`), and `get_options()` to inspect merged opts.
+- Preprocessing helpers: `AutoEncoder` pipeline (categorical + continuous) with `fit_transform` / `inverse_transform` for missing-aware workflows.
+
 All options are consumed via the `VBPCA` estimator. Call `model.get_options()` after construction to view the merged defaults and your overrides. The canonical reference list lives in [src/vbpca_py/_pca_full.py](src/vbpca_py/_pca_full.py). See `vbpca_py.estimators.VBPCA` for the stable public API.
 
 ### Autoencoding workflow 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import numpy as np
 
 from vbpca_py._pca_full import Matrix, _build_options, pca_full
+from vbpca_py.model_selection import SelectionConfig, select_n_components
 
 
 class VBPCA:
@@ -46,6 +47,8 @@ class VBPCA:
         self.cost_: float | None = None
         self.reconstruction_: np.ndarray | None = None
         self.variance_: np.ndarray | None = None
+        self.explained_variance_: np.ndarray | None = None
+        self.explained_variance_ratio_: np.ndarray | None = None
         self.n_features_in_: int | None = None
 
     def fit(self, x: Matrix, mask: np.ndarray | None = None) -> VBPCA:
@@ -107,6 +110,14 @@ class VBPCA:
         self.variance_ = None
         if result.get("Vr") is not None:
             self.variance_ = np.asarray(result["Vr"], dtype=float)
+        self.explained_variance_ = None
+        if result.get("ExplainedVar") is not None:
+            self.explained_variance_ = np.asarray(result["ExplainedVar"], dtype=float)
+        self.explained_variance_ratio_ = None
+        if result.get("ExplainedVarRatio") is not None:
+            self.explained_variance_ratio_ = np.asarray(
+                result["ExplainedVarRatio"], dtype=float
+            )
         self.n_features_in_ = int(self.components_.shape[0])
         return self
 
@@ -160,3 +171,38 @@ class VBPCA:
         if self.bias:
             recon += self.mean_
         return recon
+
+    def select_n_components(
+        self,
+        x: Matrix,
+        *,
+        mask: np.ndarray | None = None,
+        components: list[int] | range | None = None,
+        config: SelectionConfig | None = None,
+        **opts: object,
+    ) -> tuple[int, dict[str, object], list[dict[str, object]], VBPCA | None]:
+        """Delegate to model selection helper using this estimator's defaults.
+
+        Returns:
+            Tuple of (best_k, best_metrics, trace, best_model) from the
+            shared model-selection helper.
+        """
+        merged_opts: dict[str, object] = {
+            "bias": self.bias,
+            "verbose": self.verbose,
+            **self.opts,
+        }
+        if self.maxiters is not None:
+            merged_opts["maxiters"] = self.maxiters
+        if self.tol is not None:
+            merged_opts["tol"] = self.tol
+        merged_opts.update(opts)
+
+        cfg = config if config is not None else SelectionConfig()
+        return select_n_components(
+            x,
+            mask=mask,
+            components=components,
+            config=cfg,
+            **merged_opts,
+        )
