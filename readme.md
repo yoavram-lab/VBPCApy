@@ -89,12 +89,24 @@ x_recon = auto.inverse_transform(z_recon)     # decode back to original space
 ```
 
 ## Testing and development
+Run lint check:
+```bash
+just lint
+```
+Run type checking:
+```bash
+just typecheck
+```
 Run the test suite:
 ```bash
-pytest -q
+just test
 ```
-
+Run the entire validation pipeline (lint -> typecheck -> test):
+```bash
+just ci
+```
 Legacy MATLAB/Octave helpers (in `tools/`) are optional; they require Octave installed plus the `octave` extra if you want to call them from Python or run any Octave-dependent tests.
+
 
 ## Citing
 If you use this package, please cite Illin and Raiko (2010) and the forthcoming JOSS article for this implementation once available.
