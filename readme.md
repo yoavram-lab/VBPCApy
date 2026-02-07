@@ -89,6 +89,10 @@ x_recon = auto.inverse_transform(z_recon)     # decode back to original space
 ```
 
 ## Testing and development
+Install in developer mode:
+```bash
+pip install -e .
+```
 Run lint check:
 ```bash
 just lint
