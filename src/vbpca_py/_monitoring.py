@@ -17,7 +17,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, SupportsIndex, SupportsInt, cast
 
 import numpy as np
 from scipy.io import loadmat
@@ -377,21 +377,37 @@ def _init_sv_pattern_mode(
         List of covariance matrices, one per observed pattern.
     """
     _, first_idx = np.unique(isv, return_index=True)
+    sv_list: list[np.ndarray] = []
 
     if not isinstance(sv_raw, list):
         sv_arr = np.asarray(sv_raw, dtype=float)
         # Expect shape (n_components, n_samples).
-        sv_list: list[np.ndarray] = []
         for pattern_idx in range(n_obs_patterns):
             col = isv[first_idx[pattern_idx]]
             sv_list.append(np.diag(sv_arr[:, col]))
         return sv_list
 
-    sv_list: list[np.ndarray] = []
     for pattern_idx in range(n_obs_patterns):
         col = isv[first_idx[pattern_idx]]
         sv_list.append(np.asarray(sv_raw[col], dtype=float))
     return sv_list
+
+
+def _coerce_int(
+    val: SupportsInt | SupportsIndex | str | bytes | bytearray | None,
+    default: int = 0,
+) -> int:
+    """Safely coerce common int-like inputs with a fallback.
+
+    Returns:
+        Integer conversion of ``val`` when possible; ``default`` otherwise.
+    """
+    if val is None:
+        return default
+    try:
+        return int(cast("SupportsInt | SupportsIndex | str | bytes | bytearray", val))
+    except (TypeError, ValueError):
+        return default
 
 
 def _expand_sv_array(
@@ -601,7 +617,13 @@ def _initial_monitoring(
         Tuple of ``(rms, err_matrix, prms, lc, dsph)`` for downstream use.
     """
     opts = inputs.opts
-    num_cpu = int(opts.get("num_cpu", 1))
+    num_cpu_val = opts.get("num_cpu", 1)
+    num_cpu = _coerce_int(
+        num_cpu_val
+        if isinstance(num_cpu_val, (int, str, bytes, bytearray, np.integer))
+        else 1,
+        default=1,
+    )
 
     cfg_data = RmsConfig(n_observed=int(inputs.n_data), num_cpu=num_cpu)
     rms, err_matrix = compute_rms(
@@ -631,9 +653,22 @@ def _initial_monitoring(
         "cost": [float("nan")],
     }
 
-    dsph = display_init(display=int(opts["display"]), lc=lc)
+    display_val = opts.get("display", 0)
+    verbose_val = opts.get("verbose", 0)
+    dsph = display_init(
+        display=_coerce_int(
+            display_val
+            if isinstance(display_val, (int, str, bytes, bytearray, np.integer))
+            else 0
+        ),
+        lc=lc,
+    )
     log_first_step(
-        verbose=int(opts["verbose"]),
+        verbose=_coerce_int(
+            verbose_val
+            if isinstance(verbose_val, (int, str, bytes, bytearray, np.integer))
+            else 0
+        ),
         rms=float(rms),
         prms=float(prms),
     )

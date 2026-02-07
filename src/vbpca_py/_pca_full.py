@@ -1,4 +1,5 @@
-"""Top-level orchestration for Variational Bayesian PCA (PCA_FULL).
+"""
+Top-level orchestration for Variational Bayesian PCA (PCA_FULL).
 
 This module provides :func:`vbpca_py._pca_full.pca_full`, an idiomatic Python
 translation of Ilin & Raiko's PCA_FULL (JMLR 2010).
@@ -12,14 +13,15 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import MutableMapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, SupportsIndex, SupportsInt, cast
 
 import numpy as np
-from scipy.sparse import issparse, spmatrix
+import scipy.sparse as sp
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Mapping, MutableMapping
 
 from ._converge import ConvergenceState, _log_and_check_convergence
 from ._expand import _add_m_cols, _add_m_rows
@@ -53,8 +55,35 @@ from ._options import _options
 logger = logging.getLogger(__name__)
 
 Array = np.ndarray
-Sparse = spmatrix
+Sparse = sp.csr_matrix
 Matrix = Array | Sparse
+
+
+def _coerce_int(
+    val: SupportsInt | SupportsIndex | str | bytes | bytearray | None,
+    default: int = 0,
+) -> int:
+    """Safely coerce common int-like inputs with a fallback.
+
+    Returns:
+        Integer conversion of ``val`` when possible; ``default`` otherwise.
+    """
+    if val is None:
+        return default
+    try:
+        return int(
+            cast("SupportsInt | SupportsIndex | str | bytes | bytearray", val)
+        )
+    except (TypeError, ValueError):
+        return default
+
+
+def _int_opt(val: object, default: int = 0) -> int:
+    if isinstance(
+        val, (int, str, bytes, bytearray, np.integer, SupportsInt, SupportsIndex)
+    ):
+        return _coerce_int(val, default=default)
+    return default
 
 
 # ---------------------------------------------------------------------------
@@ -81,7 +110,7 @@ def pca_full(x: Matrix, n_components: int, **kwargs: object) -> dict[str, object
     dict
         Result dictionary matching the historical PCA_FULL API.
     """
-    opts = _build_options(kwargs)
+    opts: MutableMapping[str, object] = _build_options(kwargs)
     use_prior, use_postvar = _select_algorithm(opts)
 
     prepared = _prepare_problem(x, opts)
@@ -130,7 +159,7 @@ class PreparedProblem:
     row_idx: np.ndarray | None
     col_idx: np.ndarray | None
     n_patterns: int
-    obs_patterns: list[np.ndarray]
+    obs_patterns: list[list[int]]
     pattern_index: np.ndarray | None
 
 
@@ -189,7 +218,7 @@ class IterationConfig:
     use_prior: bool
     rotate_each_iter: bool
     verbose: int
-    opts: Mapping[str, object]
+    opts: MutableMapping[str, object]
 
 
 @dataclass
@@ -209,7 +238,7 @@ class IterationContext:
 # ---------------------------------------------------------------------------
 
 
-def _prepare_problem(x: Matrix, opts: Mapping[str, object]) -> PreparedProblem:
+def _prepare_problem(x: Matrix, opts: MutableMapping[str, object]) -> PreparedProblem:
     x_data, x_probe, n1x, n2x, row_idx, col_idx = _prepare_data(x, opts)
     x_data, x_probe, mask, mask_probe, n_obs_row, n_data, n_probe = (
         _build_masks_and_counts(x_data, x_probe, opts)
@@ -240,7 +269,7 @@ def _prepare_problem(x: Matrix, opts: Mapping[str, object]) -> PreparedProblem:
     )
 
 
-def _adjust_opts_for_explicit_init(opts: Mapping[str, object]) -> None:
+def _adjust_opts_for_explicit_init(opts: MutableMapping[str, object]) -> None:
     """Align hyperparameters when an explicit init is provided.
 
     Avoids drifting away from supplied MATLAB-style initializations by
@@ -251,8 +280,8 @@ def _adjust_opts_for_explicit_init(opts: Mapping[str, object]) -> None:
     if init_val is None or (isinstance(init_val, str) and init_val.lower() == "random"):
         return
 
-    maxiters = int(opts.get("maxiters", 0) or 0)
-    nbp = int(opts.get("niter_broadprior", 0) or 0)
+    maxiters = _int_opt(opts.get("maxiters", 0))
+    nbp = _int_opt(opts.get("niter_broadprior", 0))
     if nbp <= maxiters:
         opts["niter_broadprior"] = maxiters + 1
 
@@ -273,7 +302,7 @@ def _initialize_model(
     n_components: int,
     use_prior: bool,
     use_postvar: bool,
-    opts: Mapping[str, object],
+    opts: MutableMapping[str, object],
 ) -> TrainingState:
     _adjust_opts_for_explicit_init(opts)
 
@@ -346,7 +375,7 @@ def _run_training_loop(
     prepared: PreparedProblem,
     training: TrainingState,
     use_prior: bool,
-    opts: Mapping[str, object],
+    opts: MutableMapping[str, object],
 ) -> TrainingState:
     """Run the VB / EM iterations, mutating and returning the training state.
 
@@ -360,8 +389,8 @@ def _run_training_loop(
         hp_v=0.001,
         eye_components=np.eye(training.model.s.shape[0], dtype=float),
         use_prior=use_prior,
-        rotate_each_iter=bool(opts["rotate2pca"]),
-        verbose=int(opts["verbose"]),
+        rotate_each_iter=bool(opts.get("rotate2pca", 0)),
+        verbose=_int_opt(opts.get("verbose", 0)),
         opts=opts,
     )
 
@@ -379,7 +408,9 @@ def _run_training_loop(
         mask_probe=prepared.mask_probe,
     )
 
-    for iteration in range(1, int(opts["maxiters"]) + 1):
+    maxiters_int = _int_opt(opts.get("maxiters", 0))
+
+    for iteration in range(1, maxiters_int + 1):
         ctx = IterationContext(
             iteration=iteration,
             prepared=prepared,
@@ -391,7 +422,7 @@ def _run_training_loop(
         _iteration_step(ctx)
 
         # Stopping condition is recorded by _iteration_step in lc/convmsg.
-        if training.lc.get("_stop", [""])[-1]:
+        if training.lc.get("_stop", [0.0])[-1]:
             break
 
     # Cleanup internal stop marker to keep lc stable for external callers.
@@ -410,7 +441,7 @@ def _iteration_step(ctx: IterationContext) -> None:
         HyperpriorContext(
             iteration=ctx.iteration,
             use_prior=cfg.use_prior,
-            niter_broadprior=int(cfg.opts["niter_broadprior"]),
+            niter_broadprior=_int_opt(cfg.opts.get("niter_broadprior", 0)),
             bias_enabled=bool(cfg.opts["bias"]),
             mu=ctx.bias_state.mu,
             mu_variances=ctx.bias_state.muv,
@@ -552,16 +583,18 @@ def _iteration_step(ctx: IterationContext) -> None:
 
     # Store stop message internally to keep loop logic simple without touching
     # the public learning-curve schema.
-    stop_now = ""
+    stop_now = 0.0
     if convmsg:
-        if cfg.use_prior and ctx.iteration <= int(cfg.opts["niter_broadprior"]):
-            stop_now = ""
+        if cfg.use_prior and ctx.iteration <= _int_opt(
+            cfg.opts.get("niter_broadprior", 0)
+        ):
+            stop_now = 0.0
         else:
             if cfg.verbose:
                 logger.info("%s", convmsg)
-            stop_now = convmsg
+            stop_now = 1.0
 
-    training.lc.setdefault("_stop", []).append(stop_now)
+    training.lc.setdefault("_stop", []).append(float(stop_now))
 
 
 def _rotate_towards_pca(  # noqa: PLR0913
@@ -649,24 +682,47 @@ def _restore_original_shape(
         FinalState containing parameters expanded back to original dimensions.
     """
     m = training.model
-    a, av, s, sv, mu, muv, pattern_index = (
-        m.a,
-        m.av,
-        m.s,
-        m.sv,
-        m.mu,
-        m.muv,
-        prepared.pattern_index,
+    a, av, s, sv, mu, muv = m.a, m.av, m.s, m.sv, m.mu, m.muv
+    pattern_index: np.ndarray | list[int] | None = prepared.pattern_index
+
+    row_idx = (
+        prepared.row_idx
+        if prepared.row_idx is not None
+        else np.arange(prepared.n_features, dtype=int)
+    )
+    col_idx = (
+        prepared.col_idx
+        if prepared.col_idx is not None
+        else np.arange(prepared.n_samples, dtype=int)
     )
 
     if prepared.n_features < prepared.n1x:
-        a, av = _add_m_rows(a, av, prepared.row_idx, prepared.n1x, m.va)
-        mu, muv = _add_m_rows(mu, muv, prepared.row_idx, prepared.n1x, float(m.vmu))
+        a, av_out = _add_m_rows(a, av, row_idx, prepared.n1x, m.va)
+        av = cast("list[np.ndarray]", av_out)
+        mu, muv_out = _add_m_rows(mu, muv, row_idx, prepared.n1x, float(m.vmu))
+        muv = cast("np.ndarray", muv_out)
 
     if prepared.n_samples < prepared.n2x:
-        s, sv, pattern_index = _add_m_cols(
-            s, sv, prepared.col_idx, prepared.n2x, pattern_index
+        s, sv_out, pattern_index = _add_m_cols(
+            s, sv, col_idx, prepared.n2x, pattern_index
         )
+        sv = cast("list[np.ndarray]", sv_out)
+        if isinstance(pattern_index, list):
+            pattern_index_out: np.ndarray | None = np.asarray(pattern_index, dtype=int)
+        elif pattern_index is None:
+            pattern_index_out = None
+        else:
+            pattern_index_out = np.asarray(pattern_index, dtype=int)
+        pattern_index = pattern_index_out
+
+    # Ensure FinalState receives ndarray or None.
+    if isinstance(pattern_index, list):
+        pattern_index_final: np.ndarray | None = np.asarray(pattern_index, dtype=int)
+    elif pattern_index is None:
+        pattern_index_final = None
+    else:
+        pattern_index_final = np.asarray(pattern_index, dtype=int)
+    pattern_index = pattern_index_final
 
     return FinalState(
         a=a,
@@ -684,55 +740,65 @@ def _restore_original_shape(
 
 
 def _reconstruct_data(a: np.ndarray, s: np.ndarray, mu: np.ndarray) -> np.ndarray:
-    """Reconstruct data matrix using loadings, scores, and bias."""
+    """
+    Reconstruct data matrix using loadings, scores, and bias.
+
+    Args:
+        a: Loadings matrix of shape (n_features, n_components).
+        s: Scores matrix of shape (n_components, n_samples).
+        mu: Bias vector of shape (n_features,) or (n_features, 1).
+
+    Returns:
+        Reconstructed data matrix of shape (n_features, n_samples).
+    """
     mu_arr = np.asarray(mu, dtype=float)
     if mu_arr.ndim == 1:
         mu_arr = mu_arr[:, None]
 
     recon = np.asarray(a, dtype=float) @ np.asarray(s, dtype=float)
     if mu_arr.size:
-        recon = recon + mu_arr
+        recon += mu_arr
     return recon
 
 
-def _marginal_variance(
-    a: np.ndarray,
-    s: np.ndarray,
-    av: list[np.ndarray],
-    sv: list[np.ndarray],
-    muv: np.ndarray,
-    pattern_index: np.ndarray | None,
-) -> np.ndarray:
-    """Compute marginal variance for each observed entry.
+def _marginal_variance(final: FinalState) -> np.ndarray:
+    """
+    Compute marginal variance for each observed entry.
 
     Vectorized version of the legacy MATLAB reference:
     ``Vr(i,j) = a_i Sv_j a_i' + s_j' Av_i s_j + sum(sum(Sv_j .* Av_i)) + Muv(i)``.
+
+    Args:
+        final: Final state containing loadings, scores, covariances, and masks.
+
+    Returns:
+        Marginal variance matrix of shape (n_features, n_samples).
     """
-    loadings = np.asarray(a, dtype=float)
-    scores = np.asarray(s, dtype=float)
+    loadings = np.asarray(final.a, dtype=float)
+    scores = np.asarray(final.s, dtype=float)
     n_features, n_samples = loadings.shape[0], scores.shape[1]
     n_components = loadings.shape[1]
 
     av_stack = (
-        np.stack([np.asarray(x, dtype=float) for x in av], axis=0)
-        if av
+        np.stack([np.asarray(x, dtype=float) for x in final.av], axis=0)
+        if final.av
         else np.zeros((n_features, n_components, n_components), dtype=float)
     )
 
-    if not sv:
+    if not final.sv:
         sv_stack = np.zeros((n_samples, n_components, n_components), dtype=float)
-    elif pattern_index is None:
-        sv_stack = np.stack([np.asarray(x, dtype=float) for x in sv], axis=0)
+    elif final.pattern_index is None:
+        sv_stack = np.stack([np.asarray(x, dtype=float) for x in final.sv], axis=0)
     else:
-        pattern_stack = np.stack([np.asarray(x, dtype=float) for x in sv], axis=0)
-        pattern_index_arr = np.asarray(pattern_index, dtype=int)
+        pattern_stack = np.stack([np.asarray(x, dtype=float) for x in final.sv], axis=0)
+        pattern_index_arr = np.asarray(final.pattern_index, dtype=int)
         sv_stack = pattern_stack[pattern_index_arr]
 
     term_loadings = np.einsum("ik,jkl,il->ij", loadings, sv_stack, loadings)
     term_scores = np.einsum("ikl,kj,lj->ij", av_stack, scores, scores)
     term_cross = np.einsum("ikl,jkl->ij", av_stack, sv_stack)
 
-    mu_var = np.asarray(muv, dtype=float)
+    mu_var = np.asarray(final.muv, dtype=float)
     if mu_var.size == 0:
         mu_var = np.zeros((n_features, 1), dtype=float)
     elif mu_var.ndim == 1:
@@ -758,14 +824,7 @@ def _pack_result(final: FinalState) -> dict[str, object]:
         Dictionary mirroring the legacy MATLAB output structure.
     """
     xrec = _reconstruct_data(final.a, final.s, final.mu)
-    vr = _marginal_variance(
-        final.a,
-        final.s,
-        final.av,
-        final.sv,
-        final.muv,
-        final.pattern_index,
-    )
+    vr = _marginal_variance(final)
 
     lc = final.lc
 
@@ -808,8 +867,8 @@ def _as_dense_err_matrix(err_mx: object) -> np.ndarray:
     """
     if err_mx is None:
         return np.zeros((0, 0), dtype=float)
-    if issparse(err_mx):
-        return np.asarray(cast("spmatrix", err_mx).toarray(), dtype=float)
+    if sp.issparse(err_mx):
+        return np.asarray(err_mx.toarray(), dtype=float)
     return np.asarray(err_mx, dtype=float)
 
 

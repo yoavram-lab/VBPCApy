@@ -42,63 +42,115 @@ def compute_rms(
           (Observed zeros must be stored explicitly as eps, as in legacy code.)
 
     Returns:
-        Tuple of ``(rms, err)`` where ``err`` matches MATLAB semantics.
-
-    Raises:
-        ValueError: If shapes are incompatible or mask validation fails.
+        rms: Root-mean-squared reconstruction error.
+        err: Residual matrix (sparse for sparse input, dense otherwise).
     """
     # MATLAB: if isempty(X), errMx=[]; rms=NaN
-    if data.size == 0:
-        return float("nan"), np.array([])
-
-    _validate_shapes(data, loadings, scores)
-
-    num_cpu = max(int(config.num_cpu), 1)
-
     if sp.issparse(data):
-        if not sp.isspmatrix_csr(data):
-            data = data.tocsr()
+        data_csr = sp.csr_matrix(data)
+        if data_csr.size == 0:
+            return float("nan"), np.array([])
+        _validate_shapes(data_csr, loadings, scores)
+        return _compute_rms_sparse(
+            data_csr=data_csr,
+            loadings=loadings,
+            scores=scores,
+            mask=mask,
+            config=config,
+        )
 
-        # Legacy MATLAB semantics: mask is ignored in sparse mode.
-        if config.validate_sparse_mask and mask is not None:
-            _validate_sparse_mask_matches_structure(data, mask)
+    data_arr = np.asarray(data, dtype=float)
+    if data_arr.size == 0:
+        return float("nan"), np.array([])
+    _validate_shapes(data_arr, loadings, scores)
+    return _compute_rms_dense(
+        data_arr=data_arr,
+        loadings=loadings,
+        scores=scores,
+        mask=mask,
+        config=config,
+    )
 
-        err = sparse_reconstruction_error(data, loadings, scores, num_cpu=num_cpu)
 
-        n_obs = int(data.nnz)
-        if config.n_observed is not None and int(config.n_observed) != n_obs:
-            msg = (
-                "n_observed mismatch for sparse data: "
-                f"config={config.n_observed}, data.nnz={n_obs}"
-            )
-            raise ValueError(msg)
+def _compute_rms_sparse(
+    *,
+    data_csr: sp.csr_matrix,
+    loadings: np.ndarray,
+    scores: np.ndarray,
+    mask: np.ndarray | sp.spmatrix | None,
+    config: RmsConfig,
+) -> tuple[float, sp.csr_matrix]:
+    """Compute RMS for sparse data.
 
-        # MATLAB: rms = sqrt(sum(sum(errMx.^2))/ndata)
-        rms = float(np.sqrt(np.sum(err.data**2) / n_obs))
-        return rms, err
+    Returns:
+        Tuple of ``(rms, err)`` where ``err`` is CSR residual matrix.
 
-    # Dense path: mask is applied
+    Raises:
+        ValueError: If provided mask conflicts with sparse structure or
+            n_observed validation fails.
+    """
+    num_cpu = max(int(config.num_cpu), 1)
+    if config.validate_sparse_mask and mask is not None:
+        _validate_sparse_mask_matches_structure(data_csr, mask)
+
+    err = sparse_reconstruction_error(data_csr, loadings, scores, num_cpu=num_cpu)
+
+    n_obs = int(data_csr.nnz)
+    if config.n_observed is not None and int(config.n_observed) != n_obs:
+        msg = (
+            "n_observed mismatch for sparse data: "
+            f"config={config.n_observed}, data.nnz={n_obs}"
+        )
+        raise ValueError(msg)
+
+    rms = float(np.sqrt(np.sum(err.data**2) / n_obs))
+    return rms, err
+
+
+def _compute_rms_dense(
+    *,
+    data_arr: np.ndarray,
+    loadings: np.ndarray,
+    scores: np.ndarray,
+    mask: np.ndarray | sp.spmatrix | None,
+    config: RmsConfig,
+) -> tuple[float, np.ndarray]:
+    """Compute RMS for dense data with mask application.
+
+    Returns:
+        Tuple of ``(rms, err)`` where ``err`` is the masked residual.
+
+    Raises:
+        ValueError: If mask is missing or incompatible with data shape, or if
+            observed-count validation fails.
+    """
     if mask is None:
         msg = "mask must be provided for dense data."
         raise ValueError(msg)
 
     if sp.issparse(mask):
-        mask = mask.toarray()
+        mask_arr = sp.csr_matrix(mask).toarray()
+    else:
+        mask_arr = np.asarray(mask, dtype=float)
 
-    residual = data - (loadings @ scores)
-    err = residual * mask
+    if mask_arr.shape != data_arr.shape:
+        msg = "mask shape must match data shape."
+        raise ValueError(msg)
 
-    # MATLAB caller passes ndata; for Python we can validate / derive
-    n_obs = int(np.sum(mask))
-    if n_obs == 0:
+    n_obs = int(np.count_nonzero(mask_arr))
+    if n_obs <= 0:
         msg = "mask must mark at least one observed entry (n_obs > 0)."
         raise ValueError(msg)
+
     if config.n_observed is not None and int(config.n_observed) != n_obs:
         msg = (
             "n_observed mismatch for dense data: "
             f"config={config.n_observed}, sum(mask)={n_obs}"
         )
         raise ValueError(msg)
+
+    residual = data_arr - (loadings @ scores)
+    err = residual * mask_arr
 
     rms = float(np.sqrt(np.sum(err**2) / n_obs))
     return rms, err

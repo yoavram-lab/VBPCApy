@@ -109,16 +109,14 @@ def _expand_score_covs_list_per_column(
         raise ValueError(ERR_COVS_LIST_LENGTH)
 
     n_total_cols = kept_cols_idx.size + missing_cols_idx.size
-    expanded_score_covs: list[np.ndarray] = [None] * n_total_cols  # type: ignore[assignment]
+    identity = np.eye(n_components, dtype=dtype)
+    expanded_score_covs: list[np.ndarray] = [
+        identity.copy() for _ in range(n_total_cols)
+    ]
 
     # Assign learned covariances to their original positions.
     for j, col in enumerate(kept_cols_idx):
         expanded_score_covs[int(col)] = score_covs[j]
-
-    # Fill missing columns with identity covariance.
-    identity = np.eye(n_components, dtype=dtype)
-    for col in missing_cols_idx:
-        expanded_score_covs[int(col)] = identity
 
     # Per-column mode does not use a pattern index mapping.
     expanded_score_cov_indices: list[int] | None = []
@@ -256,6 +254,9 @@ def _add_m_cols(
     expanded_scores[:, kept_cols_idx] = scores
 
     # Handle score_covs depending on its representation.
+    expanded_score_covs: list[np.ndarray] | np.ndarray
+    expanded_score_cov_indices: list[int] | np.ndarray | None
+
     if isinstance(score_covs, list):
         if score_cov_indices is None or len(score_cov_indices) == 0:
             expanded_score_covs, expanded_score_cov_indices = (
@@ -352,7 +353,7 @@ def _expand_row_covs_list(
     row_covs: list[np.ndarray],
     n_total_rows: int,
     kept_rows_idx: np.ndarray,
-    missing_rows_idx: np.ndarray,
+    _missing_rows_idx: np.ndarray,
     variances: np.ndarray,
 ) -> list[np.ndarray]:
     """Expand list-based per-row covariance matrices to all rows.
@@ -366,17 +367,14 @@ def _expand_row_covs_list(
     if len(row_covs) != kept_rows_idx.size:
         raise ValueError(ERR_ROW_COV_LIST_LENGTH)
 
-    expanded_row_covs: list[np.ndarray] = [None] * n_total_rows  # type: ignore[assignment]
+    default_cov = np.diag(variances) if variances.size > 0 else np.zeros((0, 0))
+    expanded_row_covs: list[np.ndarray] = [
+        default_cov.copy() for _ in range(n_total_rows)
+    ]
 
     # Assign existing covariances to kept rows.
     for j, row_idx in enumerate(kept_rows_idx):
         expanded_row_covs[int(row_idx)] = row_covs[j]
-
-    # Default covariance for missing rows.
-    default_cov = np.diag(variances) if variances.size > 0 else np.zeros((0, 0))
-
-    for row_idx in missing_rows_idx:
-        expanded_row_covs[int(row_idx)] = default_cov
 
     return expanded_row_covs
 
@@ -482,12 +480,13 @@ def _add_m_rows(
     if not has_covs or n_components == 0:
         return expanded_rows, []
 
+    expanded_row_covs: list[np.ndarray] | np.ndarray
     if isinstance(row_covs, list):
         expanded_row_covs = _expand_row_covs_list(
             row_covs=row_covs,
             n_total_rows=n_total_rows,
             kept_rows_idx=kept_rows_idx,
-            missing_rows_idx=missing_rows_idx,
+            _missing_rows_idx=missing_rows_idx,
             variances=variances,
         )
     else:

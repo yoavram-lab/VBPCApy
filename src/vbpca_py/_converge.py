@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, SupportsIndex, SupportsInt, cast
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, MutableMapping, Sequence
@@ -18,6 +18,23 @@ from ._monitoring import display_progress, log_step
 Array = np.ndarray
 Sparse = spmatrix
 Matrix = Array | Sparse
+
+
+def _coerce_int(
+    val: SupportsInt | SupportsIndex | str | bytes | bytearray | None,
+    default: int = 0,
+) -> int:
+    """Safely coerce common int-like inputs with a fallback.
+
+    Returns:
+        Integer conversion of ``val`` when possible; ``default`` otherwise.
+    """
+    if val is None:
+        return default
+    try:
+        return int(cast("SupportsInt | SupportsIndex | str | bytes | bytearray", val))
+    except (TypeError, ValueError):
+        return default
 
 
 @dataclass
@@ -63,7 +80,12 @@ class ConvergenceState:
 
 def _angle_stop_message(opts: Mapping[str, Any], angle_a: float) -> str | None:
     """Return an angle-based convergence message, or None if not triggered."""
-    minangle = float(opts.get("minangle", np.inf))
+    minangle_val = opts.get("minangle", np.inf)
+    minangle = (
+        float(minangle_val)
+        if isinstance(minangle_val, (int, float, np.floating, str, bytes, bytearray))
+        else float(np.inf)
+    )
     if np.isfinite(minangle) and angle_a < minangle:
         return (
             f"Convergence achieved: subspace angle {angle_a:.2e} "
@@ -225,14 +247,20 @@ def _log_and_check_convergence(
         Updated learning-curve dict, latest subspace angle, convergence
         message, and a copy of ``state.loadings`` for the next iteration.
     """
-    verbose = int(state.opts["verbose"])
+    verbose_val = state.opts.get("verbose", 0)
+    verbose = _coerce_int(
+        verbose_val
+        if isinstance(verbose_val, (int, str, bytes, bytearray, np.integer))
+        else 0
+    )
     elapsed = time.time() - state.time_start
 
     state.lc["rms"].append(float(rms))
     state.lc["prms"].append(float(prms))
     state.lc["time"].append(float(elapsed))
 
-    if np.size(state.opts.get("cfstop", [])) > 0:
+    cfstop_opt = state.opts.get("cfstop", [])
+    if np.size(np.asarray(cfstop_opt)) > 0:
         mask_arr = (
             state.mask.toarray().astype(bool)  # type: ignore[union-attr]
             if issparse(state.mask)
@@ -252,7 +280,7 @@ def _log_and_check_convergence(
             score_pattern_index=state.pattern_index,
             mask=mask_arr,
             s_xv=float(state.s_xv),
-            n_data=int(state.n_data),
+            n_data=_coerce_int(state.n_data),
         )
         cost, *_ = compute_full_cost(state.x_data, state.loadings, state.scores, params)
         state.lc["cost"].append(float(cost))

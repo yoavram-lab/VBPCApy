@@ -212,15 +212,26 @@ def _build_mask_and_clean_x(
     """
     if mask is None:
         if sp.issparse(x):
-            mask_out = x.copy()
+            x_csr = sp.csr_matrix(x)
+            mask_out = sp.csr_matrix(x_csr, copy=True)
             mask_out.data = np.ones_like(mask_out.data, dtype=bool)
-            x_clean = x
+            x_clean = x_csr
         else:
-            mask_out = ~np.isnan(x)
-            x_clean = np.where(mask_out, x, 0.0)
+            x_arr = np.asarray(x, dtype=float)
+            mask_out = ~np.isnan(x_arr)
+            x_clean = np.where(mask_out, x_arr, 0.0)
+    elif sp.issparse(x):
+        x_csr = sp.csr_matrix(x)
+        mask_out = (
+            sp.csr_matrix(mask)
+            if sp.issparse(mask)
+            else sp.csr_matrix(np.asarray(mask))
+        )
+        x_clean = x_csr
     else:
-        mask_out = mask
-        x_clean = x
+        x_arr = np.asarray(x, dtype=float)
+        mask_out = np.asarray(mask)
+        x_clean = x_arr
 
     if mask_out.shape != x_clean.shape:
         msg = ERR_MASK_SHAPE
@@ -230,7 +241,7 @@ def _build_mask_and_clean_x(
         row_idx, col_idx = mask_out.nonzero()
     else:
         mask_bool = _coerce_dense_mask_to_bool(np.asarray(mask_out))
-        mask_out = mask_bool  # type: ignore[assignment]
+        mask_out = mask_bool
         row_idx, col_idx = np.where(mask_bool)
 
     _ensure_no_nan_on_observed(mask_out, x_clean, mask, row_idx, col_idx)
@@ -609,16 +620,20 @@ def _compute_mu_cost(
         if mu_prior_variance is None or mu_prior_variance == 0:
             msg = ERR_MU_PRIOR_VAR
             raise ValueError(msg)
+        mu_prior_var = float(mu_prior_variance)
         cost_mu = (
-            0.5 / mu_prior_variance * float(np.sum(mu**2 + mu_variances))
+            0.5 / mu_prior_var * float(np.sum(mu**2 + mu_variances))
             - 0.5 * float(np.sum(np.log(mu_variances)))
-            + (n_features / 2.0) * np.log(mu_prior_variance)
+            + (n_features / 2.0) * np.log(mu_prior_var)
             - (n_features / 2.0)
         )
-    elif mu_prior_variance not in {None, 0}:
-        cost_mu = 0.5 / mu_prior_variance * float(np.sum(mu**2)) + (
+    elif mu_prior_variance is not None and mu_prior_variance != 0:
+        mu_prior_var = float(mu_prior_variance)
+        cost_mu = 0.5 / mu_prior_var * float(np.sum(mu**2)) + (
             n_features / 2.0
-        ) * np.log(2.0 * np.pi * mu_prior_variance)
+        ) * np.log(2.0 * np.pi * mu_prior_var)
+    else:
+        cost_mu = 0.0
 
     return cost_mu
 

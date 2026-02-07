@@ -11,12 +11,12 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
+import scipy.sparse as sp
 from numpy.linalg import LinAlgError
 from scipy.linalg import cho_factor, cho_solve
-from scipy.sparse import issparse
 
 from ._mean import Matrix, ProbeMatrices, subtract_mu
 from ._missing import _missing_patterns
@@ -26,11 +26,12 @@ from ._rms import RmsConfig, compute_rms
 from ._rotate import RotateParams, rotate_to_pca
 
 if TYPE_CHECKING:
-    from collections.abc import MutableMapping
+    from collections.abc import Callable, Mapping, MutableMapping
 
 logger = logging.getLogger(__name__)
 
 _EPS_VAR = 1e-15  # minimum variance for numerical safety
+ChoFactor = tuple[np.ndarray, bool]
 
 
 # ---------------------------------------------------------------------------
@@ -184,18 +185,19 @@ def _prepare_data(
     """
     x_probe_opt = opts.get("xprobe", None)
 
-    if issparse(x):
-        x_data: Matrix = x.copy()
+    if sp.issparse(x):
+        x_data: Matrix = sp.csr_matrix(x)
     else:
         x_data = np.array(x, dtype=float).copy()
 
-    if x_probe_opt is not None and np.size(x_probe_opt) != 0:
-        if issparse(x_probe_opt):
-            x_probe: Matrix | None = x_probe_opt.copy()  # type: ignore[assignment]
-        else:
-            x_probe = np.array(x_probe_opt, dtype=float).copy()
-    else:
-        x_probe = None
+    x_probe: Matrix | None = None
+    if x_probe_opt is not None:
+        x_probe_array = np.array(x_probe_opt, dtype=float, copy=False)
+        if x_probe_array.size != 0:
+            if sp.issparse(x_probe_opt):
+                x_probe = sp.csr_matrix(x_probe_opt)
+            else:
+                x_probe = x_probe_array.copy()
 
     n_features_original, n_samples_original = x_data.shape
 
@@ -222,18 +224,26 @@ def _build_masks_sparse(
     Returns:
         Tuple of data, probe, mask, and probe mask.
     """
-    mask: Matrix = (x_data != 0).astype(float)
+    x_csr = sp.csr_matrix(x_data)
+    mask_csr = x_csr.copy()
+    mask_csr.data[:] = 1.0
+    mask: Matrix = mask_csr
 
-    if x_probe is not None and issparse(x_probe):
-        mask_probe: Matrix | None = (x_probe != 0).astype(float)
-    elif x_probe is not None:
-        x_probe_arr = np.array(x_probe, dtype=float)
-        x_probe = x_probe_arr
-        mask_probe = (x_probe_arr != 0).astype(float)
+    if x_probe is not None:
+        if sp.issparse(x_probe):
+            x_probe_csr = sp.csr_matrix(x_probe)
+            mask_probe_csr = x_probe_csr.copy()
+            mask_probe_csr.data[:] = 1.0
+            mask_probe = mask_probe_csr
+            x_probe = x_probe_csr
+        else:
+            x_probe_arr = np.array(x_probe, dtype=float, copy=False)
+            x_probe = x_probe_arr
+            mask_probe = (x_probe_arr != 0).astype(float)
     else:
         mask_probe = None
 
-    return x_data, x_probe, mask, mask_probe
+    return x_csr, x_probe, mask, mask_probe
 
 
 def _build_masks_dense(
@@ -275,23 +285,28 @@ def _build_masks_and_counts(
     Returns:
         Data, probe, masks, per-row counts, total data count, probe count.
     """
-    if issparse(x_data):
+    if sp.issparse(x_data):
         x_data, x_probe, mask, mask_probe = _build_masks_sparse(x_data, x_probe)
     else:
         x_data, x_probe, mask, mask_probe = _build_masks_dense(x_data, x_probe)
 
-    if issparse(mask):
+    if sp.issparse(mask):
         n_obs_row = np.array(mask.sum(axis=1)).ravel()
     else:
-        n_obs_row = np.sum(mask, axis=1)
+        mask_arr = np.asarray(mask)
+        n_obs_row = np.sum(mask_arr, axis=1)
     n_data = float(np.sum(n_obs_row))
 
     if mask_probe is None:
         n_probe = 0
-    elif issparse(mask_probe):
-        n_probe = int(mask_probe.count_nonzero())
+    elif sp.issparse(mask_probe):
+        mask_probe_csr = sp.csr_matrix(mask_probe)
+        mask_probe = mask_probe_csr
+        n_probe = int(mask_probe_csr.count_nonzero())
     else:
-        n_probe = int(np.count_nonzero(mask_probe))
+        mask_probe_arr = np.asarray(mask_probe)
+        mask_probe = mask_probe_arr
+        n_probe = int(np.count_nonzero(mask_probe_arr))
 
     if n_probe == 0:
         x_probe = None
@@ -304,10 +319,12 @@ def _build_masks_and_counts(
 
 def _observed_indices(x_data: Matrix) -> tuple[np.ndarray, np.ndarray]:
     """Return indices of observed entries in ``x_data``."""
-    if issparse(x_data):
-        i_idx, j_idx = x_data.nonzero()
+    if sp.issparse(x_data):
+        x_csr = sp.csr_matrix(x_data)
+        i_idx, j_idx = x_csr.nonzero()
     else:
-        i_idx, j_idx = np.nonzero(x_data)
+        x_arr = np.asarray(x_data)
+        i_idx, j_idx = np.nonzero(x_arr)
     return np.array(i_idx), np.array(j_idx)
 
 
@@ -322,13 +339,14 @@ def _missing_patterns_info(
         Number of patterns, pattern lists, and optional pattern index map.
     """
     if opts.get("uniquesv"):
-        n_patterns, obs_patterns, isv = _missing_patterns(mask)
+        mask_arr = np.asarray(mask.toarray()) if sp.issparse(mask) else np.asarray(mask)
+        n_patterns, obs_patterns, isv = _missing_patterns(mask_arr)
         isv_arr = np.array(isv, dtype=int)
         return int(n_patterns), obs_patterns, isv_arr
 
-    n_patterns = n_samples
-    obs_patterns: list[list[int]] = []
-    return n_patterns, obs_patterns, None
+    n_patterns_default = n_samples
+    obs_patterns_default: list[list[int]] = []
+    return n_patterns_default, obs_patterns_default, None
 
 
 # ---------------------------------------------------------------------------
@@ -359,11 +377,12 @@ def _initialize_parameters(
     # Use a deterministic RNG only when we fall back to random init; when
     # init is provided (e.g., MATLAB fixture), pass through without forcing a
     # new seed.
+    init_value = cast("str | Mapping[str, Any] | None", ctx.opts.get("init"))
     init_result: InitResult = init_params(
-        ctx.opts["init"],
+        init_value,
         ctx.shapes,
         score_pattern_index=ctx.pattern_index,
-        rng=None if ctx.opts.get("init") else np.random.default_rng(),
+        rng=None if init_value else np.random.default_rng(),
     )
     loadings = init_result.a
     scores = init_result.s
@@ -393,7 +412,7 @@ def _initialize_parameters(
     # Initialize mu from data if empty
     if mu.size == 0:
         if bool(ctx.opts.get("bias", 1)):
-            if issparse(ctx.x_data):
+            if sp.issparse(ctx.x_data):
                 mu_num = np.array(ctx.x_data.sum(axis=1)).ravel()
             else:
                 mu_num = np.sum(
@@ -568,7 +587,18 @@ def _score_update_fast_dense_no_av(state: ScoreState) -> ScoreState:
     Returns:
         Updated score state.
     """
-    x_is_sparse = issparse(state.x_data)
+    if sp.issparse(state.x_data):
+        x_csr = sp.csr_matrix(state.x_data)
+
+        def _x_col(j: int) -> np.ndarray:
+            return np.asarray(x_csr[:, j].toarray()).ravel()
+
+    else:
+        x_arr = np.array(state.x_data, dtype=float, copy=False)
+
+        def _x_col(j: int) -> np.ndarray:
+            return np.array(x_arr[:, j], dtype=float, copy=False)
+
     _n_features, n_samples = state.x_data.shape
     n_components = state.loadings.shape[1]
 
@@ -589,10 +619,7 @@ def _score_update_fast_dense_no_av(state: ScoreState) -> ScoreState:
     )
 
     for j in range(n_samples):
-        if x_is_sparse:
-            x_col = state.x_data[:, j].toarray().ravel()
-        else:
-            x_col = np.array(state.x_data[:, j], dtype=float, copy=False)
+        x_col = _x_col(j)
         rhs = state.loadings.T @ x_col
         state.scores[:, j] = cho_solve(cho, rhs, check_finite=False)
         state.score_covariances[j] = cov_common
@@ -606,50 +633,102 @@ def _score_update_fast_dense_no_av(state: ScoreState) -> ScoreState:
     return state
 
 
+def _symmetrize(mat: np.ndarray) -> np.ndarray:
+    return 0.5 * (mat + mat.T)
+
+
+def _safe_cholesky(mat: np.ndarray, eye: np.ndarray) -> ChoFactor:
+    mat_sym = _symmetrize(mat)
+    try:
+        return cho_factor(mat_sym, lower=True, check_finite=False)
+    except LinAlgError:
+        return cho_factor(mat_sym + _EPS_VAR * eye, lower=True, check_finite=False)
+
+
+def _score_accessors(
+    state: ScoreState,
+) -> tuple[Callable[[int], np.ndarray], Callable[[int], np.ndarray], int]:
+    if sp.issparse(state.x_data):
+        x_csr = sp.csr_matrix(state.x_data)
+
+        def _x_col(j: int) -> np.ndarray:
+            return np.asarray(x_csr[:, j].toarray()).ravel()
+
+    else:
+        x_arr = np.array(state.x_data, dtype=float, copy=False)
+
+        def _x_col(j: int) -> np.ndarray:
+            return np.array(x_arr[:, j], dtype=float, copy=False)
+
+    if sp.issparse(state.mask):
+        mask_csr = sp.csr_matrix(state.mask)
+
+        def _mask_col(j: int) -> np.ndarray:
+            return np.asarray(mask_csr[:, j].toarray()).ravel()
+
+    else:
+        mask_arr = np.array(state.mask, dtype=float, copy=False)
+
+        def _mask_col(j: int) -> np.ndarray:
+            return np.array(mask_arr[:, j], dtype=float, copy=False)
+
+    return _x_col, _mask_col, int(state.x_data.shape[1])
+
+
+def _score_cholesky(
+    state: ScoreState, mask_col: np.ndarray
+) -> tuple[ChoFactor, np.ndarray, np.ndarray]:
+    loadings_masked = mask_col[:, None] * state.loadings
+    psi = loadings_masked.T @ loadings_masked + state.noise_var * state.eye_components
+
+    if state.loading_covariances:
+        observed_rows = np.where(mask_col > 0)[0]
+        for row_index in observed_rows:
+            psi += state.loading_covariances[row_index]
+
+    cho = _safe_cholesky(psi, state.eye_components)
+    sv_pattern = state.noise_var * cho_solve(
+        cho,
+        state.eye_components,
+        check_finite=False,
+    )
+    return cho, loadings_masked, sv_pattern
+
+
+def _update_scores_for_columns(
+    state: ScoreState,
+    cols: list[int],
+    x_col: Callable[[int], np.ndarray],
+    mask_col: Callable[[int], np.ndarray],
+    cov_index: int,
+) -> None:
+    mask_vec = mask_col(cols[0])
+    cho, loadings_masked, sv_pattern = _score_cholesky(
+        state,
+        mask_vec,
+    )
+    state.score_covariances[cov_index] = sv_pattern
+
+    for j_idx in cols:
+        rhs = loadings_masked.T @ x_col(j_idx)
+        state.scores[:, j_idx] = cho_solve(cho, rhs, check_finite=False)
+
+
 def _score_update_general_no_patterns(state: ScoreState) -> ScoreState:
     """General score update when there is no pattern sharing.
 
     Returns:
         Updated score state.
     """
-    x_is_sparse = issparse(state.x_data)
-    _n_features, n_samples = state.x_data.shape
-    n_components = state.loadings.shape[1]
+    x_col, mask_col, n_samples = _score_accessors(state)
 
     for j in range(n_samples):
-        if issparse(state.mask):
-            mask_col = np.array(state.mask[:, j].toarray()).ravel()
-        else:
-            mask_col = np.array(state.mask[:, j], dtype=float, copy=False)
-
-        loadings_masked = mask_col[:, None] * state.loadings
-        psi = (
-            loadings_masked.T @ loadings_masked + state.noise_var * state.eye_components
-        )
-
-        if state.loading_covariances:
-            observed_rows = np.where(mask_col > 0)[0]
-            for row_index in observed_rows:
-                psi += state.loading_covariances[row_index]
-
-        psi = 0.5 * (psi + psi.T)
-        try:
-            cho = cho_factor(psi, lower=True, check_finite=False)
-        except LinAlgError:
-            jitter = _EPS_VAR * np.eye(n_components)
-            cho = cho_factor(psi + jitter, lower=True, check_finite=False)
-
-        if x_is_sparse:
-            x_col = state.x_data[:, j].toarray().ravel()
-        else:
-            x_col = np.array(state.x_data[:, j], dtype=float, copy=False)
-
-        rhs = loadings_masked.T @ x_col
-        state.scores[:, j] = cho_solve(cho, rhs, check_finite=False)
-        state.score_covariances[j] = state.noise_var * cho_solve(
-            cho,
-            state.eye_components,
-            check_finite=False,
+        _update_scores_for_columns(
+            state,
+            cols=[j],
+            x_col=x_col,
+            mask_col=mask_col,
+            cov_index=j,
         )
 
         log_progress(
@@ -668,57 +747,19 @@ def _score_update_with_patterns(state: ScoreState) -> ScoreState:
     Returns:
         Updated score state.
     """
-    x_is_sparse = issparse(state.x_data)
-    n_components = state.loadings.shape[1]
+    x_col, mask_col, _ = _score_accessors(state)
 
     for pattern_index, cols in enumerate(state.obs_patterns):
         if not cols:
             continue
 
-        j_rep = cols[0]
-        if issparse(state.mask):
-            mask_col = np.array(state.mask[:, j_rep].toarray()).ravel()
-        else:
-            mask_col = np.array(state.mask[:, j_rep], dtype=float, copy=False)
-
-        loadings_masked = mask_col[:, None] * state.loadings
-        psi = (
-            loadings_masked.T @ loadings_masked + state.noise_var * state.eye_components
+        _update_scores_for_columns(
+            state,
+            cols=cols,
+            x_col=x_col,
+            mask_col=mask_col,
+            cov_index=pattern_index,
         )
-
-        if state.loading_covariances:
-            observed_rows = np.where(mask_col > 0)[0]
-            for row_index in observed_rows:
-                psi += state.loading_covariances[row_index]
-
-        psi = 0.5 * (psi + psi.T)
-        try:
-            cho = cho_factor(psi, lower=True, check_finite=False)
-        except LinAlgError:
-            cho = cho_factor(
-                psi + _EPS_VAR * np.eye(n_components),
-                lower=True,
-                check_finite=False,
-            )
-
-        sv_pattern = state.noise_var * cho_solve(
-            cho,
-            state.eye_components,
-            check_finite=False,
-        )
-        state.score_covariances[pattern_index] = sv_pattern
-
-        for j_idx in cols:
-            if x_is_sparse:
-                x_col = state.x_data[:, j_idx].toarray().ravel()
-            else:
-                x_col = np.array(
-                    state.x_data[:, j_idx],
-                    dtype=float,
-                    copy=False,
-                )
-            rhs = loadings_masked.T @ x_col
-            state.scores[:, j_idx] = cho_solve(cho, rhs, check_finite=False)
 
         log_progress(
             state.verbose,
@@ -740,9 +781,9 @@ def _update_scores(state: ScoreState) -> ScoreState:
     if state.pattern_index is None:
         dense_mask = None
         fully_observed = False
-        if not issparse(state.mask):
+        if not sp.issparse(state.mask):
             dense_mask = np.array(state.mask, dtype=float, copy=False)
-            fully_observed = np.all(dense_mask > 0)
+            fully_observed = bool(np.all(dense_mask > 0))
 
         if dense_mask is not None and fully_observed and not state.loading_covariances:
             return _score_update_fast_dense_no_av(state)
@@ -758,6 +799,64 @@ def _update_scores(state: ScoreState) -> ScoreState:
 # ---------------------------------------------------------------------------
 
 
+def _loadings_accessors(
+    state: LoadingsUpdateState,
+) -> tuple[Callable[[int], np.ndarray], Callable[[int], np.ndarray], int]:
+    if sp.issparse(state.x_data):
+        x_csr = sp.csr_matrix(state.x_data)
+
+        def _x_row(i: int) -> np.ndarray:
+            return np.asarray(x_csr[i, :].toarray()).ravel()
+
+    else:
+        x_arr = np.array(state.x_data, dtype=float, copy=False)
+
+        def _x_row(i: int) -> np.ndarray:
+            return np.array(x_arr[i, :], dtype=float, copy=False)
+
+    if sp.issparse(state.mask):
+        mask_csr = sp.csr_matrix(state.mask)
+
+        def _mask_row(i: int) -> np.ndarray:
+            return np.asarray(mask_csr[i, :].toarray()).ravel()
+
+    else:
+        mask_arr = np.array(state.mask, dtype=float, copy=False)
+
+        def _mask_row(i: int) -> np.ndarray:
+            return np.array(mask_arr[i, :], dtype=float, copy=False)
+
+    return _x_row, _mask_row, int(state.x_data.shape[0])
+
+
+def _prior_precision_matrix(va: np.ndarray, noise_var: float) -> np.ndarray:
+    prior_prec_diag = np.zeros_like(va, dtype=float)
+    finite_mask = np.isfinite(va) & (va > 0)
+    prior_prec_diag[finite_mask] = noise_var / va[finite_mask]
+    return np.diag(prior_prec_diag)
+
+
+def _score_covariance_for_column(state: LoadingsUpdateState, j_idx: int) -> np.ndarray:
+    if state.pattern_index is None:
+        return state.score_covariances[j_idx]
+    return state.score_covariances[state.pattern_index[j_idx]]
+
+
+def _phi_for_row(
+    mask_vec: np.ndarray,
+    state: LoadingsUpdateState,
+    prior_prec: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    scores_masked = mask_vec[None, :] * state.scores
+    phi = scores_masked @ scores_masked.T + prior_prec
+
+    if state.score_covariances:
+        for j_idx in np.where(mask_vec > 0)[0]:
+            phi += _score_covariance_for_column(state, int(j_idx))
+
+    return phi, scores_masked
+
+
 def _loadings_update_fast_dense_no_sv(
     state: LoadingsUpdateState,
 ) -> tuple[
@@ -769,7 +868,18 @@ def _loadings_update_fast_dense_no_sv(
     Returns:
         Updated loadings and loading covariances.
     """
-    x_is_sparse = issparse(state.x_data)
+    if sp.issparse(state.x_data):
+        x_csr = sp.csr_matrix(state.x_data)
+
+        def _x_row(i: int) -> np.ndarray:
+            return np.asarray(x_csr[i, :].toarray()).ravel()
+
+    else:
+        x_arr = np.array(state.x_data, dtype=float, copy=False)
+
+        def _x_row(i: int) -> np.ndarray:
+            return np.array(x_arr[i, :], dtype=float, copy=False)
+
     n_features = state.x_data.shape[0]
     n_components = state.scores.shape[0]
 
@@ -792,10 +902,7 @@ def _loadings_update_fast_dense_no_sv(
 
     loadings = np.empty((n_features, n_components), dtype=float)
     for i in range(n_features):
-        if x_is_sparse:
-            x_row = state.x_data[i, :].toarray().ravel()
-        else:
-            x_row = np.array(state.x_data[i, :], dtype=float, copy=False)
+        x_row = _x_row(i)
 
         rhs = scores_masked @ x_row
         loadings[i, :] = cho_solve(cho, rhs, check_finite=False)
@@ -828,61 +935,28 @@ def _loadings_update_general(
     Returns:
         Updated loadings and loading covariances.
     """
-    x_is_sparse = issparse(state.x_data)
-    n_features, _ = state.x_data.shape
+    x_row, mask_row, n_features = _loadings_accessors(state)
     n_components = state.scores.shape[0]
+    prior_prec = _prior_precision_matrix(state.va, state.noise_var)
+    eye_components = np.eye(n_components)
 
     if state.verbose == 2:
         logger.info("Updating loadings")
 
-    prior_prec_diag = np.zeros_like(state.va, dtype=float)
-    finite_mask = np.isfinite(state.va) & (state.va > 0)
-    prior_prec_diag[finite_mask] = state.noise_var / state.va[finite_mask]
-
     loadings = np.empty((n_features, n_components), dtype=float)
 
     for i in range(n_features):
-        if issparse(state.mask):
-            mask_row = np.array(state.mask[i, :].toarray()).ravel()
-        else:
-            mask_row = np.array(state.mask[i, :], dtype=float, copy=False)
+        mask_vec = mask_row(i)
+        phi, scores_masked = _phi_for_row(mask_vec, state, prior_prec)
+        cho = _safe_cholesky(phi, eye_components)
 
-        scores_masked = mask_row[None, :] * state.scores
-        phi = scores_masked @ scores_masked.T + np.diag(prior_prec_diag)
-
-        observed_cols = np.where(mask_row > 0)[0]
-        for j_idx in observed_cols:
-            if not state.score_covariances:
-                continue
-            sv_j = (
-                state.score_covariances[j_idx]
-                if state.pattern_index is None
-                else state.score_covariances[state.pattern_index[j_idx]]
-            )
-            phi += sv_j
-
-        phi = 0.5 * (phi + phi.T)
-        try:
-            cho = cho_factor(phi, lower=True, check_finite=False)
-        except LinAlgError:
-            cho = cho_factor(
-                phi + _EPS_VAR * np.eye(n_components),
-                lower=True,
-                check_finite=False,
-            )
-
-        if x_is_sparse:
-            x_row = state.x_data[i, :].toarray().ravel()
-        else:
-            x_row = np.array(state.x_data[i, :], dtype=float, copy=False)
-
-        rhs = scores_masked @ x_row
+        rhs = scores_masked @ x_row(i)
         loadings[i, :] = cho_solve(cho, rhs, check_finite=False)
 
         if state.loading_covariances:
             state.loading_covariances[i] = state.noise_var * cho_solve(
                 cho,
-                np.eye(n_components),
+                eye_components,
                 check_finite=False,
             )
 
@@ -911,9 +985,9 @@ def _update_loadings(
     fully_observed = False
     sv_contrib = bool(state.score_covariances)
 
-    if not issparse(state.mask):
+    if not sp.issparse(state.mask):
         dense_mask = np.array(state.mask, dtype=float, copy=False)
-        fully_observed = np.all(dense_mask > 0)
+        fully_observed = bool(np.all(dense_mask > 0))
 
     if dense_mask is not None and fully_observed and not sv_contrib:
         return _loadings_update_fast_dense_no_sv(state)
@@ -933,7 +1007,16 @@ def _recompute_rms(ctx: RmsContext) -> tuple[float, float, Matrix]:
         RMS on data, RMS on probe, and error matrix.
     """
     cfg_data = RmsConfig(n_observed=int(ctx.n_data), num_cpu=1)
-    rms, err_mx = compute_rms(ctx.x_data, ctx.loadings, ctx.scores, ctx.mask, cfg_data)
+    rms, err_mx_raw = compute_rms(
+        ctx.x_data,
+        ctx.loadings,
+        ctx.scores,
+        ctx.mask,
+        cfg_data,
+    )
+    err_mx: Matrix = (
+        sp.csr_matrix(err_mx_raw) if sp.issparse(err_mx_raw) else np.asarray(err_mx_raw)
+    )
 
     if ctx.n_probe > 0 and ctx.x_probe is not None and ctx.mask_probe is not None:
         cfg_probe = RmsConfig(n_observed=int(ctx.n_probe), num_cpu=1)

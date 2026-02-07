@@ -20,7 +20,17 @@ class VBPCA:
         verbose: int | bool = 0,
         **opts: object,
     ) -> None:
-        """Initialize the estimator with common VB-PCA options."""
+        """
+        Initialize the estimator with common VB-PCA options.
+
+        Args:
+            n_components: Number of principal components to infer.
+            bias: If True, include a bias (mean) term in the model.
+            maxiters: Maximum number of iterations for the training loop.
+            tol: Tolerance for convergence.
+            verbose: Verbosity level; can be an integer or a boolean.
+            **opts: Additional options passed to the underlying PCA_FULL implementation.
+        """
         self.n_components = n_components
         self.bias = bias
         self.maxiters = maxiters
@@ -39,10 +49,16 @@ class VBPCA:
         self.n_features_in_: int | None = None
 
     def fit(self, x: Matrix, mask: np.ndarray | None = None) -> VBPCA:
-        """Fit the model to data, optionally supplying a mask.
+        """
+        Fit the model to data, optionally supplying a mask.
+
+        Args:
+            x: Data matrix of shape (n_features, n_samples).
+            mask: Optional boolean mask of the same shape as x, where True
+                indicates observed entries.
 
         Returns:
-            Self.
+            The fitted estimator instance.
         """
         opts: dict[str, object] = {
             "bias": self.bias,
@@ -60,10 +76,30 @@ class VBPCA:
         self.components_ = np.asarray(result["A"], dtype=float)
         self.scores_ = np.asarray(result["S"], dtype=float)
         self.mean_ = np.asarray(result["Mu"], dtype=float)
-        self.rms_ = float(result.get("RMS", np.nan))
-        self.prms_ = float(result.get("PRMS", np.nan))
-        self.noise_variance_ = float(result.get("V", np.nan))
-        self.cost_ = float(result.get("Cost", np.nan))
+        rms_val = result.get("RMS", np.nan)
+        prms_val = result.get("PRMS", np.nan)
+        noise_val = result.get("V", np.nan)
+        cost_val = result.get("Cost", np.nan)
+        self.rms_ = (
+            float(rms_val)
+            if isinstance(rms_val, (float, int, np.floating))
+            else float("nan")
+        )
+        self.prms_ = (
+            float(prms_val)
+            if isinstance(prms_val, (float, int, np.floating))
+            else float("nan")
+        )
+        self.noise_variance_ = (
+            float(noise_val)
+            if isinstance(noise_val, (float, int, np.floating))
+            else float("nan")
+        )
+        self.cost_ = (
+            float(cost_val)
+            if isinstance(cost_val, (float, int, np.floating))
+            else float("nan")
+        )
         self.reconstruction_ = None
         if result.get("Xrec") is not None:
             self.reconstruction_ = np.asarray(result["Xrec"], dtype=float)

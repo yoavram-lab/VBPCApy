@@ -82,7 +82,7 @@ class MissingAwareOneHotEncoder:
         cats = self.categories_[j]
         n_rows = x.shape[0]
         n_cats = len(cats)
-        out = np.zeros((n_rows, n_cats), dtype=self.dtype)
+        out: np.ndarray = np.zeros((n_rows, n_cats), dtype=self.dtype)
         col_mask = mask[:, j]
         col_vals = x[:, j]
 
@@ -103,7 +103,7 @@ class MissingAwareOneHotEncoder:
                 continue
             out[i, idx] = 1.0
 
-        means = np.zeros(n_cats, dtype=self.dtype)
+        means: np.ndarray = np.zeros(n_cats, dtype=self.dtype)
         if self.mean_center:
             with np.errstate(invalid="ignore"):
                 means = np.nanmean(out, axis=0)
@@ -141,7 +141,7 @@ class MissingAwareOneHotEncoder:
     def inverse_transform(self, z: np.ndarray, mask: Mask | None = None) -> np.ndarray:
         if self.n_features_in_ is None:
             raise RuntimeError("Encoder not fitted")
-        z_arr = np.asarray(z, dtype=self.dtype)
+        z_arr: np.ndarray = np.asarray(z, dtype=self.dtype)
         obs_mask = None
         if mask is not None:
             obs_mask = np.asarray(mask, dtype=bool)
@@ -365,6 +365,7 @@ class AutoEncoder:
         col_start = 0
         for j in range(self.n_features_in_):
             kind = self._infer_kind(x_arr[:, j], obs_mask[:, j], j)
+            enc: MissingAwareOneHotEncoder | _BaseScaler
             if kind == "categorical":
                 enc = MissingAwareOneHotEncoder(
                     handle_unknown=self.handle_unknown,
@@ -401,7 +402,9 @@ class AutoEncoder:
         obs_mask = _ensure_mask(x_arr, mask)
         parts: list[np.ndarray] = []
         for col_idx, plan in enumerate(self._plan):
-            z = plan.encoder.transform(x_arr[:, [col_idx]], mask=obs_mask[:, [col_idx]])
+            z: np.ndarray = plan.encoder.transform(
+                x_arr[:, [col_idx]], mask=obs_mask[:, [col_idx]]
+            )
             parts.append(z)
         return np.concatenate(parts, axis=1) if parts else np.empty((x_arr.shape[0], 0))
 

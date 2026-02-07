@@ -6,7 +6,7 @@ lint:
 
 # Type-check library code, allowing external/native modules to be missing.
 typecheck:
-	mypy --ignore-missing-imports src
+	mypy src
 
 # Run the test suite quietly.
 test:

@@ -27,7 +27,9 @@ import scipy.sparse as sp
 
 from .subtract_mu_from_sparse import subtract_mu_from_sparse
 
-Matrix = np.ndarray | sp.spmatrix
+Dense = np.ndarray
+Sparse = sp.csr_matrix
+Matrix = Dense | Sparse
 
 __all__ = ["ProbeMatrices", "subtract_mu"]
 
@@ -95,7 +97,10 @@ def _ensure_dense_mask(mask: Matrix, shape: tuple[int, int]) -> np.ndarray:
     Raises:
         ValueError: If ``mask`` does not match ``shape``.
     """
-    mask_arr = mask.toarray() if sp.isspmatrix(mask) else np.asarray(mask)  # type: ignore[union-attr]
+    if sp.isspmatrix(mask):
+        mask_arr = sp.csr_matrix(mask).toarray()
+    else:
+        mask_arr = np.asarray(mask)
 
     if mask_arr.shape != shape:
         raise ValueError(ERR_MASK_SHAPE)
@@ -112,19 +117,18 @@ def _subtract_dense(mu_col: np.ndarray, x: np.ndarray, mask: np.ndarray) -> np.n
     return x - mu_col * mask
 
 
-def _subtract_sparse(mu_col: np.ndarray, x: sp.spmatrix) -> sp.csr_matrix:
+def _subtract_sparse(mu_col: np.ndarray, x: Sparse) -> Sparse:
     """Subtract row-wise mu from sparse CSR x using the C++ helper.
 
     Returns:
         CSR matrix with mean subtracted on stored entries.
     """
-    if not sp.isspmatrix_csr(x):
-        x = x.tocsr()
+    x_csr = sp.csr_matrix(x)
 
-    n_rows, n_cols = x.shape
-    data = x.data.astype(float, copy=False)
-    indices = x.indices.astype(np.int32, copy=False)
-    indptr = x.indptr.astype(np.int32, copy=False)
+    n_rows, n_cols = x_csr.shape
+    data = x_csr.data.astype(float, copy=False)
+    indices = x_csr.indices.astype(np.int32, copy=False)
+    indptr = x_csr.indptr.astype(np.int32, copy=False)
     shape_tuple: tuple[int, int] = (n_rows, n_cols)
 
     new_data = subtract_mu_from_sparse(
@@ -135,7 +139,7 @@ def _subtract_sparse(mu_col: np.ndarray, x: sp.spmatrix) -> sp.csr_matrix:
         mu_col[:, 0],  # 1D Mu
     )
 
-    return sp.csr_matrix((new_data, indices, indptr), shape=x.shape)
+    return sp.csr_matrix((new_data, indices, indptr), shape=x_csr.shape)
 
 
 def _is_matlab_empty_matrix(mat: Matrix) -> bool:
@@ -151,10 +155,10 @@ def _is_matlab_empty_matrix(mat: Matrix) -> bool:
 
 def _subtract_sparse_branch(
     mu_col: np.ndarray,
-    x: sp.spmatrix,
+    x: Matrix,
     probe: ProbeMatrices | None,
     n_rows: int,
-) -> tuple[sp.spmatrix, Matrix | None]:
+) -> tuple[Sparse, Matrix | None]:
     """Handle sparse subtraction branch.
 
     Returns:
@@ -163,7 +167,8 @@ def _subtract_sparse_branch(
     Raises:
         ValueError: If probe sparsity or row shape is invalid.
     """
-    x_out = _subtract_sparse(mu_col, x)
+    x_csr = sp.csr_matrix(x)
+    x_out = _subtract_sparse(mu_col, x_csr)
 
     x_probe_out: Matrix | None = None
     if probe is not None:
@@ -178,7 +183,7 @@ def _subtract_sparse_branch(
             if n_rows_probe != n_rows:
                 raise ValueError(ERR_PROBE_ROWS)
 
-            x_probe_out = _subtract_sparse(mu_col, x_probe)
+            x_probe_out = _subtract_sparse(mu_col, sp.csr_matrix(x_probe))
 
     return x_out, x_probe_out
 
@@ -194,6 +199,9 @@ def _subtract_dense_branch(
 
     Returns:
         Mean-subtracted dense data and optional probe output.
+
+    Raises:
+        ValueError: If masks are missing or have incompatible shapes.
     """
     mask_dense = _ensure_dense_mask(mask, shape)
     x_out = _subtract_dense(mu_col, x, mask_dense)
@@ -201,7 +209,11 @@ def _subtract_dense_branch(
     x_probe_out = None
     if probe is not None:
         x_probe = np.array(probe.x, dtype=float, copy=False)
-        mask_probe = _ensure_dense_mask(probe.mask, x_probe.shape)
+        if probe.mask is None:
+            raise ValueError(ERR_MASK_SHAPE)
+        mask_probe = _ensure_dense_mask(
+            probe.mask, (int(x_probe.shape[0]), int(x_probe.shape[1]))
+        )
         x_probe_out = _subtract_dense(mu_col, x_probe, mask_probe)
 
     return x_out, x_probe_out
@@ -242,7 +254,7 @@ def subtract_mu(
     # Sparse branch (mask ignored, matching MATLAB behavior)
     # ------------------------------------------------------------------
     if sp.isspmatrix(x):
-        return _subtract_sparse_branch(mu_col, x, probe, n_rows)
+        return _subtract_sparse_branch(mu_col, sp.csr_matrix(x), probe, n_rows)
 
     # ------------------------------------------------------------------
     # Dense branch

@@ -23,7 +23,9 @@ import numpy as np
 import scipy.sparse as sp
 
 InitType = Any
-Matrix = np.ndarray | sp.spmatrix
+Dense = np.ndarray
+Sparse = sp.csr_matrix
+Matrix = Dense | Sparse
 
 
 # --------------------------------------------------------------------------- #
@@ -40,12 +42,13 @@ def _nonempty_indices(x: Matrix) -> tuple[np.ndarray, np.ndarray]:
         ``ic`` are the kept column indices (both 1D integer arrays).
     """
     if sp.isspmatrix(x):
-        col_sums = np.asarray(x.sum(axis=0)).ravel()
-        row_sums = np.asarray(x.sum(axis=1)).ravel()
+        x_csr = sp.csr_matrix(x)
+        col_sums = np.asarray(x_csr.sum(axis=0)).ravel()
+        row_sums = np.asarray(x_csr.sum(axis=1)).ravel()
         ic = np.where(col_sums != 0)[0]
         ir = np.where(row_sums != 0)[0]
     else:
-        mask = ~np.isnan(x)
+        mask = ~np.isnan(np.asarray(x))
         ic = np.where(mask.sum(axis=0) > 0)[0]
         ir = np.where(mask.sum(axis=1) > 0)[0]
 
@@ -174,6 +177,9 @@ def remove_empty_entries(
         A tuple ``(x_out, x_probe_out, ir, ic, init_out)`` where matrices
         and init payload are sliced consistently with the retained rows and
         columns.
+
+    Raises:
+        RuntimeError: If slicing yields ``None`` for non-null input.
     """
     n_rows_orig, n_cols_orig = x.shape
 
@@ -186,6 +192,9 @@ def remove_empty_entries(
 
     # Slice data
     x_out = _slice_matrix_like(x, ir, ic, n_rows_orig, n_cols_orig)
+    if x_out is None:
+        msg = "x_out cannot be None for non-null input"
+        raise RuntimeError(msg)
     x_probe_out = _slice_matrix_like(x_probe, ir, ic, n_rows_orig, n_cols_orig)
 
     # Update init dictionary (if dict-like)
