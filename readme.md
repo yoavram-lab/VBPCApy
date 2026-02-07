@@ -92,7 +92,7 @@ Notes:
 - Preprocessing: missing-aware encoders and scalers
   - `MissingAwareOneHotEncoder`: categorical OHE respecting masks/NaNs; `handle_unknown="ignore"|"raise"`, optional mean-centering.
   - `MissingAwareStandardScaler` and `MissingAwareMinMaxScaler`: continuous scaling while ignoring masked entries.
-  - `AutoEncoder`: column-wise router that applies the above per column with `cardinality_threshold`, `continuous_scaler` (`"standard"` or `"minmax"`), optional `column_types` override, and `fit/transform/inverse_transform` for round-tripping mixed data with masks.
+  - `AutoEncoder`: column-wise router that applies the above per column with `cardinality_threshold` (integer columns with uniques <= threshold are treated as categorical), `continuous_scaler` (`"standard"` or `"minmax"`), `handle_unknown` (ignore vs raise unseen categories), `mean_center_ohe` (center one-hot columns), optional `column_types` override (force categorical/continuous per column), and `fit/transform/inverse_transform` for round-tripping mixed data with masks.
 
 All options are consumed via the `VBPCA` estimator. Call `model.get_options()` after construction to view the merged defaults and your overrides. The canonical reference list lives in [src/vbpca_py/_pca_full.py](src/vbpca_py/_pca_full.py). See [src/vbpca_py/estimators.py](src/vbpca_py/estimators.py) and [src/vbpca_py/preprocessing.py](src/vbpca_py/preprocessing.py) for the stable public APIs.
 
