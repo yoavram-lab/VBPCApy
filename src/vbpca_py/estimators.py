@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from vbpca_py._pca_full import Matrix, pca_full
+from vbpca_py._pca_full import Matrix, _build_options, pca_full
 
 
 class VBPCA:
@@ -73,6 +73,17 @@ class VBPCA:
             self.variance_ = np.asarray(result["Vr"], dtype=float)
         self.n_features_in_ = int(self.components_.shape[0])
         return self
+
+    def get_options(self) -> dict[str, object]:
+        """Return the resolved pca_full options (defaults + overrides)."""
+        opts: dict[str, object] = {
+            "bias": self.bias,
+            "verbose": self.verbose,
+        }
+        if self.maxiters is not None:
+            opts["maxiters"] = self.maxiters
+        opts.update(self.opts)
+        return _build_options(opts)
 
     def transform(self, x: Matrix | None = None) -> np.ndarray:
         """Return scores from the fitted model; new data not yet supported.

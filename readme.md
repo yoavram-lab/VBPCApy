@@ -7,10 +7,10 @@ Variational Bayesian PCA (Illin and Raiko, 2010) with support for missing data, 
 - Optional bias (per-feature mean) estimation and rotation to a PCA-aligned solution.
 - Support for shared observation patterns to reuse factorizations and speed inference.
 - Posterior covariances for scores and loadings; probe-set RMS for held-out validation.
-- Direct access to reconstructions and per-entry marginal variances from `pca_full` or `VBPCA`.
+- Direct access to reconstructions and per-entry marginal variances from the sklearn-like `VBPCA` estimator.
 - C++ extensions via pybind11 for performance-critical routines.
 - Missing-aware preprocessing utilities (one-hot encode, standardize, min-max, auto-routing) that preserve NaNs/masks for generative reconstruction.
-- `VBPCA` sklearn-like wrapper for `pca_full` (fit/transform/inverse_transform) with mask support.
+- `VBPCA` sklearn-like wrapper (fit/transform/inverse_transform) with mask support.
 
 ## Installation
 Requirements: Python >= 3.11, a C++14 compiler, and Eigen headers. Eigen is located automatically via `EIGEN_INCLUDE_DIR`, `$CONDA_PREFIX/include/eigen3`, `/opt/homebrew/include/eigen3`, or `/usr/local/include/eigen3`.
@@ -47,6 +47,9 @@ recon = model.inverse_transform()
 recon = model.reconstruction_
 var = model.variance_
 
+# Inspect the resolved options (defaults + your overrides)
+print(model.get_options())
+
 # Learning-curve summaries
 print("RMS", model.rms_)
 print("Probe RMS", model.prms_)
@@ -68,25 +71,21 @@ x_recon = auto.inverse_transform(z_recon)
 - `maxiters`, `tol`, `verbose`: convergence control and logging.
 - `rotation`: final orthogonal rotation to a PCA-aligned solution.
 
-See [src/vbpca_py/_pca_full.py](src/vbpca_py/_pca_full.py) for the full set of options.
-See `vbpca_py.estimators.VBPCA` for the stable public API.
+All options are consumed via the `VBPCA` estimator. Call `model.get_options()` after construction to view the merged defaults and your overrides. The canonical reference list lives in [src/vbpca_py/_pca_full.py](src/vbpca_py/_pca_full.py). See `vbpca_py.estimators.VBPCA` for the stable public API.
 
-### Direct access via `pca_full`
+### Autoencoding workflow (for JOSS completeness)
+
+The package includes missing-aware preprocessing and an autoencoder-style inverse transform to map back to the original feature space:
 
 ```python
-from vbpca_py import pca_full
+from vbpca_py.preprocessing import AutoEncoder
 
-result = pca_full(x, 5, maxiters=200)
-
-# Reconstruction and marginal variance
-xrec = result["Xrec"]
-vr = result["Vr"]
-
-# Monitoring metrics
-rms = result["RMS"]             # last lc["rms"]
-probe_rms = result["PRMS"]      # last lc["prms"]
-cost = result["Cost"]           # last lc["cost"] (NaN if not computed)
-lc = result["lc"]               # full learning curves
+auto = AutoEncoder(cardinality_threshold=10, continuous_scaler="standard")
+z = auto.fit_transform(x, mask=mask)          # encodes continuous + categorical
+model = VBPCA(n_components=5, maxiters=100)
+scores = model.fit_transform(z, mask=np.ones_like(z, dtype=bool))
+z_recon = model.inverse_transform()
+x_recon = auto.inverse_transform(z_recon)     # decode back to original space
 ```
 
 ## Testing and development
