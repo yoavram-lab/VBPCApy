@@ -86,15 +86,15 @@ Notes:
 - All options are case-insensitive and passed through the `VBPCA` constructor (or forwarded by `select_n_components`).
 - Reference implementation lives in [src/vbpca_py/_pca_full.py](src/vbpca_py/_pca_full.py) and [src/vbpca_py/_converge.py](src/vbpca_py/_converge.py).
 
-### Model selection API
-- `select_n_components(x, *, mask=None, components=None, config=None, **opts)`: sweeps candidate component counts, returning `(best_k, best_metrics, trace, best_model)`.
-	- `components`: iterable of ks or `None` for `1..min(n_features, n_samples)`.
-	- `config`: `SelectionConfig(metric="prms"|"rms"|"cost", patience=None, max_trials=None, compute_explained_variance=True, return_best_model=False)` controls the sweep stopping logic and what is retained.
-	- `**opts`: forwarded to `VBPCA`/`pca_full` (e.g., `maxiters`, `minangle`, `rmsstop`, `cfstop`, `earlystop`, `rotate2pca`).
-- `VBPCA` estimator: sklearn-like interface with `fit`, `transform`, `inverse_transform`, learned attributes (`components_`, `scores_`, `mean_`, `rms_`, `prms_`, `cost_`, `variance_`, `explained_variance_`, `explained_variance_ratio_`), and `get_options()` to inspect merged opts.
-- Preprocessing helpers: `AutoEncoder` pipeline (categorical + continuous) with `fit_transform` / `inverse_transform` for missing-aware workflows.
+### Public API surface
+- Core estimator: `VBPCA(n_components, bias=True, maxiters=None, tol=None, verbose=0, **opts)` with `fit`, `transform`, `fit_transform`, `inverse_transform`, learned attributes (`components_`, `scores_`, `mean_`, `rms_`, `prms_`, `cost_`, `variance_`, `reconstruction_`, `explained_variance_`, `explained_variance_ratio_`), and `get_options()` to inspect merged defaults.
+- Model selection: `select_n_components(x, *, mask=None, components=None, config=None, **opts)` sweeps ks and returns `(best_k, best_metrics, trace, best_model)`. `components` defaults to `1..min(n_features, n_samples)`. `SelectionConfig(metric="prms"|"rms"|"cost", patience=None, max_trials=None, compute_explained_variance=True, return_best_model=False)` controls sweep stopping and retention. `**opts` flow through to `VBPCA`/`pca_full` (e.g., `maxiters`, `minangle`, `rmsstop`, `cfstop`, `earlystop`, `rotate2pca`). `trace` holds per-k endpoint metrics; `best_metrics` is the winning entry.
+- Preprocessing: missing-aware encoders and scalers
+  - `MissingAwareOneHotEncoder`: categorical OHE respecting masks/NaNs; `handle_unknown="ignore"|"raise"`, optional mean-centering.
+  - `MissingAwareStandardScaler` and `MissingAwareMinMaxScaler`: continuous scaling while ignoring masked entries.
+  - `AutoEncoder`: column-wise router that applies the above per column with `cardinality_threshold`, `continuous_scaler` (`"standard"` or `"minmax"`), optional `column_types` override, and `fit/transform/inverse_transform` for round-tripping mixed data with masks.
 
-All options are consumed via the `VBPCA` estimator. Call `model.get_options()` after construction to view the merged defaults and your overrides. The canonical reference list lives in [src/vbpca_py/_pca_full.py](src/vbpca_py/_pca_full.py). See `vbpca_py.estimators.VBPCA` for the stable public API.
+All options are consumed via the `VBPCA` estimator. Call `model.get_options()` after construction to view the merged defaults and your overrides. The canonical reference list lives in [src/vbpca_py/_pca_full.py](src/vbpca_py/_pca_full.py). See [src/vbpca_py/estimators.py](src/vbpca_py/estimators.py) and [src/vbpca_py/preprocessing.py](src/vbpca_py/preprocessing.py) for the stable public APIs.
 
 ### Autoencoding workflow 
 
