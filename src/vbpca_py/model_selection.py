@@ -13,12 +13,11 @@ from typing import TYPE_CHECKING, Any, Literal, SupportsFloat, SupportsIndex, ca
 import numpy as np
 import scipy.sparse as sp
 
-from .estimators import VBPCA
-
 if TYPE_CHECKING:  # pragma: no cover
     from collections.abc import Iterable, Mapping
 
     from ._pca_full import Matrix
+    from .estimators import VBPCA
 
 Metric = Literal["prms", "rms", "cost"]
 AllowedFloat = (
@@ -94,6 +93,8 @@ def _fit_candidate(
     cfg: SelectionConfig,
     opts: Mapping[str, object],
 ) -> tuple[dict[str, object], VBPCA]:
+    from .estimators import VBPCA  # Import here to avoid circular dependency
+    
     est = VBPCA(k, **cast("dict[str, object]", dict(opts)))  # type: ignore[arg-type]
     est.fit(x_arr, mask=mask)
 
