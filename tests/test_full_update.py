@@ -302,7 +302,7 @@ def test_dense_observed_indices_should_match_mask_post_normalization() -> None:
     )
 
     ix_nz, jx_nz = _observed_indices(x_norm)
-    ix_m, jx_m = np.nonzero(np.array(mask, dtype=bool, copy=False))
+    ix_m, jx_m = np.nonzero(np.asarray(mask, dtype=bool))
 
     set_nz = _set_of_pairs(ix_nz, jx_nz)
     set_m = _set_of_pairs(ix_m, jx_m)
@@ -350,8 +350,8 @@ def test_dense_mask_and_observed_indices_agree_after_normalization() -> None:
     )
 
     # Dense contract checks
-    x_norm_arr = np.array(x_norm, dtype=float, copy=False)
-    mask_arr = np.array(mask, dtype=bool, copy=False)
+    x_norm_arr = np.asarray(x_norm, dtype=float)
+    mask_arr = np.asarray(mask, dtype=bool)
 
     # (A) Missing entries become exactly 0.0
     assert np.all(x_norm_arr[~mask_arr] == 0.0)

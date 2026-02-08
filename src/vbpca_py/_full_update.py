@@ -192,7 +192,7 @@ def _prepare_data(
 
     x_probe: Matrix | None = None
     if x_probe_opt is not None:
-        x_probe_array = np.array(x_probe_opt, dtype=float, copy=False)
+        x_probe_array = np.asarray(x_probe_opt, dtype=float)
         if x_probe_array.size != 0:
             if sp.issparse(x_probe_opt):
                 x_probe = sp.csr_matrix(x_probe_opt)
@@ -237,7 +237,7 @@ def _build_masks_sparse(
             mask_probe = mask_probe_csr
             x_probe = x_probe_csr
         else:
-            x_probe_arr = np.array(x_probe, dtype=float, copy=False)
+            x_probe_arr = np.asarray(x_probe, dtype=float)
             x_probe = x_probe_arr
             mask_probe = (x_probe_arr != 0).astype(float)
     else:
@@ -255,7 +255,7 @@ def _build_masks_dense(
     Returns:
         Tuple of data, probe, mask, and probe mask.
     """
-    x_arr = np.array(x_data, dtype=float, copy=False)
+    x_arr = np.asarray(x_data, dtype=float)
     mask = ~np.isnan(x_arr)
 
     eps = np.finfo(float).eps
@@ -264,7 +264,7 @@ def _build_masks_dense(
     x_data = x_arr
 
     if x_probe is not None:
-        x_probe_arr = np.array(x_probe, dtype=float, copy=False)
+        x_probe_arr = np.asarray(x_probe, dtype=float)
         x_probe = x_probe_arr
         mask_probe = ~np.isnan(x_probe_arr)
         x_probe_arr[x_probe_arr == 0.0] = eps
@@ -416,7 +416,7 @@ def _initialize_parameters(
                 mu_num = np.array(ctx.x_data.sum(axis=1)).ravel()
             else:
                 mu_num = np.sum(
-                    np.array(ctx.x_data, dtype=float, copy=False),
+                    np.asarray(ctx.x_data, dtype=float),
                     axis=1,
                 )
             # Avoid division by zero: rows with no observations get zero mean.
@@ -594,10 +594,10 @@ def _score_update_fast_dense_no_av(state: ScoreState) -> ScoreState:
             return np.asarray(x_csr[:, j].toarray()).ravel()
 
     else:
-        x_arr = np.array(state.x_data, dtype=float, copy=False)
+        x_arr = np.asarray(state.x_data, dtype=float)
 
         def _x_col(j: int) -> np.ndarray:
-            return np.array(x_arr[:, j], dtype=float, copy=False)
+            return np.asarray(x_arr[:, j], dtype=float)
 
     _n_features, n_samples = state.x_data.shape
     n_components = state.loadings.shape[1]
@@ -655,10 +655,10 @@ def _score_accessors(
             return np.asarray(x_csr[:, j].toarray()).ravel()
 
     else:
-        x_arr = np.array(state.x_data, dtype=float, copy=False)
+        x_arr = np.asarray(state.x_data, dtype=float)
 
         def _x_col(j: int) -> np.ndarray:
-            return np.array(x_arr[:, j], dtype=float, copy=False)
+            return np.asarray(x_arr[:, j], dtype=float)
 
     if sp.issparse(state.mask):
         mask_csr = sp.csr_matrix(state.mask)
@@ -667,10 +667,10 @@ def _score_accessors(
             return np.asarray(mask_csr[:, j].toarray()).ravel()
 
     else:
-        mask_arr = np.array(state.mask, dtype=float, copy=False)
+        mask_arr = np.asarray(state.mask, dtype=float)
 
         def _mask_col(j: int) -> np.ndarray:
-            return np.array(mask_arr[:, j], dtype=float, copy=False)
+            return np.asarray(mask_arr[:, j], dtype=float)
 
     return _x_col, _mask_col, int(state.x_data.shape[1])
 
@@ -782,7 +782,7 @@ def _update_scores(state: ScoreState) -> ScoreState:
         dense_mask = None
         fully_observed = False
         if not sp.issparse(state.mask):
-            dense_mask = np.array(state.mask, dtype=float, copy=False)
+            dense_mask = np.asarray(state.mask, dtype=float)
             fully_observed = bool(np.all(dense_mask > 0))
 
         if dense_mask is not None and fully_observed and not state.loading_covariances:
@@ -809,10 +809,10 @@ def _loadings_accessors(
             return np.asarray(x_csr[i, :].toarray()).ravel()
 
     else:
-        x_arr = np.array(state.x_data, dtype=float, copy=False)
+        x_arr = np.asarray(state.x_data, dtype=float)
 
         def _x_row(i: int) -> np.ndarray:
-            return np.array(x_arr[i, :], dtype=float, copy=False)
+            return np.asarray(x_arr[i, :], dtype=float)
 
     if sp.issparse(state.mask):
         mask_csr = sp.csr_matrix(state.mask)
@@ -821,10 +821,10 @@ def _loadings_accessors(
             return np.asarray(mask_csr[i, :].toarray()).ravel()
 
     else:
-        mask_arr = np.array(state.mask, dtype=float, copy=False)
+        mask_arr = np.asarray(state.mask, dtype=float)
 
         def _mask_row(i: int) -> np.ndarray:
-            return np.array(mask_arr[i, :], dtype=float, copy=False)
+            return np.asarray(mask_arr[i, :], dtype=float)
 
     return _x_row, _mask_row, int(state.x_data.shape[0])
 
@@ -875,10 +875,10 @@ def _loadings_update_fast_dense_no_sv(
             return np.asarray(x_csr[i, :].toarray()).ravel()
 
     else:
-        x_arr = np.array(state.x_data, dtype=float, copy=False)
+        x_arr = np.asarray(state.x_data, dtype=float)
 
         def _x_row(i: int) -> np.ndarray:
-            return np.array(x_arr[i, :], dtype=float, copy=False)
+            return np.asarray(x_arr[i, :], dtype=float)
 
     n_features = state.x_data.shape[0]
     n_components = state.scores.shape[0]
@@ -986,7 +986,7 @@ def _update_loadings(
     sv_contrib = bool(state.score_covariances)
 
     if not sp.issparse(state.mask):
-        dense_mask = np.array(state.mask, dtype=float, copy=False)
+        dense_mask = np.asarray(state.mask, dtype=float)
         fully_observed = bool(np.all(dense_mask > 0))
 
     if dense_mask is not None and fully_observed and not sv_contrib:
