@@ -208,7 +208,7 @@ def _subtract_dense_branch(
 
     x_probe_out = None
     if probe is not None:
-        x_probe = np.array(probe.x, dtype=float, copy=False)
+        x_probe = np.asarray(probe.x, dtype=float)
         if probe.mask is None:
             raise ValueError(ERR_MASK_SHAPE)
         mask_probe = _ensure_dense_mask(
@@ -260,7 +260,7 @@ def subtract_mu(
     # Dense branch
     # ------------------------------------------------------------------
     if not sp.isspmatrix(mask):
-        x_arr = np.array(x, dtype=float, copy=False)
+        x_arr = np.asarray(x, dtype=float)
         return _subtract_dense_branch(mu_col, x_arr, mask, probe, (n_rows, n_cols))
 
     # ------------------------------------------------------------------

@@ -72,7 +72,8 @@ setup(
     name="vbpca_py",
     version="0.1.0",
     description=(
-        "Variational Bayesian PCA (Illin & Raiko 2010) with support for missing data."
+        "Variational Bayesian PCA (Illin & Raiko 2010) with support for missing data "
+        "and missing entries."
     ),
     author="Shany Naim and Joshua Macdonald",
     author_email="shany215.sn@gmail.com, jmacdo16@jh.edu",
@@ -80,8 +81,8 @@ setup(
     packages=find_packages(where="src"),
     ext_modules=ext_modules,
     install_requires=[
-        "numpy",
-        "scipy",
+        "numpy>=1.24",
+        "scipy>=1.10",
     ],
     python_requires=">=3.11",
     zip_safe=False,
