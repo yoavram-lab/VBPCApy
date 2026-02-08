@@ -11,12 +11,12 @@ from vbpca_py.preprocessing import (
 
 __all__ = [
     "VBPCA",
-    "select_n_components",
-    "SelectionConfig",
     "AutoEncoder",
+    "MissingAwareMinMaxScaler",
     "MissingAwareOneHotEncoder",
     "MissingAwareStandardScaler",
-    "MissingAwareMinMaxScaler",
+    "SelectionConfig",
+    "select_n_components",
 ]
 
 __version__ = "0.1.0"

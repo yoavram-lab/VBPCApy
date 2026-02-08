@@ -2,7 +2,7 @@ set shell := ["bash", "-lc"]
 
 # Lint Python sources (excluding tests) using Ruff preview rules.
 lint:
-	ruff check --preview src
+	ruff check --preview --fix src
 
 # Type-check library code.
 typecheck:

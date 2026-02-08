@@ -93,8 +93,8 @@ def _fit_candidate(
     cfg: SelectionConfig,
     opts: Mapping[str, object],
 ) -> tuple[dict[str, object], VBPCA]:
-    from .estimators import VBPCA  # Import here to avoid circular dependency
-    
+    from .estimators import VBPCA  # noqa: PLC0415 # Avoid circular dependency
+
     est = VBPCA(k, **cast("dict[str, object]", dict(opts)))  # type: ignore[arg-type]
     est.fit(x_arr, mask=mask)
 
