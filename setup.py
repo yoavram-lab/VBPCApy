@@ -19,7 +19,8 @@ def get_eigen_include_path() -> str:
     1. EIGEN_INCLUDE_DIR env var
     2. $CONDA_PREFIX/include/eigen3 (Conda/Mamba)
     3. /opt/homebrew/include/eigen3 (Homebrew on Apple Silicon)
-    4. /usr/local/include/eigen3 (fallback)
+    4. /usr/include/eigen3 (Ubuntu/Debian standard location)
+    5. /usr/local/include/eigen3 (fallback)
     """
     env_path = os.environ.get("EIGEN_INCLUDE_DIR")
     if env_path and Path(env_path).exists():
@@ -35,6 +36,11 @@ def get_eigen_include_path() -> str:
     hb_path = Path("/opt/homebrew/include/eigen3")
     if hb_path.exists():
         return str(hb_path)
+
+    # Ubuntu/Debian standard location
+    debian_path = Path("/usr/include/eigen3")
+    if debian_path.exists():
+        return str(debian_path)
 
     # Fallback
     return "/usr/local/include/eigen3"

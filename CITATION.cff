@@ -1,0 +1,44 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+type: software
+title: "VBPCApy: Variational Bayesian PCA with Missing Data Support"
+authors:
+  - family-names: "Naim"
+    given-names: "Shany"
+    email: "shany215.sn@gmail.com"
+  - family-names: "Macdonald"
+    given-names: "Joshua"
+    email: "jmacdo16@jh.edu"
+  - family-names: "Ram"
+    given-names: "Yoav"
+    email: "yoav@yoavram.com"
+repository-code: "https://github.com/yoavram-lab/VBPCApy"
+url: "https://github.com/yoavram-lab/VBPCApy"
+abstract: >
+  Variational Bayesian PCA (Illin and Raiko, 2010) with support for missing data,
+  sparse masks, optional bias terms, and an orthogonal post-rotation to a PCA basis.
+  The implementation follows the original MATLAB reference while adding Python-native
+  APIs and fast C++ extensions for heavy routines.
+keywords:
+  - PCA
+  - dimensionality reduction
+  - Bayesian inference
+  - missing data
+  - variational inference
+  - machine learning
+license: MIT
+version: "0.1.0"
+date-released: "2026-02-08"
+references:
+  - type: article
+    title: "Practical Approaches to Principal Component Analysis in the Presence of Missing Values"
+    authors:
+      - family-names: "Ilin"
+        given-names: "Alexander"
+      - family-names: "Raiko"
+        given-names: "Tapani"
+    journal: "Journal of Machine Learning Research"
+    year: 2010
+    volume: 11
+    start: 1957
+    end: 2000
