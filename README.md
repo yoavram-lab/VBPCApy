@@ -15,7 +15,7 @@ Variational Bayesian PCA (Illin and Raiko, 2010) with support for missing data, 
 - C++ extensions via pybind11 for performance-critical routines.
 - Missing-aware preprocessing utilities (one-hot encode, standardize, min-max, auto-routing) that preserve NaNs/masks for generative reconstruction.
 - `VBPCA` sklearn-like wrapper (fit/transform/inverse_transform) with mask support.
-- Empirical risk minimzation based model selector for number of PCs which best reconstruct the empirical data.
+- Empirical risk minimization based model selector for number of PCs which best reconstruct the empirical data.
 
 ## Installation
 
