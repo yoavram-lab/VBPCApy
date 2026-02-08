@@ -11,6 +11,7 @@ name = "vbpca_py"
 version = "0.1.0"
 description = "Variational Bayesian PCA (Illin & Raiko 2010) with support for missing data and missing entries."
 readme = "README.md"
+license = { text = "MIT" }
 authors = [
     { name = "Shany", email = "shany215.sn@gmail.com" },
     { name = "Joshua Macdonald", email = "jmacdo16@jh.edu" },
