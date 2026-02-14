@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any, cast
 
 import numpy as np
 import scipy.sparse as sp
@@ -47,7 +48,10 @@ def compute_rms(
     """
     # MATLAB: if isempty(X), errMx=[]; rms=NaN
     if sp.issparse(data):
-        data_csr = sp.csr_matrix(data)
+        if isinstance(data, sp.csr_matrix):
+            data_csr = data
+        else:
+            data_csr = sp.csr_matrix(cast("Any", data))
         if data_csr.size == 0:
             return float("nan"), np.array([])
         _validate_shapes(data_csr, loadings, scores)
@@ -129,7 +133,12 @@ def _compute_rms_dense(
         raise ValueError(msg)
 
     if sp.issparse(mask):
-        mask_arr = sp.csr_matrix(mask).toarray()
+        mask_sparse = (
+            mask
+            if isinstance(mask, sp.csr_matrix)
+            else sp.csr_matrix(cast("Any", mask))
+        )
+        mask_arr = mask_sparse.toarray()
     else:
         mask_arr = np.asarray(mask, dtype=float)
 
@@ -199,13 +208,16 @@ def _validate_sparse_mask_matches_structure(
         ValueError: If the provided mask does not match the sparsity pattern.
     """
     if sp.issparse(mask):
-        if not sp.isspmatrix_csr(mask):
-            mask = mask.tocsr()
+        mask_csr = (
+            mask
+            if isinstance(mask, sp.csr_matrix)
+            else sp.csr_matrix(cast("Any", mask))
+        )
         # Compare structure (indptr/indices); mask values are irrelevant beyond
         # nonzero-ness.
         if not (
-            np.array_equal(mask.indptr, x.indptr)
-            and np.array_equal(mask.indices, x.indices)
+            np.array_equal(mask_csr.indptr, x.indptr)
+            and np.array_equal(mask_csr.indices, x.indices)
         ):
             msg = (
                 "For sparse data, mask must match the sparsity pattern of "

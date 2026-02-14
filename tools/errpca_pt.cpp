@@ -18,7 +18,6 @@
 #include <math.h>
 #include <string.h>
 #include "mex.h"
-#include "matrix.h"
 #ifndef NOTHREADS
 #define USETHREADS
 #include <pthread.h>

@@ -69,7 +69,16 @@ pip install .[plot]
 # Optional Octave bridge (only needed to run MATLAB/Octave helpers/tests)
 pip install .[octave]
 # Install everything
-pip install .[dev,data,plot]
+pip install .[dev,data,plot,octave]
+```
+
+**Using uv (recommended for Python env management):**
+```bash
+# Sync core developer environment
+uv sync --extra dev --extra data --extra plot
+
+# Include optional Octave Python bridge packages
+uv sync --extra dev --extra data --extra plot --extra octave
 ```
 
 ## Quick start
@@ -172,7 +181,7 @@ x_recon = auto.inverse_transform(z_recon)     # decode back to original space
 ## Testing and development
 Install in developer mode:
 ```bash
-pip install -e .[dev]
+pip install -e . pytest-cov
 ```
 
 The project uses [just](https://just.systems/) as a command runner. Install it separately:
@@ -198,6 +207,34 @@ just typecheck
 Run the test suite:
 ```bash
 just test
+```
+Run tests with coverage:
+```bash
+just test-cov
+```
+
+### Full legacy parity test requirements
+`just test` runs the standard suite and may skip optional Octave-backed parity tests if Octave tooling is unavailable.
+
+To run **all** parity tests (including sparse MEX-backed regression paths), you must install:
+- `octave`
+- `octave-dev` (provides `mkoctfile` on Ubuntu/Debian)
+
+Example (Ubuntu/Debian):
+```bash
+sudo apt-get install octave octave-dev
+```
+
+Then run:
+```bash
+just test-all
+```
+
+This command rebuilds host-specific MEX helpers in `tools/` before testing.
+
+If you previously ran tests on another OS/architecture, clear stale binaries before rerunning:
+```bash
+just mex-clean
 ```
 Run the entire validation pipeline (lint -> typecheck -> test):
 ```bash

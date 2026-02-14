@@ -59,7 +59,6 @@ dev = [
     "pytest-cov>=4.0",
     "ruff>=0.3.0",
     "mypy>=1.8.0",
-    "just>=1.0",
 ]
 data = ["pandas>=1.5"]
 plot = ["matplotlib>=3.7"]

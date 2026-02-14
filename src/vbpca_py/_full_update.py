@@ -185,8 +185,8 @@ def _prepare_data(
     """
     x_probe_opt = opts.get("xprobe", None)
 
-    if sp.issparse(x):
-        x_data: Matrix = sp.csr_matrix(x)
+    if isinstance(x, sp.csr_matrix):
+        x_data: Matrix = x.copy()
     else:
         x_data = np.array(x, dtype=float).copy()
 
@@ -195,7 +195,7 @@ def _prepare_data(
         x_probe_array = np.asarray(x_probe_opt, dtype=float)
         if x_probe_array.size != 0:
             if sp.issparse(x_probe_opt):
-                x_probe = sp.csr_matrix(x_probe_opt)
+                x_probe = sp.csr_matrix(cast("Any", x_probe_opt))
             else:
                 x_probe = x_probe_array.copy()
 
@@ -319,13 +319,17 @@ def _build_masks_and_counts(
 
 def _observed_indices(x_data: Matrix) -> tuple[np.ndarray, np.ndarray]:
     """Return indices of observed entries in ``x_data``."""
-    if sp.issparse(x_data):
-        x_csr = sp.csr_matrix(x_data)
-        i_idx, j_idx = x_csr.nonzero()
-    else:
-        x_arr = np.asarray(x_data)
-        i_idx, j_idx = np.nonzero(x_arr)
-    return np.array(i_idx), np.array(j_idx)
+    if isinstance(x_data, sp.csr_matrix):
+        i_idx_sparse, j_idx_sparse = x_data.nonzero()
+        return np.asarray(i_idx_sparse, dtype=np.intp), np.asarray(
+            j_idx_sparse, dtype=np.intp
+        )
+
+    x_arr = np.asarray(x_data)
+    i_idx_dense, j_idx_dense = np.nonzero(x_arr)
+    return np.asarray(i_idx_dense, dtype=np.intp), np.asarray(
+        j_idx_dense, dtype=np.intp
+    )
 
 
 def _missing_patterns_info(
@@ -339,7 +343,9 @@ def _missing_patterns_info(
         Number of patterns, pattern lists, and optional pattern index map.
     """
     if opts.get("uniquesv"):
-        mask_arr = np.asarray(mask.toarray()) if sp.issparse(mask) else np.asarray(mask)
+        mask_arr = (
+            mask.toarray() if isinstance(mask, sp.csr_matrix) else np.asarray(mask)
+        )
         n_patterns, obs_patterns, isv = _missing_patterns(mask_arr)
         isv_arr = np.array(isv, dtype=int)
         return int(n_patterns), obs_patterns, isv_arr
@@ -1014,9 +1020,15 @@ def _recompute_rms(ctx: RmsContext) -> tuple[float, float, Matrix]:
         ctx.mask,
         cfg_data,
     )
-    err_mx: Matrix = (
-        sp.csr_matrix(err_mx_raw) if sp.issparse(err_mx_raw) else np.asarray(err_mx_raw)
-    )
+    err_mx: Matrix
+    if sp.issparse(err_mx_raw):
+        err_mx = (
+            err_mx_raw
+            if isinstance(err_mx_raw, sp.csr_matrix)
+            else sp.csr_matrix(cast("Any", err_mx_raw))
+        )
+    else:
+        err_mx = np.asarray(err_mx_raw)
 
     if ctx.n_probe > 0 and ctx.x_probe is not None and ctx.mask_probe is not None:
         cfg_probe = RmsConfig(n_observed=int(ctx.n_probe), num_cpu=1)
