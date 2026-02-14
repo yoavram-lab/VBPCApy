@@ -14,13 +14,13 @@ These tests cover:
 
 Notes on RMS consistency:
 -------------------------
-The implementation normalizes dense inputs by:
+In strict_legacy mode, the implementation normalizes dense inputs by:
 - treating NaNs as missing (mask = ~np.isnan(x)),
 - setting NaNs to 0.0 in the internal centered matrix, and
 - replacing exact zeros with eps to avoid ambiguity with sparse "missing" zeros.
 
-The helper `_compute_masked_rms_dense_like_impl` mirrors that behavior so that
-explicit RMS comparisons match lc["rms"].
+The helper `_compute_masked_rms_dense_like_impl` mirrors strict_legacy behavior
+so explicit RMS comparisons match lc["rms"] in those tests.
 """
 
 from __future__ import annotations
@@ -206,6 +206,21 @@ def test_pca_full_sparse_map_basic() -> None:
     # Va and Vmu should be finite (priors enabled in MAP)
     assert np.all(np.isfinite(va))
     assert np.isfinite(vmu)
+
+
+def test_pca_full_invalid_compat_mode_raises() -> None:
+    """pca_full should reject unsupported compatibility modes."""
+    x = _make_toy_dense_with_nans(n_features=4, n_samples=5, seed=17)
+    with pytest.raises(ValueError, match="compat_mode"):
+        _ = pca_full(
+            x,
+            n_components=2,
+            maxiters=2,
+            autosave=0,
+            display=0,
+            verbose=0,
+            compat_mode="legacy",
+        )
 
 
 # ----------------------------------------------------------------------
@@ -406,6 +421,128 @@ def test_pca_full_tiny_problem_smoke() -> None:
     assert all(np.isfinite(r) for r in result["lc"]["rms"] if not np.isnan(r))
 
 
+def test_pca_full_respects_maxiters_cap() -> None:
+    rng = np.random.default_rng(1234)
+    x = rng.standard_normal((6, 8))
+    result = pca_full(
+        x,
+        n_components=2,
+        maxiters=2,
+        algorithm="vb",
+        autosave=0,
+        display=0,
+        verbose=0,
+    )
+    assert len(result["lc"]["rms"]) <= 3
+
+
+def test_pca_full_earlystop_with_no_probe_is_safe() -> None:
+    rng = np.random.default_rng(202)
+    x = rng.standard_normal((5, 7))
+    result = pca_full(
+        x,
+        n_components=2,
+        maxiters=6,
+        earlystop=1,
+        algorithm="vb",
+        autosave=0,
+        display=0,
+        verbose=0,
+    )
+    assert len(result["lc"]["rms"]) >= 1
+    assert np.all(np.isnan(np.asarray(result["lc"]["prms"], dtype=float)))
+
+
+def test_pca_full_rmsstop_and_cfstop_both_provided() -> None:
+    rng = np.random.default_rng(555)
+    x = rng.standard_normal((5, 9))
+    result = pca_full(
+        x,
+        n_components=2,
+        maxiters=8,
+        rmsstop=np.array([2, 1e-8, 1e-8]),
+        cfstop=np.array([2, 1e-8, 1e-8]),
+        algorithm="vb",
+        autosave=0,
+        display=0,
+        verbose=0,
+    )
+    rms = np.asarray(result["lc"]["rms"], dtype=float)
+    cost = np.asarray(result["lc"]["cost"], dtype=float)
+    assert rms.size >= 1
+    assert rms.size == cost.size
+    assert np.isfinite(cost).any()
+
+
+def test_pca_full_uniquesv_equivalence_when_fully_observed() -> None:
+    rng = np.random.default_rng(808)
+    x = rng.standard_normal((5, 7))
+    init = {
+        "A": rng.standard_normal((5, 2)),
+        "S": rng.standard_normal((2, 7)),
+        "Mu": np.zeros((5, 1), dtype=float),
+        "V": 1.0,
+    }
+
+    out_no = pca_full(
+        x,
+        n_components=2,
+        maxiters=4,
+        uniquesv=0,
+        init=init,
+        rotate2pca=0,
+        autosave=0,
+        display=0,
+        verbose=0,
+    )
+    out_yes = pca_full(
+        x,
+        n_components=2,
+        maxiters=4,
+        uniquesv=1,
+        init=init,
+        rotate2pca=0,
+        autosave=0,
+        display=0,
+        verbose=0,
+    )
+
+    rms_no = float(np.asarray(out_no["lc"]["rms"], dtype=float)[-1])
+    rms_yes = float(np.asarray(out_yes["lc"]["rms"], dtype=float)[-1])
+
+    assert np.isfinite(rms_no)
+    assert np.isfinite(rms_yes)
+    assert abs(rms_no - rms_yes) < 0.5
+
+
+def test_pca_full_bias_toggle_mean_shift_effect() -> None:
+    rng = np.random.default_rng(1200)
+    x = rng.standard_normal((4, 10)) + 3.0  # strong global shift
+
+    out_bias = pca_full(
+        x,
+        n_components=2,
+        maxiters=5,
+        bias=1,
+        rotate2pca=0,
+        autosave=0,
+        display=0,
+        verbose=0,
+    )
+    out_nobias = pca_full(
+        x,
+        n_components=2,
+        maxiters=5,
+        bias=0,
+        rotate2pca=0,
+        autosave=0,
+        display=0,
+        verbose=0,
+    )
+
+    assert np.linalg.norm(out_bias["Mu"]) > np.linalg.norm(out_nobias["Mu"])
+
+
 # ----------------------------------------------------------------------
 # Optional MATLAB regression tests
 # ----------------------------------------------------------------------
@@ -501,3 +638,63 @@ def test_pca_full_matches_matlab_missing_fixture() -> None:
 
     assert rms <= 1e-2
     assert_allclose(V_py, V_mat, rtol=1e-3, atol=1e-6)
+
+
+def test_pca_full_dense_fixture_smoke_map_and_ppca() -> None:
+    fixture = _fixture_path("legacy_pca_full_dense.mat")
+    if not fixture.exists():
+        pytest.skip("MATLAB dense fixture not available")
+
+    mat = loadmat(fixture, squeeze_me=True, struct_as_record=False)
+    x = np.asarray(mat["x"], dtype=float)
+    k = int(mat["k"])
+
+    res_map = pca_full(
+        x,
+        n_components=k,
+        algorithm="map",
+        maxiters=30,
+        autosave=0,
+        display=0,
+        verbose=0,
+    )
+    res_ppca = pca_full(
+        x,
+        n_components=k,
+        algorithm="ppca",
+        maxiters=30,
+        autosave=0,
+        display=0,
+        verbose=0,
+    )
+
+    assert np.isfinite(float(res_map["V"]))
+    assert np.isfinite(float(res_ppca["V"]))
+    assert len(res_map["lc"]["rms"]) >= 1
+    assert len(res_ppca["lc"]["rms"]) >= 1
+
+
+def test_pca_full_missing_fixture_option_surface_smoke() -> None:
+    fixture = _fixture_path("legacy_pca_full_missing.mat")
+    if not fixture.exists():
+        pytest.skip("MATLAB missing-data fixture not available")
+
+    mat = loadmat(fixture, squeeze_me=True, struct_as_record=False)
+    x = np.asarray(mat["x"], dtype=float)
+    k = int(mat["k"])
+
+    out = pca_full(
+        x,
+        n_components=k,
+        algorithm="vb",
+        maxiters=40,
+        uniquesv=1,
+        rotate2pca=1,
+        cfstop=np.array([5, 1e-6, 1e-6]),
+        autosave=0,
+        display=0,
+        verbose=0,
+    )
+
+    assert len(out["lc"]["rms"]) == len(out["lc"]["cost"])
+    assert np.asarray(out["Isv"]).shape[0] == x.shape[1]

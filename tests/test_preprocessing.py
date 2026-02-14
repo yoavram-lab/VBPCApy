@@ -1,6 +1,7 @@
 """Tests for missing-aware preprocessing utilities."""
 
 import numpy as np
+import pytest
 
 from vbpca_py.preprocessing import (
     AutoEncoder,
@@ -76,3 +77,61 @@ def test_autoencoder_mixed_schema_and_inverse() -> None:
     # Missing entries remain NaN
     assert str(x_inv[2, 0]) == "nan"
     assert str(x_inv[2, 1]) == "nan"
+
+
+def test_one_hot_encoder_unknown_category_raise() -> None:
+    x_train = np.array([["a"], ["b"]], dtype=object)
+    x_test = np.array([["c"]], dtype=object)
+
+    enc = MissingAwareOneHotEncoder(handle_unknown="raise")
+    enc.fit(x_train)
+    with pytest.raises(ValueError, match="Unknown category"):
+        enc.transform(x_test)
+
+
+def test_one_hot_encoder_unknown_category_ignore() -> None:
+    x_train = np.array([["a"], ["b"]], dtype=object)
+    x_test = np.array([["c"]], dtype=object)
+
+    enc = MissingAwareOneHotEncoder(handle_unknown="ignore")
+    z = enc.fit_transform(x_train)
+    assert z.shape == (2, 2)
+
+    z_test = enc.transform(x_test)
+    assert z_test.shape == (1, 2)
+    assert np.allclose(z_test, 0.0)
+
+
+def test_autoencoder_column_types_override() -> None:
+    x = np.array(
+        [
+            [1, 10.0],
+            [2, 20.0],
+            [3, 30.0],
+        ],
+        dtype=object,
+    )
+
+    auto = AutoEncoder(
+        column_types=["categorical", "continuous"],
+        cardinality_threshold=1,
+        continuous_scaler="minmax",
+    )
+    z = auto.fit_transform(x)
+    x_back = auto.inverse_transform(z)
+
+    assert z.shape[1] >= 2
+    assert x_back.shape == x.shape
+    assert x_back[0, 0] == 1
+
+
+def test_autoencoder_transform_before_fit_raises() -> None:
+    auto = AutoEncoder()
+    with pytest.raises(RuntimeError, match="not fitted"):
+        auto.transform(np.array([[1.0], [2.0]]))
+
+
+def test_autoencoder_inverse_transform_before_fit_raises() -> None:
+    auto = AutoEncoder()
+    with pytest.raises(RuntimeError, match="not fitted"):
+        auto.inverse_transform(np.array([[0.0], [1.0]]))

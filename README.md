@@ -6,6 +6,19 @@
 
 Variational Bayesian PCA (Illin and Raiko, 2010) with support for missing data, sparse masks, optional bias terms, and an orthogonal post-rotation to a PCA basis. The implementation follows the original MATLAB reference while adding Python-native APIs and fast C++ extensions for heavy routines.
 
+## Statement of need
+
+Missing values are common in scientific and industrial tabular datasets, but many PCA workflows either impute first (which can bias uncertainty estimates) or drop incomplete samples/features. VBPCApy provides a practical Variational Bayesian PCA implementation that models missingness directly, exposes uncertainty-aware outputs, and preserves compatibility with the legacy MATLAB full-rank PCA behavior.
+
+This package targets researchers and practitioners who need:
+- robust latent-factor modeling with incomplete observations,
+- explicit uncertainty terms (posterior covariances, marginal variances), and
+- a Python API suitable for reproducible pipelines while retaining a parity path to legacy workflows.
+
+## Scope and reference behavior
+
+VBPCApy implements the Illin & Raiko (2010) VB-PCA formulation with modern Python ergonomics. The default `compat_mode="strict_legacy"` preserves historical behavior; `compat_mode="modern"` is available for updated semantics in selected preprocessing/masking cases.
+
 ## Features
 - Variational Bayesian PCA on dense or sparse data with explicit missing-entry masks.
 - Optional bias (per-feature mean) estimation and rotation to a PCA-aligned solution.
@@ -123,6 +136,7 @@ x_recon = auto.inverse_transform(z_recon)
 - `probe`: pass probe data/masks to monitor held-out RMS during fitting.
 - `maxiters`, `tol`, `verbose`: convergence control and logging.
 - `rotation`: final orthogonal rotation to a PCA-aligned solution.
+- `compat_mode`: compatibility policy for sparse empty-row/column handling (`strict_legacy` default, `modern` available).
 
 ### Convergence and stopping
 Each fit (including every k tried in `select_n_components`) runs the PCA_FULL EM loop until one of these criteria triggers or `maxiters` is reached:
@@ -138,7 +152,7 @@ Notes:
 - All options are case-insensitive and passed through the `VBPCA` constructor (or forwarded by `select_n_components`).
 - Reference implementation lives in [src/vbpca_py/_pca_full.py](src/vbpca_py/_pca_full.py) and [src/vbpca_py/_converge.py](src/vbpca_py/_converge.py).
 
-### Public API surface
+### API
 All public APIs can be imported directly from `vbpca_py`:
 ```python
 from vbpca_py import (
@@ -213,6 +227,19 @@ Run tests with coverage:
 just test-cov
 ```
 
+Run performance benchmarks (excluded from default CI):
+```bash
+# full perf suite
+just bench
+
+# scaling-only suite
+just bench-scale
+
+# Python vs Octave compare suite
+just bench-octave
+```
+
+
 ### Full legacy parity test requirements
 `just test` runs the standard suite and may skip optional Octave-backed parity tests if Octave tooling is unavailable.
 
@@ -263,7 +290,7 @@ We are committed to providing a welcoming and inclusive environment. Please:
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.edge 
 
 ## Citation
 

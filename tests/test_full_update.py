@@ -12,12 +12,13 @@ Important diagnostic note
 -------------------------
 The dense-data path normalizes data by:
 - mask = ~isnan(x)
-- replacing exact zeros with eps
+- replacing exact zeros with eps in strict_legacy mode
 - replacing NaNs with 0
 
 That means "observed entries" must be defined consistently via the mask,
-NOT via np.nonzero(x_data) after normalization. Several tests below are
-explicitly designed to catch any accidental reliance on nonzeros.
+NOT via np.nonzero(x_data) after normalization. Modern mode enforces this
+directly; strict_legacy retains historical nonzero semantics. Several tests
+below are designed to catch accidental behavior drift.
 """
 
 from __future__ import annotations
@@ -48,6 +49,7 @@ from vbpca_py._full_update import (
     _loadings_update_general,
     _missing_patterns_info,
     _observed_indices,
+    _observed_indices_with_mode,
     _prepare_data,
     _recompute_rms,
     _score_update_fast_dense_no_av,
@@ -155,6 +157,88 @@ def test_build_masks_sparse_basic() -> None:
     assert n_data == float(mask.count_nonzero())
 
 
+def test_prepare_data_forwards_compat_mode_for_sparse_empty_detection() -> None:
+    """_prepare_data should honor compat_mode when pruning sparse rows/cols."""
+    x_sparse = sp.csr_matrix(np.array([[-1.0, 1.0], [0.0, 0.0]], dtype=float))
+
+    opts_strict: dict[str, object] = {
+        "xprobe": None,
+        "earlystop": 0,
+        "init": "random",
+        "verbose": 0,
+        "compat_mode": "strict_legacy",
+    }
+    x_strict, _, _, _, ir_strict, ic_strict = _prepare_data(x_sparse, opts_strict)
+
+    opts_modern: dict[str, object] = {
+        "xprobe": None,
+        "earlystop": 0,
+        "init": "random",
+        "verbose": 0,
+        "compat_mode": "modern",
+    }
+    x_modern, _, _, _, ir_modern, ic_modern = _prepare_data(x_sparse, opts_modern)
+
+    assert x_strict.shape == (0, 2)
+    assert np.array_equal(ir_strict, np.array([], dtype=int))
+    assert np.array_equal(ic_strict, np.array([0, 1]))
+
+    assert x_modern.shape == (1, 2)
+    assert np.array_equal(ir_modern, np.array([0]))
+    assert np.array_equal(ic_modern, np.array([0, 1]))
+
+
+def test_build_masks_dense_strict_legacy_rewrites_observed_zeros_to_eps() -> None:
+    """strict_legacy keeps historical eps substitution for observed zeros."""
+    x = np.array([[0.0, np.nan], [2.0, 0.0]], dtype=float)
+    opts: dict[str, object] = {
+        "xprobe": None,
+        "earlystop": 0,
+        "init": "random",
+        "verbose": 0,
+        "compat_mode": "strict_legacy",
+    }
+
+    x_data, x_probe, *_ = _prepare_data(x, opts)
+    x_norm, _x_probe2, mask, _mask_probe, _n_obs_row, _n_data, _n_probe = (
+        _build_masks_and_counts(x_data, x_probe, opts)
+    )
+
+    x_arr = np.asarray(x_norm, dtype=float)
+    mask_arr = np.asarray(mask, dtype=bool)
+    eps = np.finfo(float).eps
+
+    assert x_arr[0, 0] == eps
+    assert x_arr[1, 1] == eps
+    assert x_arr[0, 1] == 0.0
+    assert np.array_equal(mask_arr, np.array([[True, False], [True, True]]))
+
+
+def test_build_masks_dense_modern_keeps_observed_zeros_exact() -> None:
+    """modern mode should keep observed zeros as zero in dense preprocessing."""
+    x = np.array([[0.0, np.nan], [2.0, 0.0]], dtype=float)
+    opts: dict[str, object] = {
+        "xprobe": None,
+        "earlystop": 0,
+        "init": "random",
+        "verbose": 0,
+        "compat_mode": "modern",
+    }
+
+    x_data, x_probe, *_ = _prepare_data(x, opts)
+    x_norm, _x_probe2, mask, _mask_probe, _n_obs_row, _n_data, _n_probe = (
+        _build_masks_and_counts(x_data, x_probe, opts)
+    )
+
+    x_arr = np.asarray(x_norm, dtype=float)
+    mask_arr = np.asarray(mask, dtype=bool)
+
+    assert x_arr[0, 0] == 0.0
+    assert x_arr[1, 1] == 0.0
+    assert x_arr[0, 1] == 0.0
+    assert np.array_equal(mask_arr, np.array([[True, False], [True, True]]))
+
+
 def test_observed_indices_match_nonzero_dense_raw() -> None:
     """_observed_indices should match np.nonzero for dense input (raw semantics)."""
     x = np.array([[0.0, 1.0], [2.0, 0.0]])
@@ -163,6 +247,28 @@ def test_observed_indices_match_nonzero_dense_raw() -> None:
     exp_i, exp_j = np.nonzero(x)
     assert_allclose(ix, exp_i)
     assert_allclose(jx, exp_j)
+
+
+def test_observed_indices_with_mode_modern_uses_mask_dense() -> None:
+    """modern mode should use mask-defined observed entries for dense inputs."""
+    x = np.array([[0.0, 0.0], [5.0, 0.0]], dtype=float)
+    mask = np.array([[True, True], [True, False]], dtype=bool)
+
+    ix, jx = _observed_indices_with_mode(x, mask, "modern")
+    observed = _set_of_pairs(ix, jx)
+
+    assert observed == {(0, 0), (0, 1), (1, 0)}
+
+
+def test_observed_indices_with_mode_strict_matches_nonzero_dense() -> None:
+    """strict_legacy mode should preserve nonzero-based dense semantics."""
+    x = np.array([[0.0, 0.0], [5.0, 0.0]], dtype=float)
+    mask = np.array([[True, True], [True, False]], dtype=bool)
+
+    ix, jx = _observed_indices_with_mode(x, mask, "strict_legacy")
+    observed = _set_of_pairs(ix, jx)
+
+    assert observed == {(1, 0)}
 
 
 def test_missing_patterns_info_uniquesv_false() -> None:

@@ -420,6 +420,80 @@ def test_sparse_reconstruction_error_validates_shapes() -> None:
         sparse_reconstruction_error(X, A_ok, S_bad_latent)
 
 
+def test_compute_rms_dense_sparse_consistency_on_observed_entries() -> None:
+    rng = np.random.default_rng(3210)
+    n1, n2, k = 6, 7, 3
+
+    obs = rng.random((n1, n2)) > 0.5
+    x_dense = rng.standard_normal((n1, n2))
+    x_dense[~obs] = 0.0
+
+    x_sparse = sp.csr_matrix(x_dense)
+    mask_dense = obs.astype(float)
+    mask_sparse = x_sparse.copy()
+    mask_sparse.data[:] = 1.0
+
+    A = rng.standard_normal((n1, k))
+    S = rng.standard_normal((k, n2))
+
+    cfg_dense = RmsConfig(n_observed=int(np.count_nonzero(mask_dense)), num_cpu=1)
+    cfg_sparse = RmsConfig(n_observed=int(x_sparse.nnz), num_cpu=1)
+
+    rms_dense, err_dense = compute_rms(x_dense, A, S, mask_dense, cfg_dense)
+    rms_sparse, err_sparse = compute_rms(x_sparse, A, S, mask_sparse, cfg_sparse)
+
+    rows, cols = x_sparse.nonzero()
+    np.testing.assert_allclose(rms_dense, rms_sparse, rtol=1e-12, atol=1e-12)
+    np.testing.assert_allclose(
+        np.asarray(err_dense)[rows, cols],
+        err_sparse.toarray()[rows, cols],
+        rtol=1e-12,
+        atol=1e-12,
+    )
+
+
+def test_sparse_reconstruction_error_num_cpu_invariant() -> None:
+    case = _mk_sparse_case(seed=777)
+    err_1 = sparse_reconstruction_error(case["X"], case["A"], case["S"], num_cpu=1)
+    err_4 = sparse_reconstruction_error(case["X"], case["A"], case["S"], num_cpu=4)
+
+    np.testing.assert_array_equal(err_1.indptr, err_4.indptr)
+    np.testing.assert_array_equal(err_1.indices, err_4.indices)
+    np.testing.assert_allclose(err_1.data, err_4.data, rtol=1e-12, atol=1e-12)
+
+
+def test_compute_rms_tall_and_wide_shapes_smoke() -> None:
+    rng = np.random.default_rng(909)
+    # tall matrix
+    x_tall = rng.standard_normal((20, 5))
+    m_tall = np.ones_like(x_tall)
+    a_tall = rng.standard_normal((20, 2))
+    s_tall = rng.standard_normal((2, 5))
+    r_tall, _ = compute_rms(
+        x_tall,
+        a_tall,
+        s_tall,
+        m_tall,
+        RmsConfig(n_observed=int(m_tall.size), num_cpu=1),
+    )
+
+    # wide matrix
+    x_wide = rng.standard_normal((5, 20))
+    m_wide = np.ones_like(x_wide)
+    a_wide = rng.standard_normal((5, 2))
+    s_wide = rng.standard_normal((2, 20))
+    r_wide, _ = compute_rms(
+        x_wide,
+        a_wide,
+        s_wide,
+        m_wide,
+        RmsConfig(n_observed=int(m_wide.size), num_cpu=1),
+    )
+
+    assert np.isfinite(r_tall)
+    assert np.isfinite(r_wide)
+
+
 # ----------------------------
 # Tests: Octave regression
 # ----------------------------

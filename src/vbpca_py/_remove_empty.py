@@ -31,7 +31,10 @@ Matrix = Dense | Sparse
 # --------------------------------------------------------------------------- #
 # Internal helpers
 # --------------------------------------------------------------------------- #
-def _nonempty_indices(x: Matrix) -> tuple[np.ndarray, np.ndarray]:
+def _nonempty_indices(
+    x: Matrix,
+    compat_mode: str,
+) -> tuple[np.ndarray, np.ndarray]:
     """Return indices of non-empty rows and columns.
 
     For dense ``x``, emptiness means all-NaN.
@@ -43,8 +46,14 @@ def _nonempty_indices(x: Matrix) -> tuple[np.ndarray, np.ndarray]:
     """
     if sp.isspmatrix(x):
         x_csr = sp.csr_matrix(x)
-        col_sums = np.asarray(x_csr.sum(axis=0)).ravel()
-        row_sums = np.asarray(x_csr.sum(axis=1)).ravel()
+        if compat_mode == "modern":
+            abs_sums = x_csr.copy()
+            abs_sums.data = np.abs(abs_sums.data)
+            col_sums = np.asarray(abs_sums.sum(axis=0)).ravel()
+            row_sums = np.asarray(abs_sums.sum(axis=1)).ravel()
+        else:
+            col_sums = np.asarray(x_csr.sum(axis=0)).ravel()
+            row_sums = np.asarray(x_csr.sum(axis=1)).ravel()
         ic = np.where(col_sums != 0)[0]
         ir = np.where(row_sums != 0)[0]
     else:
@@ -159,6 +168,8 @@ def remove_empty_entries(
     x: Matrix,
     x_probe: Matrix | None,
     init: InitType,
+    *,
+    compat_mode: str = "strict_legacy",
 ) -> tuple[Matrix, Matrix | None, np.ndarray, np.ndarray, InitType]:
     """Remove rows and columns that are entirely empty and update ``init``.
 
@@ -172,6 +183,10 @@ def remove_empty_entries(
             keys ``"A"``, ``"Av"``, ``"S"``, and ``"Sv"`` are sliced
             consistently with the retained rows and columns. Non-dict
             values are passed through unchanged.
+        compat_mode:
+            Compatibility mode for sparse empty-row/column handling.
+            ``"strict_legacy"`` preserves sum-based legacy behavior;
+            ``"modern"`` uses absolute sums.
 
     Returns:
         A tuple ``(x_out, x_probe_out, ir, ic, init_out)`` where matrices
@@ -179,12 +194,19 @@ def remove_empty_entries(
         columns.
 
     Raises:
+        ValueError: If ``compat_mode`` is not one of
+            ``{"strict_legacy", "modern"}``.
         RuntimeError: If slicing yields ``None`` for non-null input.
     """
+    mode = compat_mode.strip().lower()
+    if mode not in {"strict_legacy", "modern"}:
+        msg = "compat_mode must be one of {'strict_legacy', 'modern'}."
+        raise ValueError(msg)
+
     n_rows_orig, n_cols_orig = x.shape
 
     # Identify kept rows/columns
-    ir, ic = _nonempty_indices(x)
+    ir, ic = _nonempty_indices(x, mode)
 
     # Fast path: nothing to remove
     if ir.size == n_rows_orig and ic.size == n_cols_orig:
