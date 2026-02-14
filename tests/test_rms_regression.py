@@ -207,7 +207,13 @@ def _mk_sparse_case(seed: int = 1) -> dict[str, Any]:
 
 def _find_existing_errpca_mex(tools: Path) -> list[Path]:
     # Extensions vary by platform; match anything that starts with errpca_pt.
-    return sorted([p for p in tools.glob("errpca_pt.*") if p.is_file()])
+    return sorted(
+        [
+            p
+            for p in tools.glob("errpca_pt.*")
+            if p.is_file() and p.suffix not in {".cpp", ".m", ".py", ".pyi"}
+        ]
+    )
 
 
 @pytest.fixture(scope="session")

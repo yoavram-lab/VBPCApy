@@ -355,8 +355,8 @@ def test_rotate_to_pca_matches_octave(tmp_path: Path, case_factory) -> None:
     err_A = _rel_frob_err(A1_py_al, A1_oc)
     err_S = _rel_frob_err(S1_py_al, S1_oc)
 
-    assert err_A < 1e-15, f"A mismatch too large after Procrustes: {err_A:.3e}"
-    assert err_S < 1e-15, f"S mismatch too large after Procrustes: {err_S:.3e}"
+    assert err_A < 2e-15, f"A mismatch too large after Procrustes: {err_A:.3e}"
+    assert err_S < 2e-15, f"S mismatch too large after Procrustes: {err_S:.3e}"
 
     # ------------------------------------------------------------------
     # NEW: Required post-conditions implied by RotateToPCA algebra

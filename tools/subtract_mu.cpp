@@ -13,7 +13,6 @@
 #include <math.h>
 #include <string.h>
 #include "mex.h"
-#include "matrix.h"
 
 #define EPS 1e-15
 

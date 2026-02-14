@@ -17,6 +17,7 @@ MATLAB semantic alignment notes (cf_full.m):
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any, cast
 
 import numpy as np
 import scipy.sparse as sp
@@ -172,13 +173,15 @@ def _ensure_no_nan_on_observed(
         return
 
     if sp.issparse(mask_out):
+        mask_csr = sp.csr_matrix(cast("Any", mask_out))
         if sp.issparse(x_clean):
-            if np.isnan(np.asarray(x_clean.data)).any():
+            x_csr = sp.csr_matrix(cast("Any", x_clean))
+            if np.isnan(np.asarray(x_csr.data)).any():
                 msg = ERR_NAN_ON_OBSERVED
                 raise ValueError(msg)
             return
 
-        rows, cols = mask_out.nonzero()
+        rows, cols = mask_csr.nonzero()
         has_nan = rows.size and np.isnan(np.asarray(x_clean))[rows, cols].any()
         if has_nan:
             msg = ERR_NAN_ON_OBSERVED
@@ -210,24 +213,30 @@ def _build_mask_and_clean_x(
         ValueError: If ``mask`` and ``x`` shapes differ or observed entries
         contain NaNs.
     """
+    x_clean: np.ndarray | sp.csr_matrix
+    mask_out: np.ndarray | sp.csr_matrix
+
     if mask is None:
         if sp.issparse(x):
-            x_csr = sp.csr_matrix(x)
-            mask_out = sp.csr_matrix(x_csr, copy=True)
-            mask_out.data = np.ones_like(mask_out.data, dtype=bool)
+            x_csr = sp.csr_matrix(cast("Any", x))
+            mask_csr = sp.csr_matrix(x_csr, copy=True)
+            mask_csr.data = np.ones_like(mask_csr.data, dtype=bool)
             x_clean = x_csr
+            mask_out = mask_csr
         else:
             x_arr = np.asarray(x, dtype=float)
-            mask_out = ~np.isnan(x_arr)
-            x_clean = np.where(mask_out, x_arr, 0.0)
+            mask_dense = ~np.isnan(x_arr)
+            mask_out = mask_dense
+            x_clean = np.where(mask_dense, x_arr, 0.0)
     elif sp.issparse(x):
-        x_csr = sp.csr_matrix(x)
-        mask_out = (
-            sp.csr_matrix(mask)
+        x_csr = sp.csr_matrix(cast("Any", x))
+        mask_csr = (
+            sp.csr_matrix(cast("Any", mask))
             if sp.issparse(mask)
             else sp.csr_matrix(np.asarray(mask))
         )
         x_clean = x_csr
+        mask_out = mask_csr
     else:
         x_arr = np.asarray(x, dtype=float)
         mask_out = np.asarray(mask)
@@ -238,15 +247,21 @@ def _build_mask_and_clean_x(
         raise ValueError(msg)
 
     if sp.issparse(mask_out):
-        row_idx, col_idx = mask_out.nonzero()
+        mask_csr = sp.csr_matrix(cast("Any", mask_out))
+        row_idx_sparse, col_idx_sparse = mask_csr.nonzero()
+        row_idx_out = np.asarray(row_idx_sparse, dtype=np.intp)
+        col_idx_out = np.asarray(col_idx_sparse, dtype=np.intp)
     else:
-        mask_bool = _coerce_dense_mask_to_bool(np.asarray(mask_out))
+        mask_dense = np.asarray(mask_out)
+        mask_bool = _coerce_dense_mask_to_bool(mask_dense)
         mask_out = mask_bool
-        row_idx, col_idx = np.where(mask_bool)
+        row_idx_dense, col_idx_dense = np.where(mask_bool)
+        row_idx_out = np.asarray(row_idx_dense, dtype=np.intp)
+        col_idx_out = np.asarray(col_idx_dense, dtype=np.intp)
 
-    _ensure_no_nan_on_observed(mask_out, x_clean, mask, row_idx, col_idx)
+    _ensure_no_nan_on_observed(mask_out, x_clean, mask, row_idx_out, col_idx_out)
 
-    return x_clean, mask_out, row_idx, col_idx
+    return x_clean, mask_out, row_idx_out, col_idx_out
 
 
 def _validate_score_pattern_index(
@@ -358,8 +373,14 @@ def _center_x_by_mu(
     if sp.issparse(x_clean):
         # Use the same semantics as subtract_mu MEX: shift stored entries by Mu[row].
         # mask is ignored for sparse, but the API requires something; pass mask_out.
+        x_sparse = sp.csr_matrix(cast("Any", x_clean))
+        mask_sparse = (
+            sp.csr_matrix(cast("Any", mask_out))
+            if sp.issparse(mask_out)
+            else sp.csr_matrix(np.asarray(mask_out))
+        )
         x_out, _ = _subtract_mu_mean(
-            mu, x_clean, mask_out, probe=None, update_bias=True
+            mu, x_sparse, mask_sparse, probe=None, update_bias=True
         )
         return x_out
 

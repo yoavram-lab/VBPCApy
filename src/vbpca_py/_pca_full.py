@@ -15,7 +15,7 @@ import logging
 import time
 from collections.abc import MutableMapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, SupportsIndex, SupportsInt, cast
+from typing import TYPE_CHECKING, Any, SupportsIndex, SupportsInt, cast
 
 import numpy as np
 import scipy.sparse as sp
@@ -185,7 +185,7 @@ class TrainingState:
     model: ModelState
     lc: dict[str, list[float]]
     dsph: dict[str, object]
-    err_mx: object
+    err_mx: np.ndarray | sp.spmatrix | None
     a_old: np.ndarray
     time_start: float
 
@@ -886,7 +886,7 @@ def _pack_result(final: FinalState) -> dict[str, object]:
     }
 
 
-def _as_dense_err_matrix(err_mx: object) -> np.ndarray:
+def _as_dense_err_matrix(err_mx: np.ndarray | sp.spmatrix | None) -> np.ndarray:
     """Ensure the bias updater sees a dense numeric array for err_mx.
 
     In sparse-input modes, the RMS helper may return sparse matrices or other
@@ -899,7 +899,12 @@ def _as_dense_err_matrix(err_mx: object) -> np.ndarray:
     if err_mx is None:
         return np.zeros((0, 0), dtype=float)
     if sp.issparse(err_mx):
-        return np.asarray(err_mx.toarray(), dtype=float)
+        err_sparse = (
+            err_mx
+            if isinstance(err_mx, sp.csr_matrix)
+            else sp.csr_matrix(cast("Any", err_mx))
+        )
+        return np.asarray(err_sparse.toarray(), dtype=float)
     return np.asarray(err_mx, dtype=float)
 
 

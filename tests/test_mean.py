@@ -65,9 +65,21 @@ def _octave_exist_file(symbol: str) -> int:
 
 
 def _octave_can_call_subtract_mu_mex() -> bool:
-    """True if octave can resolve subtract_mu on tools path (mex or file)."""
+    """True if Octave can resolve and execute subtract_mu from tools path."""
     try:
-        return _octave_exist_file("subtract_mu") != 0
+        if _octave_exist_file("subtract_mu") == 0:
+            return False
+
+        tools = str(_tools_dir()).replace("\\", "/")
+        smoke = (
+            f"addpath('{tools}');"
+            "x=sparse(1,1,1,1,1);"
+            "mu=1;"
+            "y=subtract_mu(x,mu);"
+            "if ~issparse(y), error('subtract_mu did not return sparse output'); end;"
+        )
+        _run_octave_eval(smoke)
+        return True
     except Exception:
         return False
 
