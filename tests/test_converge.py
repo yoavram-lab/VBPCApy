@@ -286,3 +286,37 @@ def test_earlystop_has_priority_over_rms_and_cost() -> None:
 
     msg = convergence_check(opts, lc, angle_a=1.0, sd_iter=None)
     assert "early" in msg.lower()
+
+
+def test_rms_plateau_message_contains_window_info() -> None:
+    opts = {
+        "minangle": 0.0,
+        "earlystop": False,
+        "rmsstop": [2, 1e-3, 1e-3],
+        "cfstop": None,
+    }
+    lc = _lc(
+        rms=[0.5, 0.4, 0.4001, 0.4002],
+        prms=[1.0, 0.9, 0.8, 0.8],
+        cost=[10.0, 9.0, 8.5, 8.4],
+    )
+    msg = convergence_check(opts, lc, angle_a=1.0, sd_iter=None)
+    assert "RMS" in msg
+    assert "over 2 iterations" in msg
+
+
+def test_cost_plateau_message_contains_window_info() -> None:
+    opts = {
+        "minangle": 0.0,
+        "earlystop": False,
+        "rmsstop": None,
+        "cfstop": [2, 1e-3, 1e-3],
+    }
+    lc = _lc(
+        rms=[0.5, 0.4, 0.3, 0.2],
+        prms=[1.0, 0.9, 0.8, 0.7],
+        cost=[8.0, 7.0, 7.0004, 7.0006],
+    )
+    msg = convergence_check(opts, lc, angle_a=1.0, sd_iter=None)
+    assert "cost" in msg
+    assert "over 2 iterations" in msg

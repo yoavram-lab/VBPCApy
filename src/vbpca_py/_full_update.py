@@ -205,6 +205,7 @@ def _prepare_data(
         x_data,
         x_probe,
         opts["init"],
+        compat_mode=str(opts.get("compat_mode", "strict_legacy")),
     )
     # Carry updated init option forward.
     opts["init"] = init_opt
@@ -249,6 +250,7 @@ def _build_masks_sparse(
 def _build_masks_dense(
     x_data: Matrix,
     x_probe: Matrix | None,
+    compat_mode: str,
 ) -> tuple[Matrix, Matrix | None, Matrix, Matrix | None]:
     """Build masks and normalized data for dense inputs.
 
@@ -258,8 +260,11 @@ def _build_masks_dense(
     x_arr = np.asarray(x_data, dtype=float)
     mask = ~np.isnan(x_arr)
 
+    mode = compat_mode.strip().lower()
+    use_eps_for_zeros = mode == "strict_legacy"
     eps = np.finfo(float).eps
-    x_arr[x_arr == 0.0] = eps
+    if use_eps_for_zeros:
+        x_arr[x_arr == 0.0] = eps
     x_arr[np.isnan(x_arr)] = 0.0
     x_data = x_arr
 
@@ -267,7 +272,8 @@ def _build_masks_dense(
         x_probe_arr = np.asarray(x_probe, dtype=float)
         x_probe = x_probe_arr
         mask_probe = ~np.isnan(x_probe_arr)
-        x_probe_arr[x_probe_arr == 0.0] = eps
+        if use_eps_for_zeros:
+            x_probe_arr[x_probe_arr == 0.0] = eps
         x_probe_arr[np.isnan(x_probe_arr)] = 0.0
     else:
         mask_probe = None
@@ -288,7 +294,11 @@ def _build_masks_and_counts(
     if sp.issparse(x_data):
         x_data, x_probe, mask, mask_probe = _build_masks_sparse(x_data, x_probe)
     else:
-        x_data, x_probe, mask, mask_probe = _build_masks_dense(x_data, x_probe)
+        x_data, x_probe, mask, mask_probe = _build_masks_dense(
+            x_data,
+            x_probe,
+            str(opts.get("compat_mode", "strict_legacy")),
+        )
 
     if sp.issparse(mask):
         n_obs_row = np.array(mask.sum(axis=1)).ravel()
@@ -330,6 +340,27 @@ def _observed_indices(x_data: Matrix) -> tuple[np.ndarray, np.ndarray]:
     return np.asarray(i_idx_dense, dtype=np.intp), np.asarray(
         j_idx_dense, dtype=np.intp
     )
+
+
+def _observed_indices_with_mode(
+    x_data: Matrix,
+    mask: Matrix,
+    compat_mode: str,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return observed indices according to compatibility mode.
+
+    In ``strict_legacy`` mode this matches historical nonzero semantics.
+    In ``modern`` mode for dense inputs this uses the explicit observation
+    mask, decoupling observedness from numeric normalization conventions.
+    """
+    mode = compat_mode.strip().lower()
+    if mode == "modern" and not sp.issparse(x_data):
+        mask_arr = np.asarray(mask, dtype=bool)
+        i_idx_dense, j_idx_dense = np.nonzero(mask_arr)
+        return np.asarray(i_idx_dense, dtype=np.intp), np.asarray(
+            j_idx_dense, dtype=np.intp
+        )
+    return _observed_indices(x_data)
 
 
 def _missing_patterns_info(

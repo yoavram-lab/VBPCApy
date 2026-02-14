@@ -32,6 +32,26 @@ test:
 test-cov:
 	pytest -q --cov=src/vbpca_py --cov-report=term-missing
 
+# Run performance benchmarks (excluded from default test/ci runs).
+bench:
+	pytest -q -m perf --benchmark-only --benchmark-sort=mean
+
+# Run only scaling benchmarks across increasing matrix sizes.
+bench-scale:
+	pytest -q -m perf --benchmark-only -k scaling --benchmark-sort=mean
+
+# Run Python vs Octave comparison benchmarks (Octave test auto-skips if unavailable).
+bench-octave:
+	pytest -q -m perf --benchmark-only -k compare_dense --benchmark-sort=mean
+
+# Save benchmark baselines per compat mode for later comparisons.
+bench-save:
+	pytest -q -m perf --benchmark-only --benchmark-save=compat
+
+# Compare current benchmarks with the latest saved baseline.
+bench-compare:
+	pytest -q -m perf --benchmark-only --benchmark-compare --benchmark-sort=mean
+
 # Ensure Octave + mkoctfile are installed for full legacy parity tests.
 check-octave:
 	command -v octave >/dev/null || (echo "Missing octave. Install Octave first." && exit 1)

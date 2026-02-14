@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 from vbpca_py.model_selection import SelectionConfig, select_n_components
 
@@ -73,3 +74,61 @@ def test_select_n_components_falls_back_when_prms_missing() -> None:
     assert best_k in (1, 2)
     assert np.isfinite(best_metrics["rms"]) or np.isfinite(best_metrics["prms"])
     assert len(trace) == 2
+
+
+def test_select_n_components_rejects_invalid_metric() -> None:
+    rng = np.random.default_rng(3)
+    x = _low_rank_data(rng, n_features=4, n_samples=6, rank=1)
+
+    cfg = SelectionConfig(metric="rms")
+    cfg.metric = "bad"  # type: ignore[assignment]
+
+    with pytest.raises(ValueError, match="metric must be one of"):
+        select_n_components(x, config=cfg)
+
+
+def test_select_n_components_normalizes_component_candidates() -> None:
+    rng = np.random.default_rng(4)
+    x = _low_rank_data(rng, n_features=5, n_samples=7, rank=2)
+
+    best_k, _, trace, _ = select_n_components(
+        x,
+        components=[0, -1, 2, 2, 1],
+        config=SelectionConfig(metric="rms", compute_explained_variance=False),
+        maxiters=30,
+        verbose=0,
+    )
+
+    # _normalize_components keeps only unique positive values in input order.
+    assert [entry["k"] for entry in trace] == [2, 1]
+    assert best_k in (1, 2)
+
+
+def test_select_n_components_empty_after_normalization_raises() -> None:
+    rng = np.random.default_rng(5)
+    x = _low_rank_data(rng, n_features=4, n_samples=5, rank=1)
+
+    with pytest.raises(ValueError, match="at least one positive integer"):
+        select_n_components(x, components=[0, -2, -3])
+
+
+def test_select_n_components_patience_stops_early() -> None:
+    rng = np.random.default_rng(6)
+    x = _low_rank_data(rng, n_features=6, n_samples=10, rank=1)
+
+    cfg = SelectionConfig(
+        metric="rms",
+        patience=0,
+        max_trials=None,
+        compute_explained_variance=False,
+    )
+
+    _, _, trace, _ = select_n_components(
+        x,
+        components=[1, 2, 3, 4],
+        config=cfg,
+        maxiters=20,
+        verbose=0,
+    )
+
+    assert 1 <= len(trace) <= 4

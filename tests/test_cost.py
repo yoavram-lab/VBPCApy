@@ -1291,3 +1291,57 @@ def test_cost_regression_sparse_cf_full_octave_optional(
     np.testing.assert_allclose(cost_py_a, cost_a_oc, rtol=1e-10, atol=1e-10)
     np.testing.assert_allclose(cost_py_mu, cost_mu_oc, rtol=1e-10, atol=1e-10)
     np.testing.assert_allclose(cost_py_s, cost_s_oc, rtol=1e-10, atol=1e-10)
+
+
+def test_cost_mask_dtype_equivalence_dense() -> None:
+    rng = np.random.default_rng(1337)
+    x = rng.standard_normal((4, 5))
+    a = rng.standard_normal((4, 2))
+    s = rng.standard_normal((2, 5))
+    mu = rng.standard_normal(4)
+
+    mask_bool = (rng.random((4, 5)) > 0.2).astype(bool)
+    mask_int = mask_bool.astype(int)
+    mask_float = mask_bool.astype(float)
+
+    p_bool = CostParams(mu=mu, noise_variance=1.0, mask=mask_bool)
+    p_int = CostParams(mu=mu, noise_variance=1.0, mask=mask_int)
+    p_float = CostParams(mu=mu, noise_variance=1.0, mask=mask_float)
+
+    c_bool = compute_full_cost(x, a, s, p_bool)
+    c_int = compute_full_cost(x, a, s, p_int)
+    c_float = compute_full_cost(x, a, s, p_float)
+
+    np.testing.assert_allclose(c_bool, c_int, rtol=1e-12, atol=1e-12)
+    np.testing.assert_allclose(c_bool, c_float, rtol=1e-12, atol=1e-12)
+
+
+def test_cost_mu_prior_variance_zero_with_mu_variances_raises() -> None:
+    x = np.array([[1.0, 2.0], [3.0, 4.0]])
+    a = np.eye(2)
+    s = np.eye(2)
+    params = CostParams(
+        mu=np.array([0.2, -0.1]),
+        noise_variance=1.0,
+        mask=np.ones_like(x),
+        loading_priors=np.array([1.0, 1.0]),
+        mu_variances=np.array([0.1, 0.2]),
+        mu_prior_variance=0.0,
+    )
+    with pytest.raises(ValueError, match="mu_prior_variance"):
+        compute_full_cost(x, a, s, params)
+
+
+def test_cost_raises_when_n_data_non_positive_with_sxv() -> None:
+    x = np.array([[1.0, 2.0], [3.0, 4.0]])
+    a = np.eye(2)
+    s = np.eye(2)
+    params = CostParams(
+        mu=np.zeros(2),
+        noise_variance=1.0,
+        mask=np.ones_like(x),
+        s_xv=1.0,
+        n_data=0,
+    )
+    with pytest.raises(ValueError, match="n_data must be positive"):
+        compute_full_cost(x, a, s, params)

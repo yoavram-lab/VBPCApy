@@ -39,7 +39,7 @@ from ._full_update import (
     _final_rotation,
     _initialize_parameters,
     _missing_patterns_info,
-    _observed_indices,
+    _observed_indices_with_mode,
     _prepare_data,
     _recompute_rms,
     _update_bias,
@@ -57,6 +57,7 @@ logger = logging.getLogger(__name__)
 Array = np.ndarray
 Sparse = sp.csr_matrix
 Matrix = Array | Sparse
+_ALLOWED_COMPAT_MODES = {"strict_legacy", "modern"}
 
 
 def _coerce_int(
@@ -243,7 +244,11 @@ def _prepare_problem(x: Matrix, opts: MutableMapping[str, object]) -> PreparedPr
     x_data, x_probe, mask, mask_probe, n_obs_row, n_data, n_probe = (
         _build_masks_and_counts(x_data, x_probe, opts)
     )
-    ix_obs, jx_obs = _observed_indices(x_data)
+    ix_obs, jx_obs = _observed_indices_with_mode(
+        x_data,
+        mask,
+        str(opts.get("compat_mode", "strict_legacy")),
+    )
 
     pattern_info = _missing_patterns_info(mask, opts, n_samples=x_data.shape[1])
 
@@ -918,6 +923,10 @@ def _build_options(kwargs: Mapping[str, object]) -> dict[str, object]:
 
     Returns:
         Options dictionary after applying defaults and user overrides.
+
+    Raises:
+        ValueError: If ``compat_mode`` is not one of
+            ``{"strict_legacy", "modern"}``.
     """
     opts_default: dict[str, object] = {
         "init": "random",
@@ -936,9 +945,21 @@ def _build_options(kwargs: Mapping[str, object]) -> dict[str, object]:
         "xprobe": None,
         "rotate2pca": 1,
         "display": 0,
+        "compat_mode": "strict_legacy",
     }
 
     opts, wrnmsg = _options(opts_default, **kwargs)
+
+    compat_mode_raw = opts.get("compat_mode", "strict_legacy")
+    compat_mode = str(compat_mode_raw).strip().lower()
+    if compat_mode not in _ALLOWED_COMPAT_MODES:
+        msg = (
+            "compat_mode must be one of {'strict_legacy', 'modern'} "
+            f"(got {compat_mode_raw!r})."
+        )
+        raise ValueError(msg)
+    opts["compat_mode"] = compat_mode
+
     if wrnmsg:
         logger.warning("pca_full options warning: %s", wrnmsg)
     return opts

@@ -1,6 +1,7 @@
 """Tests for vbpca_py._rmempty.remove_empty_entries."""
 
 import numpy as np
+import pytest
 import scipy.sparse as sp
 
 from vbpca_py._remove_empty import remove_empty_entries
@@ -217,3 +218,36 @@ def test_x_probe_none_is_preserved() -> None:
     assert x_out.shape == (1, 1)
     assert x_probe_out is None
     assert init_out is None
+
+
+def test_sparse_cancellation_behavior_differs_by_compat_mode() -> None:
+    """strict_legacy may drop cancellation rows/cols; modern keeps nonzero-support."""
+    x = sp.csr_matrix(np.array([[-1.0, 1.0], [0.0, 0.0]], dtype=float))
+
+    x_strict, _, ir_strict, ic_strict, _ = remove_empty_entries(
+        x,
+        None,
+        None,
+        compat_mode="strict_legacy",
+    )
+    x_modern, _, ir_modern, ic_modern, _ = remove_empty_entries(
+        x,
+        None,
+        None,
+        compat_mode="modern",
+    )
+
+    assert np.array_equal(ir_strict, np.array([], dtype=int))
+    assert np.array_equal(ic_strict, np.array([0, 1]))
+    assert x_strict.shape == (0, 2)
+
+    assert np.array_equal(ir_modern, np.array([0]))
+    assert np.array_equal(ic_modern, np.array([0, 1]))
+    assert x_modern.shape == (1, 2)
+
+
+def test_remove_empty_invalid_compat_mode_raises() -> None:
+    """An invalid compat_mode should fail fast with a clear error."""
+    x = np.array([[1.0, np.nan], [2.0, 3.0]], dtype=float)
+    with pytest.raises(ValueError, match="compat_mode"):
+        remove_empty_entries(x, None, None, compat_mode="legacy")
