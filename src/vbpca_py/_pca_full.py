@@ -15,7 +15,7 @@ import logging
 import time
 from collections.abc import MutableMapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, SupportsIndex, SupportsInt, cast
+from typing import TYPE_CHECKING, SupportsIndex, SupportsInt, cast
 
 import numpy as np
 import scipy.sparse as sp
@@ -127,7 +127,10 @@ def pca_full(x: Matrix, n_components: int, **kwargs: object) -> dict[str, object
     )
     training = _maybe_finalize_rotation(prepared=prepared, training=training, opts=opts)
     final = _restore_original_shape(prepared=prepared, training=training)
-    return _pack_result(final)
+    return _pack_result(
+        final,
+        include_diagnostics=bool(opts.get("return_diagnostics", True)),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -219,6 +222,7 @@ class IterationConfig:
     use_prior: bool
     rotate_each_iter: bool
     verbose: int
+    num_cpu: int
     opts: MutableMapping[str, object]
 
 
@@ -396,6 +400,7 @@ def _run_training_loop(
         use_prior=use_prior,
         rotate_each_iter=bool(opts.get("rotate2pca", 0)),
         verbose=_int_opt(opts.get("verbose", 0)),
+        num_cpu=max(0, _int_opt(opts.get("num_cpu", 1), default=1)),
         opts=opts,
     )
 
@@ -435,7 +440,7 @@ def _run_training_loop(
     return training
 
 
-def _iteration_step(ctx: IterationContext) -> None:
+def _iteration_step(ctx: IterationContext) -> None:  # noqa: PLR0914
     """One full iteration of updates; mutates ``ctx.training`` in place."""
     training = ctx.training
     m = training.model
@@ -464,11 +469,14 @@ def _iteration_step(ctx: IterationContext) -> None:
     ctx.bias_state.noise_var = float(m.noise_var)
     ctx.bias_state.vmu = float(m.vmu)
 
-    err_mx_arr = _as_dense_err_matrix(training.err_mx)
     ctx.bias_state, ctx.centering_state = _update_bias(
         bias_enabled=bool(cfg.opts["bias"]),
         bias_state=ctx.bias_state,
-        err_mx=err_mx_arr,
+        err_mx=(
+            training.err_mx
+            if training.err_mx is not None
+            else np.zeros((0, 0), dtype=float)
+        ),
         centering=ctx.centering_state,
     )
     m.mu = ctx.bias_state.mu
@@ -476,6 +484,8 @@ def _iteration_step(ctx: IterationContext) -> None:
 
     x_data = ctx.centering_state.x_data
     x_probe = ctx.centering_state.x_probe
+
+    score_x_csr, score_x_csc = _coerce_sparse_views(x_data)
 
     # 3) Scores
     score_state = ScoreState(
@@ -490,6 +500,8 @@ def _iteration_step(ctx: IterationContext) -> None:
         noise_var=float(m.noise_var),
         eye_components=cfg.eye_components,
         verbose=cfg.verbose,
+        x_csr=score_x_csr,
+        x_csc=score_x_csc,
     )
     score_state = _update_scores(score_state)
     m.s = score_state.scores
@@ -509,6 +521,8 @@ def _iteration_step(ctx: IterationContext) -> None:
         ctx.centering_state.x_probe = x_probe
 
     # 4) Loadings
+    loadings_x_csr, loadings_x_csc = _coerce_sparse_views(x_data)
+
     m.a, m.av = _update_loadings(
         LoadingsUpdateState(
             x_data=x_data,
@@ -520,6 +534,8 @@ def _iteration_step(ctx: IterationContext) -> None:
             va=m.va,
             noise_var=float(m.noise_var),
             verbose=cfg.verbose,
+            x_csr=loadings_x_csr,
+            x_csc=loadings_x_csc,
         )
     )
 
@@ -534,6 +550,7 @@ def _iteration_step(ctx: IterationContext) -> None:
             n_probe=int(ctx.prepared.n_probe),
             loadings=m.a,
             scores=m.s,
+            num_cpu=cfg.num_cpu,
         )
     )
     training.err_mx = err_mx
@@ -600,6 +617,16 @@ def _iteration_step(ctx: IterationContext) -> None:
             stop_now = 1.0
 
     training.lc.setdefault("_stop", []).append(float(stop_now))
+
+
+def _coerce_sparse_views(
+    x_data: Matrix,
+) -> tuple[sp.csr_matrix | None, sp.csc_matrix | None]:
+    if not sp.issparse(x_data):
+        return None, None
+
+    x_csr = x_data if isinstance(x_data, sp.csr_matrix) else sp.csr_matrix(x_data)
+    return x_csr, x_csr.tocsc()
 
 
 def _rotate_towards_pca(  # noqa: PLR0913
@@ -829,9 +856,17 @@ def _explained_variance(
         empty = np.zeros((0,), dtype=float)
         return empty, empty
 
-    cov = np.cov(np.asarray(xrec, dtype=float))
-    eigvals = np.linalg.eigvalsh(cov)
-    eigvals_sorted = np.flip(np.sort(np.real(eigvals)))
+    xrec_arr = np.asarray(xrec, dtype=float)
+    n_features, n_samples = xrec_arr.shape
+
+    if n_samples > 1 and n_features > n_samples:
+        x_centered = xrec_arr - np.mean(xrec_arr, axis=1, keepdims=True)
+        singular_values = np.linalg.svd(x_centered, compute_uv=False)
+        eigvals_sorted = (singular_values**2) / float(n_samples - 1)
+    else:
+        cov = np.cov(xrec_arr)
+        eigvals = np.linalg.eigvalsh(cov)
+        eigvals_sorted = np.flip(np.sort(np.real(eigvals)))
 
     eigvals_top = eigvals_sorted[:n_components]
     total = float(np.sum(eigvals_sorted))
@@ -850,15 +885,25 @@ def _last_metric(lc: dict[str, list[float]], key: str) -> float:
         return float("nan")
 
 
-def _pack_result(final: FinalState) -> dict[str, object]:
+def _pack_result(
+    final: FinalState,
+    *,
+    include_diagnostics: bool = True,
+) -> dict[str, object]:
     """Pack final values into the historical PCA_FULL result dictionary.
 
     Returns:
         Dictionary mirroring the legacy MATLAB output structure.
     """
-    xrec = _reconstruct_data(final.a, final.s, final.mu)
-    vr = _marginal_variance(final)
-    ev, evr = _explained_variance(xrec, final.a.shape[1])
+    if include_diagnostics:
+        xrec = _reconstruct_data(final.a, final.s, final.mu)
+        vr = _marginal_variance(final)
+        ev, evr = _explained_variance(xrec, final.a.shape[1])
+    else:
+        xrec = None
+        vr = None
+        ev = None
+        evr = None
 
     lc = final.lc
 
@@ -891,28 +936,6 @@ def _pack_result(final: FinalState) -> dict[str, object]:
     }
 
 
-def _as_dense_err_matrix(err_mx: np.ndarray | sp.spmatrix | None) -> np.ndarray:
-    """Ensure the bias updater sees a dense numeric array for err_mx.
-
-    In sparse-input modes, the RMS helper may return sparse matrices or other
-    wrappers. :func:`_update_bias` expects a dense array with shape
-    (n_features, n_samples) so it can sum over axis=1.
-
-    Returns:
-        Dense ndarray version of ``err_mx`` (empty array when ``err_mx`` is None).
-    """
-    if err_mx is None:
-        return np.zeros((0, 0), dtype=float)
-    if sp.issparse(err_mx):
-        err_sparse = (
-            err_mx
-            if isinstance(err_mx, sp.csr_matrix)
-            else sp.csr_matrix(cast("Any", err_mx))
-        )
-        return np.asarray(err_sparse.toarray(), dtype=float)
-    return np.asarray(err_mx, dtype=float)
-
-
 # ---------------------------------------------------------------------------
 # Options + algorithm selection (publicly relied upon)
 # ---------------------------------------------------------------------------
@@ -933,6 +956,7 @@ def _build_options(kwargs: Mapping[str, object]) -> dict[str, object]:
         "maxiters": 1000,
         "bias": 1,
         "uniquesv": 0,
+        "angle_every": 1,
         "autosave": 600,
         "filename": "pca_f_autosave",
         "minangle": 1e-8,
@@ -942,10 +966,12 @@ def _build_options(kwargs: Mapping[str, object]) -> dict[str, object]:
         "rmsstop": np.array([100, 1e-4, 1e-3]),
         "cfstop": np.array([]),
         "verbose": 1,
+        "num_cpu": 1,
         "xprobe": None,
         "rotate2pca": 1,
         "display": 0,
         "compat_mode": "strict_legacy",
+        "return_diagnostics": 1,
     }
 
     opts, wrnmsg = _options(opts_default, **kwargs)
@@ -959,6 +985,8 @@ def _build_options(kwargs: Mapping[str, object]) -> dict[str, object]:
         )
         raise ValueError(msg)
     opts["compat_mode"] = compat_mode
+    opts["angle_every"] = max(1, _int_opt(opts.get("angle_every", 1), default=1))
+    opts["return_diagnostics"] = int(bool(opts.get("return_diagnostics", 1)))
 
     if wrnmsg:
         logger.warning("pca_full options warning: %s", wrnmsg)

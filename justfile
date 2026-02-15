@@ -32,7 +32,7 @@ test:
 test-cov:
 	pytest -q --cov=src/vbpca_py --cov-report=term-missing
 
-# Run performance benchmarks (excluded from default test/ci runs).
+# Run pytest perf benchmarks (excluded from default test/ci runs).
 bench:
 	pytest -q -m perf --benchmark-only --benchmark-sort=mean
 
@@ -51,6 +51,45 @@ bench-save:
 # Compare current benchmarks with the latest saved baseline.
 bench-compare:
 	pytest -q -m perf --benchmark-only --benchmark-compare --benchmark-sort=mean
+
+# Run reproducible core VBPCA runtime baseline (dense + sparse cases).
+core-perf-baseline:
+	python scripts/profile_core_vbpca.py --reps 3 --maxiters 40 --out results/perf_baseline/core_vbpca_baseline.csv
+
+# Run genetics-like large sparse hotspot profiling baseline.
+core-perf-genetics:
+	python scripts/profile_core_vbpca.py --case-set genetics --reps 2 --maxiters 30 --out results/perf_baseline/core_vbpca_genetics_baseline.csv
+
+# Run script-based benchmark pilot (reduced reps for quick validation).
+bench-study-pilot:
+	python scripts/benchmark_missing_pca.py --n-reps 20 --mice-tol 1e-2 --n-jobs -2 --output results/replicates_pilot.csv --selection-trace-output results/vbpca_selection_trace_pilot.csv
+
+# Run full script-based benchmark sweep (publication configuration).
+bench-study-full:
+	python scripts/benchmark_missing_pca.py --n-reps 200 --mice-tol 1e-2 --n-jobs -2 --output results/replicates.csv --selection-trace-output results/vbpca_selection_trace.csv
+
+# Run genetics-like large-loci synthetic wall-time comparator sweep (MICE disabled).
+bench-study-genetics-pilot:
+	python scripts/benchmark_missing_pca.py --datasets synthetic --mechanisms MCAR --patterns random --missing-rates 0.3 --n-reps 6 --n-components 8 --synthetic-shape 1200x5000 --vbpca-maxiters 40 --no-include-mice --n-jobs -2 --output results/replicates_genetics_pilot.csv --selection-trace-output results/vbpca_selection_trace_genetics_pilot.csv
+
+# Aggregate benchmark summaries and paired deltas.
+bench-study-summary:
+	python scripts/summarize_missing_pca.py --input results/replicates.csv --summary-output results/summary.csv --pairwise-output results/pairwise_summary.csv
+
+# Build paper-facing tables and figures from benchmark outputs.
+bench-study-paper:
+	python scripts/make_paper_outputs.py --replicates results/replicates.csv --summary results/summary.csv --pairwise results/pairwise_summary.csv --out-dir results/paper
+	python scripts/make_selection_supplement.py --replicates results/replicates.csv --selection-trace results/vbpca_selection_trace.csv --out-dir results/paper
+
+# Run pilot + summary + paper output generation end-to-end.
+bench-study-pipeline: bench-study-pilot
+	python scripts/summarize_missing_pca.py --input results/replicates_pilot.csv --summary-output results/summary_pilot.csv --pairwise-output results/pairwise_summary_pilot.csv
+	python scripts/make_paper_outputs.py --replicates results/replicates_pilot.csv --summary results/summary_pilot.csv --pairwise results/pairwise_summary_pilot.csv --out-dir results/paper/pilot
+	python scripts/make_selection_supplement.py --replicates results/replicates_pilot.csv --selection-trace results/vbpca_selection_trace_pilot.csv --out-dir results/paper/pilot
+
+# Validate deterministic reproducibility for a fixed-seed pilot setting.
+bench-study-repro:
+	python scripts/validate_benchmark_reproducibility.py --work-dir results/repro --n-jobs 1
 
 # Ensure Octave + mkoctfile are installed for full legacy parity tests.
 check-octave:

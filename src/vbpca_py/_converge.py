@@ -259,41 +259,57 @@ def _log_and_check_convergence(
     state.lc["prms"].append(float(prms))
     state.lc["time"].append(float(elapsed))
 
-    cfstop_opt = state.opts.get("cfstop", [])
-    if np.size(np.asarray(cfstop_opt)) > 0:
-        mask_arr = (
-            state.mask.toarray().astype(bool)  # type: ignore[union-attr]
-            if issparse(state.mask)
-            else np.asarray(state.mask, dtype=bool)
-        )
-
-        params = CostParams(
-            mu=state.mu.ravel(),
-            noise_variance=float(state.noise_var),
-            loading_priors=state.va,
-            loading_covariances=state.loading_covariances or None,
-            mu_prior_variance=float(state.vmu),
-            mu_variances=state.mu_variances.ravel()
-            if state.mu_variances.size > 0
-            else None,
-            score_covariances=state.score_covariances,
-            score_pattern_index=state.pattern_index,
-            mask=mask_arr,
-            s_xv=float(state.s_xv),
-            n_data=_coerce_int(state.n_data),
-        )
-        cost, *_ = compute_full_cost(state.x_data, state.loadings, state.scores, params)
-        state.lc["cost"].append(float(cost))
-    else:
-        state.lc["cost"].append(float("nan"))
+    _append_cost_value(state)
 
     # UI / logging hooks
     display_progress(state.dsph, state.lc)
 
-    angles = subspace_angles(state.loadings, state.loadings_old)
-    angle_a = float(np.max(angles))
-    log_step(verbose, state.lc, angle_a)
+    angle_a, angle_for_log = _angle_for_iteration(state)
+
+    log_step(verbose, state.lc, angle_for_log)
 
     convmsg = convergence_check(state.opts, state.lc, angle_a)
     loadings_old_new = state.loadings.copy()
     return state.lc, angle_a, convmsg, loadings_old_new
+
+
+def _append_cost_value(state: ConvergenceState) -> None:
+    cfstop_opt = state.opts.get("cfstop", [])
+    if np.size(np.asarray(cfstop_opt)) <= 0:
+        state.lc["cost"].append(float("nan"))
+        return
+
+    mask_arr = (
+        state.mask.toarray().astype(bool)  # type: ignore[union-attr]
+        if issparse(state.mask)
+        else np.asarray(state.mask, dtype=bool)
+    )
+
+    params = CostParams(
+        mu=state.mu.ravel(),
+        noise_variance=float(state.noise_var),
+        loading_priors=state.va,
+        loading_covariances=state.loading_covariances or None,
+        mu_prior_variance=float(state.vmu),
+        mu_variances=(
+            state.mu_variances.ravel() if state.mu_variances.size > 0 else None
+        ),
+        score_covariances=state.score_covariances,
+        score_pattern_index=state.pattern_index,
+        mask=mask_arr,
+        s_xv=float(state.s_xv),
+        n_data=_coerce_int(state.n_data),
+    )
+    cost, *_ = compute_full_cost(state.x_data, state.loadings, state.scores, params)
+    state.lc["cost"].append(float(cost))
+
+
+def _angle_for_iteration(state: ConvergenceState) -> tuple[float, float | None]:
+    angle_every = max(1, _coerce_int(cast("Any", state.opts.get("angle_every", 1)), 1))
+    iter_index = len(state.lc["rms"])
+    if iter_index % angle_every != 0:
+        return float("inf"), None
+
+    angles = subspace_angles(state.loadings, state.loadings_old)
+    angle_a = float(np.max(angles))
+    return angle_a, angle_a

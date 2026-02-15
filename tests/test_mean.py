@@ -427,3 +427,103 @@ def test_subtract_mu_regression_sparse_with_probe_octave(
     assert Xp_py is not None
     assert_allclose(X_py.toarray(), _as_dense(X_oc), rtol=1e-12, atol=1e-14)
     assert_allclose(Xp_py.toarray(), _as_dense(Xp_oc), rtol=1e-12, atol=1e-14)
+
+
+@pytest.mark.skipif(not _octave_available(), reason="Octave not available on PATH.")
+@pytest.mark.parametrize(
+    ("seed", "n_rows", "n_cols", "mask_keep_prob", "update_bias"),
+    [
+        (10, 24, 36, 0.72, True),
+        (11, 24, 36, 0.72, False),
+        (12, 40, 64, 0.58, True),
+    ],
+)
+def test_subtract_mu_regression_dense_expanded_matrix_octave(
+    tmp_path: Path,
+    seed: int,
+    n_rows: int,
+    n_cols: int,
+    mask_keep_prob: float,
+    update_bias: bool,
+) -> None:
+    rng = np.random.default_rng(seed)
+    X = rng.standard_normal((n_rows, n_cols))
+    Mu = rng.standard_normal((n_rows, 1))
+    M = (rng.random((n_rows, n_cols)) < mask_keep_prob).astype(float)
+
+    probe_x = rng.standard_normal((n_rows, n_cols))
+    probe_m = (rng.random((n_rows, n_cols)) < 0.7).astype(float)
+    probe = ProbeMatrices(x=probe_x.copy(), mask=probe_m.copy())
+
+    X_py, Xp_py = subtract_mu(
+        Mu,
+        X.copy(),
+        M,
+        probe=probe,
+        update_bias=update_bias,
+    )
+
+    mat_in = tmp_path / f"in_dense_{seed}.mat"
+    mat_out = tmp_path / f"out_dense_{seed}.mat"
+    _save_mat_for_octave(
+        mat_in,
+        Mu=Mu,
+        X=X,
+        M=M,
+        Xprobe=probe_x,
+        Mprobe=probe_m,
+        update_bias=update_bias,
+    )
+    _run_octave_subtractmu(mat_in, mat_out)
+    X_oc, Xp_oc = _load_octave_out(mat_out)
+
+    assert Xp_py is not None
+    assert_allclose(np.asarray(X_py), _as_dense(X_oc), rtol=1e-12, atol=1e-12)
+    assert_allclose(np.asarray(Xp_py), _as_dense(Xp_oc), rtol=1e-12, atol=1e-12)
+
+
+@pytest.mark.skipif(not _octave_available(), reason="Octave not available on PATH.")
+def test_subtract_mu_regression_sparse_expanded_matrix_octave(
+    tmp_path: Path, _ensure_mex_built
+) -> None:
+    rng = np.random.default_rng(13)
+    n_rows, n_cols = 60, 90
+    Mu = rng.standard_normal((n_rows, 1))
+
+    nnz_main = 420
+    rows = rng.integers(0, n_rows, size=nnz_main)
+    cols = rng.integers(0, n_cols, size=nnz_main)
+    data = rng.standard_normal(nnz_main)
+    for idx in range(0, nnz_main, 85):
+        data[idx] = Mu[rows[idx], 0]
+    X = sp.csr_matrix((data, (rows, cols)), shape=(n_rows, n_cols))
+
+    nnz_probe = 250
+    rows_p = rng.integers(0, n_rows, size=nnz_probe)
+    cols_p = rng.integers(0, n_cols, size=nnz_probe)
+    data_p = rng.standard_normal(nnz_probe)
+    Xprobe = sp.csr_matrix((data_p, (rows_p, cols_p)), shape=(n_rows, n_cols))
+
+    M = np.ones((n_rows, n_cols), dtype=float)
+    Mprobe = np.ones((n_rows, n_cols), dtype=float)
+
+    probe = ProbeMatrices(x=Xprobe, mask=Mprobe)
+    X_py, Xp_py = subtract_mu(Mu, X, M, probe=probe, update_bias=True)
+
+    mat_in = tmp_path / "in_sparse_expanded.mat"
+    mat_out = tmp_path / "out_sparse_expanded.mat"
+    _save_mat_for_octave(
+        mat_in,
+        Mu=Mu,
+        X=X,
+        M=M,
+        Xprobe=Xprobe,
+        Mprobe=Mprobe,
+        update_bias=True,
+    )
+    _run_octave_subtractmu(mat_in, mat_out)
+    X_oc, Xp_oc = _load_octave_out(mat_out)
+
+    assert Xp_py is not None
+    assert_allclose(X_py.toarray(), _as_dense(X_oc), rtol=1e-12, atol=1e-14)
+    assert_allclose(Xp_py.toarray(), _as_dense(Xp_oc), rtol=1e-12, atol=1e-14)

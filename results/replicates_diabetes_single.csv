@@ -1,0 +1,4 @@
+method,rmse,mae,wall_time_sec,vbpca_mean_variance,mice_converged,mice_n_iter,mice_retry_used,vbpca_selected_k,k_used,dataset,mechanism,pattern,missing_rate,n_components_requested,synthetic_shape,replicate_id,seed_data,seed_mask,seed_method,n_samples,n_features,n_holdout,scaling,vbpca_model_selection,use_selected_k_for_all_methods
+mean_pca,0.895346877122555,0.7267266261792291,0.0008467790030408651,,,,,8,8,diabetes,MCAR,random,0.3,2,1000x50,0,33158374,1465339467,1273345680,442,10,1326,zscore_observed_only,True,True
+mice_pca,0.7430630786820575,0.5516277164746095,0.21557715800008737,,False,36.0,True,8,8,diabetes,MCAR,random,0.3,2,1000x50,0,33158374,1465339467,1273345680,442,10,1326,zscore_observed_only,True,True
+vbpca_vb_modern,0.7412233348867534,0.560347908505335,11.697936951000884,0.17278166625691302,,,,8,8,diabetes,MCAR,random,0.3,2,1000x50,0,33158374,1465339467,1273345680,442,10,1326,zscore_observed_only,True,True

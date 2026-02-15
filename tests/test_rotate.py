@@ -812,7 +812,22 @@ def test_rotate_regression_python_only_fixture() -> None:
         dtype=float,
     )
 
+    # Eigenvector sign is not unique; align component signs to the fixture.
+    A1_aligned = A1.copy()
+    S1_aligned = S1.copy()
+    Sv1_aligned = [np.asarray(sv, dtype=float).copy() for sv in Sv1]
+    for c in range(A1.shape[1]):
+        if float(np.dot(A1_aligned[:, c], expected_A1[:, c])) >= 0.0:
+            continue
+        A1_aligned[:, c] *= -1.0
+        S1_aligned[c, :] *= -1.0
+        for idx in range(len(Sv1_aligned)):
+            sv_i = Sv1_aligned[idx]
+            sv_i[c, :] *= -1.0
+            sv_i[:, c] *= -1.0
+            Sv1_aligned[idx] = sv_i
+
     assert_allclose(dMu, expected_dmu, rtol=5e-12, atol=5e-12)
-    assert_allclose(A1, expected_A1, rtol=5e-12, atol=5e-12)
-    assert_allclose(S1, expected_S1, rtol=5e-12, atol=5e-12)
-    assert_allclose(Sv1[0], expected_Sv0, rtol=5e-12, atol=5e-12)
+    assert_allclose(A1_aligned, expected_A1, rtol=5e-12, atol=5e-12)
+    assert_allclose(S1_aligned, expected_S1, rtol=5e-12, atol=5e-12)
+    assert_allclose(Sv1_aligned[0], expected_Sv0, rtol=5e-12, atol=5e-12)

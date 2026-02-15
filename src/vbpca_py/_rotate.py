@@ -14,6 +14,7 @@ Key behavioral notes:
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -21,6 +22,18 @@ import numpy as np
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
+
+try:
+    from .rotate_update_kernels import (
+        congruence_transform_stack as _congruence_transform_stack_ext,
+    )
+    from .rotate_update_kernels import (
+        weighted_cov_eigh_psd as _weighted_cov_eigh_psd_ext,
+    )
+
+    _HAS_ROTATE_UPDATE_EXT = os.getenv("VBPCA_DISABLE_ROTATE_UPDATE_EXT", "0") != "1"
+except ImportError:  # pragma: no cover
+    _HAS_ROTATE_UPDATE_EXT = False
 
 # ---------------------------------------------------------------------------
 # Error messages
@@ -269,8 +282,112 @@ def _build_r(eigvals_s: np.ndarray, v_s: np.ndarray, v_a: np.ndarray) -> np.ndar
     """
     sqrt_eig = np.sqrt(np.clip(eigvals_s, 0.0, None))
     inv_sqrt = 1.0 / np.maximum(sqrt_eig, _EPS_EIG)
-    d_inv = np.diag(inv_sqrt)
-    return v_a.T @ d_inv @ v_s.T
+    # Equivalent to v_a.T @ diag(inv_sqrt) @ v_s.T, but avoids building diag().
+    return (v_a.T * inv_sqrt[np.newaxis, :]) @ v_s.T
+
+
+def _transform_covariances(
+    covariances: list[np.ndarray],
+    left: np.ndarray,
+    right: np.ndarray,
+) -> list[np.ndarray]:
+    if not covariances:
+        return covariances
+
+    if _HAS_ROTATE_UPDATE_EXT:
+        cov_stack = np.asarray(covariances, dtype=float)
+        transformed = _congruence_transform_stack_ext(cov_stack, left, right, 0)
+        return [
+            np.asarray(transformed[i], dtype=float)
+            for i in range(transformed.shape[0])
+        ]
+
+    return [
+        left @ np.asarray(cov_i, dtype=float) @ right
+        for cov_i in covariances
+    ]
+
+
+def _weighted_cov_eigh(
+    base: np.ndarray,
+    covariances: list[np.ndarray],
+    weights: np.ndarray,
+    normalizer: float,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    if _HAS_ROTATE_UPDATE_EXT:
+        cov_stack = np.asarray(covariances, dtype=float)
+        out = _weighted_cov_eigh_psd_ext(
+            np.asarray(base, dtype=float),
+            cov_stack,
+            np.asarray(weights, dtype=float),
+            float(normalizer),
+        )
+        cov = np.asarray(out["cov"], dtype=float)
+        eigvals = np.asarray(out["eigvals"], dtype=float)
+        eigvecs = np.asarray(out["eigvecs"], dtype=float)
+        return cov, eigvals, eigvecs
+
+    cov = np.asarray(base, dtype=float).copy()
+    if covariances:
+        cov_stack = np.asarray(covariances, dtype=float)
+        cov += np.tensordot(np.asarray(weights, dtype=float), cov_stack, axes=(0, 0))
+    cov /= float(normalizer)
+    cov = 0.5 * (cov + cov.T)
+    eigvals, eigvecs = _eigh_psd(cov)
+    return cov, eigvals, eigvecs
+
+
+def _cov_s_eigh(
+    scores: np.ndarray,
+    score_covariances: list[np.ndarray],
+    isv: np.ndarray,
+    obscombj: list[list[int]] | None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    _, n_samples = scores.shape
+    if isv.size > 0 and isv.size != n_samples:
+        raise ValueError(ERR_ISV_LENGTH)
+
+    base = scores @ scores.T
+    if isv.size == 0:
+        if len(score_covariances) != n_samples:
+            raise ValueError(ERR_SV_LEN_NO_ISV)
+        weights = np.ones(len(score_covariances), dtype=float)
+    else:
+        if obscombj is None:
+            raise ValueError(ERR_OBSCOMB_REQUIRED)
+        if len(score_covariances) != len(obscombj):
+            raise ValueError(ERR_SV_LEN_PATTERN)
+
+        all_cols: list[int] = []
+        for cols in obscombj:
+            all_cols.extend(cols)
+
+        all_cols_arr = np.asarray(all_cols, dtype=int)
+        expected = np.arange(n_samples, dtype=int)
+        if all_cols_arr.size != n_samples or not np.array_equal(
+            np.sort(all_cols_arr), expected
+        ):
+            raise ValueError(ERR_OBSCOMB_COVERAGE)
+
+        weights = np.asarray([len(cols) for cols in obscombj], dtype=float)
+
+    return _weighted_cov_eigh(base, score_covariances, weights, float(n_samples))
+
+
+def _cov_a_eigh(
+    loadings: np.ndarray,
+    loading_covariances: list[np.ndarray] | None,
+    n_features: int,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    base = loadings.T @ loadings
+    if loading_covariances:
+        weights = np.ones(len(loading_covariances), dtype=float)
+        return _weighted_cov_eigh(base, loading_covariances, weights, float(n_features))
+
+    cov_a = base / float(n_features)
+    cov_a = 0.5 * (cov_a + cov_a.T)
+    eigvals_a, v_a = _eigh_psd(cov_a)
+    return cov_a, eigvals_a, v_a
 
 
 # ---------------------------------------------------------------------------
@@ -309,14 +426,12 @@ def rotate_to_pca(
         d_mu = np.zeros((n_features, 1), dtype=loadings.dtype)
 
     # 2) covS and eigen-decomposition
-    cov_s = _build_cov_s(
+    _, eigvals_s, v_s = _cov_s_eigh(
         scores,
         score_covariances,
         _as_int_array(params.isv),
         params.obscombj,
     )
-    cov_s = 0.5 * (cov_s + cov_s.T)
-    eigvals_s, v_s = _eigh_psd(cov_s)
 
     # Build RA = VS * sqrt(D) to rotate loadings.
     ra = _build_ra(eigvals_s, v_s)
@@ -324,32 +439,20 @@ def rotate_to_pca(
     # Apply RA to A and Av
     loadings[:] = loadings @ ra
     if loading_covariances:
-        loading_covariances[:] = [
-            ra.T @ np.asarray(av_i, dtype=float) @ ra for av_i in loading_covariances
-        ]
+        loading_covariances[:] = _transform_covariances(loading_covariances, ra.T, ra)
 
     # 3) covA in rotated basis, eigen-decompose, sort descending
-    cov_a = loadings.T @ loadings
-    if loading_covariances:
-        cov_a += sum(np.asarray(av_i, dtype=float) for av_i in loading_covariances)
-    cov_a /= float(n_features)
-    cov_a = 0.5 * (cov_a + cov_a.T)
-
-    eigvals_a, v_a = _eigh_psd(cov_a)
+    _, eigvals_a, v_a = _cov_a_eigh(loadings, loading_covariances, n_features)
     v_a = v_a[:, np.argsort(-eigvals_a)]
 
     # Apply VA to A and Av
     loadings[:] = loadings @ v_a
     if loading_covariances:
-        loading_covariances[:] = [
-            v_a.T @ np.asarray(av_i, dtype=float) @ v_a for av_i in loading_covariances
-        ]
+        loading_covariances[:] = _transform_covariances(loading_covariances, v_a.T, v_a)
 
     # 4) Build and apply R to S and Sv
     r = _build_r(eigvals_s, v_s, v_a)
     scores[:] = r @ scores
-    score_covariances[:] = [
-        r @ np.asarray(sv_j, dtype=float) @ r.T for sv_j in score_covariances
-    ]
+    score_covariances[:] = _transform_covariances(score_covariances, r, r.T)
 
     return d_mu, loadings, loading_covariances, scores, score_covariances

@@ -1,0 +1,3 @@
+case,kind,n_features,n_samples,n_components,missing_rate,rotate2pca,repetitions,time_mean_sec,time_median_sec,time_std_sec,time_min_sec,time_max_sec
+sparse_genetics_2k,sparse,2000,1000,24,0.97,1,1,1.8902533450018382,1.8902533450018382,0.0,1.8902533450018382,1.8902533450018382
+sparse_genetics_5k,sparse,5000,1000,32,0.985,1,1,18.038524054005393,18.038524054005393,0.0,18.038524054005393,18.038524054005393

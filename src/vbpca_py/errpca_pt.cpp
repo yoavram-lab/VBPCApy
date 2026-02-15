@@ -16,11 +16,33 @@
 
 #include <Eigen/Dense>
 #include <algorithm>
+#include <cstdlib>
 #include <stdexcept>
 #include <thread>
 #include <vector>
 
 namespace py = pybind11;
+
+static int resolve_num_threads(int requested, int n_rows) {
+    if (requested > 0) {
+        return std::max(1, std::min(requested, n_rows));
+    }
+
+    // Env override path for auto mode (requested <= 0).
+    const char *env_threads = std::getenv("VBPCA_NUM_THREADS");
+    if (env_threads != nullptr) {
+        try {
+            int parsed = std::stoi(env_threads);
+            if (parsed > 0) {
+                return std::max(1, std::min(parsed, n_rows));
+            }
+        } catch (...) {
+            // Ignore malformed env var and fall back.
+        }
+    }
+
+    return 1;
+}
 
 static py::dict errpca_pt(
     const py::array_t<double, py::array::c_style | py::array::forcecast> &X_data,
@@ -90,9 +112,7 @@ static py::dict errpca_pt(
     std::vector<double> err_data(static_cast<std::size_t>(nnz));
 
     // Thread partitioning by rows: each thread writes only within its row slices in err_data.
-    int threads = numCPU <= 0 ? 1 : numCPU;
-    if (threads > n_rows) threads = n_rows;
-    if (threads <= 0) threads = 1;
+    int threads = resolve_num_threads(numCPU, n_rows);
 
     auto worker = [&](int row_start, int row_end) {
         for (int r = row_start; r < row_end; ++r) {

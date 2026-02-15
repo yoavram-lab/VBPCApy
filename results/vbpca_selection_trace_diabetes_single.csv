@@ -1,0 +1,10 @@
+dataset,mechanism,pattern,missing_rate,n_components_requested,synthetic_shape,replicate_id,seed_data,seed_mask,seed_method,n_samples,n_features,n_holdout,scaling,vbpca_model_selection,use_selected_k_for_all_methods,trace_k,trace_rms,trace_prms,trace_cost
+diabetes,MCAR,random,0.3,2,1000x50,0,33158374,1465339467,1273345680,442,10,1326,zscore_observed_only,True,True,1,0.7664674972177591,,
+diabetes,MCAR,random,0.3,2,1000x50,0,33158374,1465339467,1273345680,442,10,1326,zscore_observed_only,True,True,2,0.6800832198570044,,
+diabetes,MCAR,random,0.3,2,1000x50,0,33158374,1465339467,1273345680,442,10,1326,zscore_observed_only,True,True,3,0.5856271181791773,,
+diabetes,MCAR,random,0.3,2,1000x50,0,33158374,1465339467,1273345680,442,10,1326,zscore_observed_only,True,True,4,0.49192074574286526,,
+diabetes,MCAR,random,0.3,2,1000x50,0,33158374,1465339467,1273345680,442,10,1326,zscore_observed_only,True,True,5,0.42424143029553524,,
+diabetes,MCAR,random,0.3,2,1000x50,0,33158374,1465339467,1273345680,442,10,1326,zscore_observed_only,True,True,6,0.32584857154075925,,
+diabetes,MCAR,random,0.3,2,1000x50,0,33158374,1465339467,1273345680,442,10,1326,zscore_observed_only,True,True,7,0.19600347063751283,,
+diabetes,MCAR,random,0.3,2,1000x50,0,33158374,1465339467,1273345680,442,10,1326,zscore_observed_only,True,True,8,0.10583872886335403,,
+diabetes,MCAR,random,0.3,2,1000x50,0,33158374,1465339467,1273345680,442,10,1326,zscore_observed_only,True,True,9,0.10859398391765553,,

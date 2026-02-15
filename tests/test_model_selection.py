@@ -1,6 +1,7 @@
 import numpy as np
 import pytest
 
+import vbpca_py.model_selection as ms
 from vbpca_py.model_selection import SelectionConfig, select_n_components
 
 
@@ -132,3 +133,52 @@ def test_select_n_components_patience_stops_early() -> None:
     )
 
     assert 1 <= len(trace) <= 4
+
+
+def test_select_n_components_stop_on_metric_reversal_uses_previous_k(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    x = np.ones((3, 5), dtype=float)
+    rms_by_k = {1: 0.80, 2: 0.60, 3: 0.65, 4: 0.50}
+
+    class _DummyModel:
+        pass
+
+    def _fake_fit_candidate(
+        k: int,
+        x_arr: np.ndarray,
+        mask: np.ndarray | None,
+        cfg: SelectionConfig,
+        opts: dict[str, object],
+    ) -> tuple[dict[str, object], _DummyModel]:
+        return (
+            {
+                "k": int(k),
+                "rms": float(rms_by_k[k]),
+                "prms": float("nan"),
+                "cost": float("nan"),
+                "evr": None,
+            },
+            _DummyModel(),
+        )
+
+    monkeypatch.setattr(ms, "_fit_candidate", _fake_fit_candidate)
+
+    cfg = SelectionConfig(
+        metric="rms",
+        stop_on_metric_reversal=True,
+        compute_explained_variance=False,
+        return_best_model=True,
+    )
+
+    best_k, best_metrics, trace, best_model = select_n_components(
+        x,
+        components=[1, 2, 3, 4],
+        config=cfg,
+    )
+
+    assert [entry["k"] for entry in trace] == [1, 2, 3]
+    assert best_k == 2
+    assert best_metrics["k"] == 2
+    assert float(best_metrics["rms"]) == pytest.approx(0.60)
+    assert best_model is not None

@@ -22,6 +22,9 @@
 // Build is configured in setup.py as extension "vbpca_py.subtract_mu_from_sparse".
 
 #include <cmath>
+#include <exception>
+#include <cstdlib>
+#include <mutex>
 #include <stdexcept>
 #include <thread>
 #include <vector>
@@ -32,6 +35,50 @@
 namespace py = pybind11;
 
 constexpr double EPS = 1e-15;
+constexpr int AUTO_MIN_ROWS = 128;
+constexpr int AUTO_MIN_NNZ = 4096;
+constexpr int AUTO_ROWS_PER_THREAD = 64;
+constexpr int AUTO_NNZ_PER_THREAD = 4096;
+
+namespace {
+
+int resolve_num_threads(int n_rows) {
+    // Optional env overrides. Specific key takes precedence.
+    const char *env_specific = std::getenv("VBPCA_SUBTRACT_THREADS");
+    const char *env_general = std::getenv("VBPCA_NUM_THREADS");
+    const char *env_value = (env_specific != nullptr) ? env_specific : env_general;
+
+    if (env_value != nullptr) {
+        try {
+            const int parsed = std::stoi(env_value);
+            if (parsed > 0) {
+                return std::max(1, std::min(parsed, n_rows));
+            }
+        } catch (...) {
+            // Ignore malformed env value and fall back to hardware.
+        }
+    }
+
+    unsigned int hw_threads = std::thread::hardware_concurrency();
+    int num_threads = hw_threads > 0 ? static_cast<int>(hw_threads) : 1;
+    num_threads = std::max(1, std::min(num_threads, n_rows));
+    return num_threads;
+}
+
+int resolve_num_threads_auto(int n_rows, int nnz) {
+    if (n_rows < AUTO_MIN_ROWS || nnz < AUTO_MIN_NNZ) {
+        return 1;
+    }
+
+    int threads = resolve_num_threads(n_rows);
+    const int rows_limit = std::max(1, n_rows / AUTO_ROWS_PER_THREAD);
+    const int nnz_limit = std::max(1, nnz / AUTO_NNZ_PER_THREAD);
+    threads = std::min(threads, rows_limit);
+    threads = std::min(threads, nnz_limit);
+    return std::max(1, threads);
+}
+
+}  // namespace
 
 // -----------------------------------------------------------------------------
 // Core implementation
@@ -123,14 +170,35 @@ py::array_t<double> subtract_mu_from_sparse(
         }
     }
 
-    // Accessors
-    auto X_data = mxX_data_array.unchecked<1>();
-    auto X_indptr = mxX_indptr_array.unchecked<1>();
-    auto Mu = mxMu_array.unchecked<1>();
+    // Access pointers
+    const auto *data_ptr = static_cast<const double *>(data_buf.ptr);
+    const auto *mu_ptr = static_cast<const double *>(mu_buf.ptr);
+
+    // Validate CSR row-pointer monotonicity and bounds.
+    if (indptr_ptr[0] != 0) {
+        throw std::invalid_argument(
+            "SUBTRACT_MU: first entry of indptr must be 0."
+        );
+    }
+    int prev = indptr_ptr[0];
+    for (int row = 0; row < n_rows; ++row) {
+        const int cur = indptr_ptr[row + 1];
+        if (cur < prev) {
+            throw std::invalid_argument(
+                "SUBTRACT_MU: indptr must be non-decreasing."
+            );
+        }
+        if (cur < 0 || cur > nnz_from_csr) {
+            throw std::invalid_argument(
+                "SUBTRACT_MU: indptr entries are out of valid nnz range."
+            );
+        }
+        prev = cur;
+    }
 
     // Prepare output array and mutable view
     py::array_t<double> Xout_array(nnz);
-    auto Xout = Xout_array.mutable_unchecked<1>();
+    auto *out_ptr = static_cast<double *>(Xout_array.request().ptr);
 
     if (nnz == 0) {
         // Nothing to do; just return zero-length array
@@ -141,52 +209,63 @@ py::array_t<double> subtract_mu_from_sparse(
     // Multithreading over rows
     // -------------------------------------------------------------------------
     // Choose number of threads based on hardware and number of rows.
-    unsigned int hw_threads = std::thread::hardware_concurrency();
-    int num_threads = hw_threads > 0 ? static_cast<int>(hw_threads) : 1;
-    if (num_threads > n_rows) {
-        num_threads = n_rows;
-    }
-    if (num_threads < 1) {
-        num_threads = 1;
-    }
+    const int num_threads = resolve_num_threads_auto(n_rows, nnz_from_csr);
+
+    std::exception_ptr worker_error;
+    std::mutex error_mutex;
 
     auto worker = [&](int row_start, int row_end) {
-        for (int row = row_start; row < row_end; ++row) {
-            const double mu_row = Mu(row);
-            const int start_idx = X_indptr(row);
-            const int end_idx   = X_indptr(row + 1);
-            for (int idx = start_idx; idx < end_idx; ++idx) {
-                const std::size_t p = static_cast<std::size_t>(idx);
-                double val = X_data(p) - mu_row;
-                if (val == 0.0) {
-                    val = EPS;
+        try {
+            for (int row = row_start; row < row_end; ++row) {
+                const double mu_row = mu_ptr[row];
+                const int start_idx = indptr_ptr[row];
+                const int end_idx   = indptr_ptr[row + 1];
+                for (int idx = start_idx; idx < end_idx; ++idx) {
+                    const std::size_t p = static_cast<std::size_t>(idx);
+                    double val = data_ptr[p] - mu_row;
+                    if (val == 0.0) {
+                        val = EPS;
+                    }
+                    out_ptr[p] = val;
                 }
-                Xout(p) = val;
+            }
+        } catch (...) {
+            std::lock_guard<std::mutex> lock(error_mutex);
+            if (!worker_error) {
+                worker_error = std::current_exception();
             }
         }
     };
 
-    if (num_threads == 1) {
-        worker(0, n_rows);
-    } else {
-        std::vector<std::thread> threads;
-        threads.reserve(static_cast<std::size_t>(num_threads));
+    {
+        py::gil_scoped_release release;
 
-        const int rows_per_thread = n_rows / num_threads;
-        const int remainder       = n_rows % num_threads;
+        if (num_threads == 1) {
+            worker(0, n_rows);
+        } else {
+            std::vector<std::thread> threads;
+            threads.reserve(static_cast<std::size_t>(num_threads));
 
-        int current_row = 0;
-        for (int t = 0; t < num_threads; ++t) {
-            const int start_row = current_row;
-            const int extra     = (t < remainder) ? 1 : 0;
-            const int end_row   = start_row + rows_per_thread + extra;
-            current_row         = end_row;
-            threads.emplace_back(worker, start_row, end_row);
+            const int rows_per_thread = n_rows / num_threads;
+            const int remainder       = n_rows % num_threads;
+
+            int current_row = 0;
+            for (int t = 0; t < num_threads; ++t) {
+                const int start_row = current_row;
+                const int extra     = (t < remainder) ? 1 : 0;
+                const int end_row   = start_row + rows_per_thread + extra;
+                current_row         = end_row;
+                threads.emplace_back(worker, start_row, end_row);
+            }
+
+            for (auto &th : threads) {
+                th.join();
+            }
         }
+    }
 
-        for (auto &th : threads) {
-            th.join();
-        }
+    if (worker_error) {
+        std::rethrow_exception(worker_error);
     }
 
     return Xout_array;

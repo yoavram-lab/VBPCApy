@@ -33,7 +33,7 @@ import scipy.sparse as sp
 from numpy.testing import assert_allclose
 from scipy.io import loadmat
 
-from vbpca_py._pca_full import pca_full
+from vbpca_py._pca_full import _explained_variance, pca_full
 
 # ----------------------------------------------------------------------
 # Helpers
@@ -351,6 +351,45 @@ def test_pca_full_rotate2pca_off() -> None:
     assert result["Mu"].shape == (5, 1)
 
 
+def test_pca_full_return_diagnostics_default_includes_arrays() -> None:
+    x = _make_toy_dense_with_nans(n_features=5, n_samples=7, seed=15)
+
+    result = pca_full(
+        x,
+        n_components=2,
+        maxiters=4,
+        algorithm="vb",
+        autosave=0,
+        display=0,
+        verbose=0,
+    )
+
+    assert result["Xrec"] is not None
+    assert result["Vr"] is not None
+    assert result["ExplainedVar"] is not None
+    assert result["ExplainedVarRatio"] is not None
+
+
+def test_pca_full_return_diagnostics_disabled_skips_heavy_outputs() -> None:
+    x = _make_toy_dense_with_nans(n_features=5, n_samples=7, seed=16)
+
+    result = pca_full(
+        x,
+        n_components=2,
+        maxiters=4,
+        algorithm="vb",
+        autosave=0,
+        display=0,
+        verbose=0,
+        return_diagnostics=0,
+    )
+
+    assert result["Xrec"] is None
+    assert result["Vr"] is None
+    assert result["ExplainedVar"] is None
+    assert result["ExplainedVarRatio"] is None
+
+
 # ----------------------------------------------------------------------
 # Bias / mean behaviour
 # ----------------------------------------------------------------------
@@ -472,6 +511,41 @@ def test_pca_full_rmsstop_and_cfstop_both_provided() -> None:
     assert rms.size >= 1
     assert rms.size == cost.size
     assert np.isfinite(cost).any()
+
+
+def test_pca_full_angle_every_option_smoke() -> None:
+    rng = np.random.default_rng(912)
+    x = rng.standard_normal((6, 10))
+
+    result = pca_full(
+        x,
+        n_components=3,
+        maxiters=6,
+        algorithm="vb",
+        angle_every=2,
+        autosave=0,
+        display=0,
+        verbose=0,
+    )
+
+    assert result["A"].shape == (6, 3)
+    assert result["S"].shape == (3, 10)
+    assert len(result["lc"]["rms"]) >= 1
+
+
+def test_explained_variance_tall_svd_matches_cov_reference() -> None:
+    rng = np.random.default_rng(913)
+    xrec = rng.standard_normal((80, 20))
+
+    ev_fast, evr_fast = _explained_variance(xrec, n_components=10)
+
+    cov = np.cov(np.asarray(xrec, dtype=float))
+    ev_ref = np.flip(np.sort(np.real(np.linalg.eigvalsh(cov))))[:10]
+    total_ref = float(np.sum(np.flip(np.sort(np.real(np.linalg.eigvalsh(cov))))))
+    evr_ref = np.zeros_like(ev_ref) if total_ref <= 0.0 else ev_ref / total_ref
+
+    assert_allclose(ev_fast, ev_ref, rtol=1e-10, atol=1e-12)
+    assert_allclose(evr_fast, evr_ref, rtol=1e-10, atol=1e-12)
 
 
 def test_pca_full_uniquesv_equivalence_when_fully_observed() -> None:
@@ -698,3 +772,52 @@ def test_pca_full_missing_fixture_option_surface_smoke() -> None:
 
     assert len(out["lc"]["rms"]) == len(out["lc"]["cost"])
     assert np.asarray(out["Isv"]).shape[0] == x.shape[1]
+
+
+@pytest.mark.parametrize("rotate2pca", [0, 1])
+def test_pca_full_missing_fixture_matches_matlab_across_rotate_modes(
+    rotate2pca: int,
+) -> None:
+    fixture = _fixture_path("legacy_pca_full_missing.mat")
+    if not fixture.exists():
+        pytest.skip("MATLAB missing-data fixture not available")
+
+    mat = loadmat(fixture, squeeze_me=True, struct_as_record=False)
+    x = np.asarray(mat["x"], dtype=float)
+    k = int(mat["k"])
+    mat_res = mat["result"]
+
+    result = pca_full(
+        x,
+        n_components=k,
+        algorithm="vb",
+        maxiters=int(getattr(mat_res, "maxiters", 200)),
+        bias=int(getattr(mat_res, "bias", 1)),
+        uniquesv=int(getattr(mat_res, "uniquesv", 0)),
+        init=mat_res,
+        rotate2pca=rotate2pca,
+        autosave=0,
+        display=0,
+        verbose=0,
+    )
+
+    A_py = np.asarray(result["A"], dtype=float)
+    S_py = np.asarray(result["S"], dtype=float)
+    Mu_py = np.asarray(result["Mu"], dtype=float)
+    if Mu_py.ndim == 1:
+        Mu_py = Mu_py[:, None]
+
+    A_mat = np.asarray(mat_res.A, dtype=float)
+    S_mat = np.asarray(mat_res.S, dtype=float)
+    Mu_mat = np.asarray(mat_res.Mu, dtype=float)
+    if Mu_mat.ndim == 1:
+        Mu_mat = Mu_mat[:, None]
+
+    x_rec_py = A_py @ S_py + Mu_py
+    x_rec_mat = A_mat @ S_mat + Mu_mat
+    mask = ~np.isnan(x)
+    diff = (x_rec_py - x_rec_mat) * mask
+    rms = float(np.sqrt(np.sum(diff**2) / float(np.count_nonzero(mask))))
+
+    assert rms <= 2e-2
+    assert_allclose(float(result["V"]), float(mat_res.V), rtol=2e-2, atol=1e-6)

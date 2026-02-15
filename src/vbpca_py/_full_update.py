@@ -24,6 +24,23 @@ from ._monitoring import InitResult, InitShapes, init_params, log_progress
 from ._remove_empty import remove_empty_entries
 from ._rms import RmsConfig, compute_rms
 from ._rotate import RotateParams, rotate_to_pca
+from .dense_update_kernels import (
+    loadings_update_dense_masked_nopattern as _loadings_update_dense_masked_ext,
+)
+from .dense_update_kernels import (
+    loadings_update_dense_no_sv as _loadings_update_dense_ext,
+)
+from .dense_update_kernels import (
+    score_update_dense_masked_nopattern as _score_update_dense_masked_ext,
+)
+from .dense_update_kernels import score_update_dense_no_av as _score_update_dense_ext
+from .noise_update_kernels import noise_sxv_sum as _noise_sxv_sum_ext
+from .sparse_update_kernels import (
+    loadings_update_sparse_nopattern as _loadings_update_sparse_ext,
+)
+from .sparse_update_kernels import (
+    score_update_sparse_nopattern as _score_update_sparse_ext,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, MutableMapping
@@ -32,6 +49,19 @@ logger = logging.getLogger(__name__)
 
 _EPS_VAR = 1e-15  # minimum variance for numerical safety
 ChoFactor = tuple[np.ndarray, bool]
+CovarianceStore = list[np.ndarray]
+
+
+def _has_covariances(covariances: CovarianceStore) -> bool:
+    return len(covariances) > 0
+
+
+def _covariance_at(covariances: CovarianceStore, idx: int) -> np.ndarray:
+    return np.asarray(covariances[idx], dtype=float)
+
+
+def _covariances_stack(covariances: CovarianceStore) -> np.ndarray:
+    return np.stack(covariances, axis=0).astype(np.float64, copy=False)
 
 
 # ---------------------------------------------------------------------------
@@ -75,6 +105,8 @@ class ScoreState:
     noise_var: float
     eye_components: np.ndarray
     verbose: int
+    x_csr: sp.csr_matrix | None = None
+    x_csc: sp.csc_matrix | None = None
 
 
 @dataclass
@@ -139,6 +171,8 @@ class LoadingsUpdateState:
     va: np.ndarray
     noise_var: float
     verbose: int
+    x_csr: sp.csr_matrix | None = None
+    x_csc: sp.csc_matrix | None = None
 
 
 @dataclass
@@ -153,6 +187,7 @@ class RmsContext:
     n_probe: int
     loadings: np.ndarray
     scores: np.ndarray
+    num_cpu: int
 
 
 @dataclass
@@ -525,6 +560,17 @@ def _update_hyperpriors(ctx: HyperpriorContext) -> tuple[np.ndarray, float]:
     return va_new, vmu
 
 
+def _row_sums(err_mx: np.ndarray | sp.spmatrix) -> np.ndarray:
+    if sp.issparse(err_mx):
+        err_sparse = (
+            err_mx
+            if isinstance(err_mx, sp.csr_matrix)
+            else sp.csr_matrix(cast("Any", err_mx))
+        )
+        return np.asarray(err_sparse.sum(axis=1)).ravel()
+    return np.sum(np.asarray(err_mx, dtype=float), axis=1)
+
+
 # ---------------------------------------------------------------------------
 # Bias / mean update
 # ---------------------------------------------------------------------------
@@ -534,7 +580,7 @@ def _update_bias(
     *,
     bias_enabled: bool,
     bias_state: BiasState,
-    err_mx: np.ndarray,
+    err_mx: np.ndarray | sp.spmatrix,
     centering: CenteringState,
 ) -> tuple[BiasState, CenteringState]:
     """Bias / mean update, including in-place centering of x / x_probe.
@@ -552,9 +598,11 @@ def _update_bias(
     n_obs_row = bias_state.n_obs_row
 
     # Safe d_mu: zero update where no observations.
+    err_sum_rows = _row_sums(err_mx)
+
     with np.errstate(divide="ignore", invalid="ignore"):
         d_mu = np.divide(
-            np.sum(err_mx, axis=1),
+            err_sum_rows,
             n_obs_row,
             out=np.zeros_like(n_obs_row, dtype=float),
             where=n_obs_row > 0,
@@ -624,49 +672,27 @@ def _score_update_fast_dense_no_av(state: ScoreState) -> ScoreState:
     Returns:
         Updated score state.
     """
-    if sp.issparse(state.x_data):
-        x_csr = sp.csr_matrix(state.x_data)
+    x_arr = np.asarray(state.x_data, dtype=float)
+    _n_features, n_samples = x_arr.shape
 
-        def _x_col(j: int) -> np.ndarray:
-            return np.asarray(x_csr[:, j].toarray()).ravel()
-
-    else:
-        x_arr = np.asarray(state.x_data, dtype=float)
-
-        def _x_col(j: int) -> np.ndarray:
-            return np.asarray(x_arr[:, j], dtype=float)
-
-    _n_features, n_samples = state.x_data.shape
-    n_components = state.loadings.shape[1]
-
-    # Common psi = A^T A + noise_var I
-    ata = state.loadings.T @ state.loadings
-    psi = ata + state.noise_var * state.eye_components
-    psi = 0.5 * (psi + psi.T)
-    try:
-        cho = cho_factor(psi, lower=True, check_finite=False)
-    except LinAlgError:
-        jitter = _EPS_VAR * np.eye(n_components)
-        cho = cho_factor(psi + jitter, lower=True, check_finite=False)
-
-    cov_common = state.noise_var * cho_solve(
-        cho,
-        state.eye_components,
-        check_finite=False,
+    result = _score_update_dense_ext(
+        x_data=np.asarray(x_arr, dtype=np.float64),
+        loadings=np.asarray(state.loadings, dtype=np.float64),
+        noise_var=float(state.noise_var),
+        return_covariance=_has_covariances(state.score_covariances),
     )
+    state.scores[:, :] = np.asarray(result["scores"], dtype=float)
 
-    for j in range(n_samples):
-        x_col = _x_col(j)
-        rhs = state.loadings.T @ x_col
-        state.scores[:, j] = cho_solve(cho, rhs, check_finite=False)
-        state.score_covariances[j] = cov_common
-
-        log_progress(
-            state.verbose,
-            current=j + 1,
-            total=n_samples,
-            phase="Updating scores",
-        )
+    if _has_covariances(state.score_covariances) and "score_covariance" in result:
+        cov_common = np.asarray(result["score_covariance"], dtype=float)
+        for j in range(n_samples):
+            state.score_covariances[j] = cov_common
+            log_progress(
+                state.verbose,
+                current=j + 1,
+                total=n_samples,
+                phase="Updating scores",
+            )
     return state
 
 
@@ -686,10 +712,19 @@ def _score_accessors(
     state: ScoreState,
 ) -> tuple[Callable[[int], np.ndarray], Callable[[int], np.ndarray], int]:
     if sp.issparse(state.x_data):
-        x_csr = sp.csr_matrix(state.x_data)
+        x_csc = state.x_csc if state.x_csc is not None else sp.csc_matrix(state.x_data)
+        x_data = x_csc.data
+        x_indices = x_csc.indices
+        x_indptr = x_csc.indptr
+        n_rows = x_csc.shape[0]
 
         def _x_col(j: int) -> np.ndarray:
-            return np.asarray(x_csr[:, j].toarray()).ravel()
+            out = np.zeros(n_rows, dtype=float)
+            start = int(x_indptr[j])
+            end = int(x_indptr[j + 1])
+            if end > start:
+                out[x_indices[start:end]] = x_data[start:end]
+            return out
 
     else:
         x_arr = np.asarray(state.x_data, dtype=float)
@@ -698,10 +733,18 @@ def _score_accessors(
             return np.asarray(x_arr[:, j], dtype=float)
 
     if sp.issparse(state.mask):
-        mask_csr = sp.csr_matrix(state.mask)
+        mask_csc = sp.csc_matrix(state.mask)
+        mask_indices = mask_csc.indices
+        mask_indptr = mask_csc.indptr
+        n_mask_rows = mask_csc.shape[0]
 
         def _mask_col(j: int) -> np.ndarray:
-            return np.asarray(mask_csr[:, j].toarray()).ravel()
+            out = np.zeros(n_mask_rows, dtype=float)
+            start = int(mask_indptr[j])
+            end = int(mask_indptr[j + 1])
+            if end > start:
+                out[mask_indices[start:end]] = 1.0
+            return out
 
     else:
         mask_arr = np.asarray(state.mask, dtype=float)
@@ -718,10 +761,10 @@ def _score_cholesky(
     loadings_masked = mask_col[:, None] * state.loadings
     psi = loadings_masked.T @ loadings_masked + state.noise_var * state.eye_components
 
-    if state.loading_covariances:
+    if _has_covariances(state.loading_covariances):
         observed_rows = np.where(mask_col > 0)[0]
         for row_index in observed_rows:
-            psi += state.loading_covariances[row_index]
+            psi += _covariance_at(state.loading_covariances, int(row_index))
 
     cho = _safe_cholesky(psi, state.eye_components)
     sv_pattern = state.noise_var * cho_solve(
@@ -757,16 +800,21 @@ def _score_update_general_no_patterns(state: ScoreState) -> ScoreState:
     Returns:
         Updated score state.
     """
+    if not sp.issparse(state.x_data) and not sp.issparse(state.mask):
+        return _score_update_general_dense_ext(state)
+
     x_col, mask_col, n_samples = _score_accessors(state)
 
     for j in range(n_samples):
-        _update_scores_for_columns(
+        mask_vec = mask_col(j)
+        cho, loadings_masked, sv_pattern = _score_cholesky(
             state,
-            cols=[j],
-            x_col=x_col,
-            mask_col=mask_col,
-            cov_index=j,
+            mask_vec,
         )
+        state.score_covariances[j] = sv_pattern
+
+        rhs = loadings_masked.T @ x_col(j)
+        state.scores[:, j] = cho_solve(cho, rhs, check_finite=False)
 
         log_progress(
             state.verbose,
@@ -775,6 +823,20 @@ def _score_update_general_no_patterns(state: ScoreState) -> ScoreState:
             phase="Updating scores",
         )
 
+    return state
+
+
+def _score_update_sparse_no_patterns(state: ScoreState) -> ScoreState:
+    """Sparse-native score update for pattern-free branch.
+
+    Uses CSC index/value arrays directly to avoid constructing dense
+    per-column vectors in the inner loop.
+
+    Returns:
+        Updated score state.
+    """
+    x_csc = state.x_csc if state.x_csc is not None else sp.csc_matrix(state.x_data)
+    _score_update_sparse_ext_apply(state, x_csc)
     return state
 
 
@@ -816,13 +878,18 @@ def _update_scores(state: ScoreState) -> ScoreState:
     """
     # Pattern-free branch
     if state.pattern_index is None:
+        if sp.issparse(state.x_data) and sp.issparse(state.mask):
+            return _score_update_sparse_no_patterns(state)
+
         dense_mask = None
         fully_observed = False
         if not sp.issparse(state.mask):
             dense_mask = np.asarray(state.mask, dtype=float)
             fully_observed = bool(np.all(dense_mask > 0))
 
-        if dense_mask is not None and fully_observed and not state.loading_covariances:
+        if dense_mask is not None and fully_observed and not _has_covariances(
+            state.loading_covariances
+        ):
             return _score_update_fast_dense_no_av(state)
 
         return _score_update_general_no_patterns(state)
@@ -840,10 +907,19 @@ def _loadings_accessors(
     state: LoadingsUpdateState,
 ) -> tuple[Callable[[int], np.ndarray], Callable[[int], np.ndarray], int]:
     if sp.issparse(state.x_data):
-        x_csr = sp.csr_matrix(state.x_data)
+        x_csr = state.x_csr if state.x_csr is not None else sp.csr_matrix(state.x_data)
+        x_data = x_csr.data
+        x_indices = x_csr.indices
+        x_indptr = x_csr.indptr
+        n_cols = x_csr.shape[1]
 
         def _x_row(i: int) -> np.ndarray:
-            return np.asarray(x_csr[i, :].toarray()).ravel()
+            out = np.zeros(n_cols, dtype=float)
+            start = int(x_indptr[i])
+            end = int(x_indptr[i + 1])
+            if end > start:
+                out[x_indices[start:end]] = x_data[start:end]
+            return out
 
     else:
         x_arr = np.asarray(state.x_data, dtype=float)
@@ -853,9 +929,17 @@ def _loadings_accessors(
 
     if sp.issparse(state.mask):
         mask_csr = sp.csr_matrix(state.mask)
+        mask_indices = mask_csr.indices
+        mask_indptr = mask_csr.indptr
+        n_mask_cols = mask_csr.shape[1]
 
         def _mask_row(i: int) -> np.ndarray:
-            return np.asarray(mask_csr[i, :].toarray()).ravel()
+            out = np.zeros(n_mask_cols, dtype=float)
+            start = int(mask_indptr[i])
+            end = int(mask_indptr[i + 1])
+            if end > start:
+                out[mask_indices[start:end]] = 1.0
+            return out
 
     else:
         mask_arr = np.asarray(state.mask, dtype=float)
@@ -875,8 +959,8 @@ def _prior_precision_matrix(va: np.ndarray, noise_var: float) -> np.ndarray:
 
 def _score_covariance_for_column(state: LoadingsUpdateState, j_idx: int) -> np.ndarray:
     if state.pattern_index is None:
-        return state.score_covariances[j_idx]
-    return state.score_covariances[state.pattern_index[j_idx]]
+        return _covariance_at(state.score_covariances, j_idx)
+    return _covariance_at(state.score_covariances, int(state.pattern_index[j_idx]))
 
 
 def _phi_for_row(
@@ -887,7 +971,7 @@ def _phi_for_row(
     scores_masked = mask_vec[None, :] * state.scores
     phi = scores_masked @ scores_masked.T + prior_prec
 
-    if state.score_covariances:
+    if _has_covariances(state.score_covariances):
         for j_idx in np.where(mask_vec > 0)[0]:
             phi += _score_covariance_for_column(state, int(j_idx))
 
@@ -906,19 +990,11 @@ def _loadings_update_fast_dense_no_sv(
         Updated loadings and loading covariances.
     """
     if sp.issparse(state.x_data):
-        x_csr = sp.csr_matrix(state.x_data)
-
-        def _x_row(i: int) -> np.ndarray:
-            return np.asarray(x_csr[i, :].toarray()).ravel()
-
+        x_arr = np.asarray(sp.csr_matrix(state.x_data).toarray(), dtype=float)
     else:
         x_arr = np.asarray(state.x_data, dtype=float)
 
-        def _x_row(i: int) -> np.ndarray:
-            return np.asarray(x_arr[i, :], dtype=float)
-
-    n_features = state.x_data.shape[0]
-    n_components = state.scores.shape[0]
+    n_features = x_arr.shape[0]
 
     if state.verbose == 2:
         logger.info("Updating loadings")
@@ -928,29 +1004,37 @@ def _loadings_update_fast_dense_no_sv(
     prior_prec_diag[finite_mask] = state.noise_var / state.va[finite_mask]
     prior_prec = np.diag(prior_prec_diag)
 
-    scores_masked = state.scores
-    phi = scores_masked @ scores_masked.T + prior_prec
-    phi = 0.5 * (phi + phi.T)
-    try:
-        cho = cho_factor(phi, lower=True, check_finite=False)
-    except LinAlgError:
-        jitter = _EPS_VAR * np.eye(n_components)
-        cho = cho_factor(phi + jitter, lower=True, check_finite=False)
+    return _loadings_update_fast_dense_ext(
+        state=state,
+        x_arr=x_arr,
+        prior_prec=prior_prec,
+        n_features=n_features,
+    )
 
-    loadings = np.empty((n_features, n_components), dtype=float)
+
+def _loadings_update_fast_dense_ext(
+    state: LoadingsUpdateState,
+    x_arr: np.ndarray,
+    prior_prec: np.ndarray,
+    n_features: int,
+) -> tuple[np.ndarray, list[np.ndarray]]:
+    result = _loadings_update_dense_ext(
+        x_data=np.asarray(x_arr, dtype=np.float64),
+        scores=np.asarray(state.scores, dtype=np.float64),
+        prior_prec=np.asarray(prior_prec, dtype=np.float64),
+        noise_var=float(state.noise_var),
+        return_covariance=_has_covariances(state.loading_covariances),
+    )
+
+    loadings = np.asarray(result["loadings"], dtype=float)
+    if _has_covariances(state.loading_covariances) and "loading_covariance" in result:
+        loading_cov_common = np.asarray(result["loading_covariance"], dtype=float)
+    else:
+        loading_cov_common = None
+
     for i in range(n_features):
-        x_row = _x_row(i)
-
-        rhs = scores_masked @ x_row
-        loadings[i, :] = cho_solve(cho, rhs, check_finite=False)
-
-        if state.loading_covariances:
-            state.loading_covariances[i] = state.noise_var * cho_solve(
-                cho,
-                np.eye(n_components),
-                check_finite=False,
-            )
-
+        if loading_cov_common is not None:
+            state.loading_covariances[i] = loading_cov_common
         log_progress(
             state.verbose,
             current=i + 1,
@@ -958,7 +1042,7 @@ def _loadings_update_fast_dense_no_sv(
             phase="Updating loadings",
         )
 
-    return loadings, state.loading_covariances
+    return np.asarray(loadings, dtype=float), state.loading_covariances
 
 
 def _loadings_update_general(
@@ -972,6 +1056,13 @@ def _loadings_update_general(
     Returns:
         Updated loadings and loading covariances.
     """
+    if (
+        state.pattern_index is None
+        and not sp.issparse(state.x_data)
+        and not sp.issparse(state.mask)
+    ):
+        return _loadings_update_general_dense_ext(state)
+
     x_row, mask_row, n_features = _loadings_accessors(state)
     n_components = state.scores.shape[0]
     prior_prec = _prior_precision_matrix(state.va, state.noise_var)
@@ -1007,6 +1098,193 @@ def _loadings_update_general(
     return loadings, state.loading_covariances
 
 
+def _loadings_update_sparse_no_patterns(
+    state: LoadingsUpdateState,
+) -> tuple[
+    np.ndarray,
+    list[np.ndarray],
+]:
+    """Sparse-native loadings update for pattern-free branch.
+
+    Uses CSR index/value arrays directly to avoid constructing dense
+    per-row vectors in the inner loop.
+
+    Returns:
+        Updated loadings and loading covariances.
+    """
+    x_csr = state.x_csr if state.x_csr is not None else sp.csr_matrix(state.x_data)
+    loadings = _loadings_update_sparse_ext_apply(state, x_csr)
+    return loadings, state.loading_covariances
+
+
+def _score_update_sparse_ext_apply(state: ScoreState, x_csc: sp.csc_matrix) -> None:
+    has_loading_covariances = _has_covariances(state.loading_covariances)
+    return_score_covariances = _has_covariances(state.score_covariances)
+
+    av_arg: np.ndarray | None
+    if has_loading_covariances:
+        av_arg = _covariances_stack(state.loading_covariances)
+    else:
+        av_arg = None
+
+    result = _score_update_sparse_ext(
+        x_data=x_csc.data.astype(np.float64, copy=False),
+        x_indices=x_csc.indices.astype(np.int32, copy=False),
+        x_indptr=x_csc.indptr.astype(np.int32, copy=False),
+        loadings=np.asarray(state.loadings, dtype=np.float64),
+        loading_covariances=av_arg,
+        noise_var=float(state.noise_var),
+        return_covariances=return_score_covariances,
+        num_cpu=0,
+    )
+
+    scores_arr = np.asarray(result["scores"], dtype=float)
+    state.scores[:, :] = scores_arr
+
+    if return_score_covariances and "score_covariances" in result:
+        score_covariances_arr = np.asarray(result["score_covariances"], dtype=float)
+        state.score_covariances = [
+            score_covariances_arr[j, :, :]
+            for j in range(score_covariances_arr.shape[0])
+        ]
+
+    if state.verbose == 2:
+        logger.info("Updating scores")
+
+
+def _score_update_general_dense_ext(state: ScoreState) -> ScoreState:
+    x_arr = np.asarray(state.x_data, dtype=np.float64)
+    mask_arr = np.asarray(state.mask, dtype=np.float64)
+    has_loading_covariances = _has_covariances(state.loading_covariances)
+    return_score_covariances = _has_covariances(state.score_covariances)
+
+    av_arg: np.ndarray | None
+    if has_loading_covariances:
+        av_arg = _covariances_stack(state.loading_covariances)
+    else:
+        av_arg = None
+
+    result = _score_update_dense_masked_ext(
+        x_data=x_arr,
+        mask=mask_arr,
+        loadings=np.asarray(state.loadings, dtype=np.float64),
+        loading_covariances=av_arg,
+        noise_var=float(state.noise_var),
+        return_covariances=return_score_covariances,
+    )
+
+    state.scores[:, :] = np.asarray(result["scores"], dtype=float)
+
+    n_samples = x_arr.shape[1]
+    if return_score_covariances and "score_covariances" in result:
+        score_covariances_arr = np.asarray(result["score_covariances"], dtype=float)
+        state.score_covariances = [
+            score_covariances_arr[j, :, :]
+            for j in range(score_covariances_arr.shape[0])
+        ]
+
+    for j in range(n_samples):
+        log_progress(
+            state.verbose,
+            current=j + 1,
+            total=n_samples,
+            phase="Updating scores",
+        )
+
+    return state
+
+
+def _loadings_update_general_dense_ext(
+    state: LoadingsUpdateState,
+) -> tuple[np.ndarray, list[np.ndarray]]:
+    x_arr = np.asarray(state.x_data, dtype=np.float64)
+    mask_arr = np.asarray(state.mask, dtype=np.float64)
+    prior_prec = _prior_precision_matrix(state.va, state.noise_var)
+    has_score_covariances = _has_covariances(state.score_covariances)
+    return_loading_covariances = _has_covariances(state.loading_covariances)
+
+    sv_arg: np.ndarray | None
+    if has_score_covariances:
+        sv_arg = _covariances_stack(state.score_covariances)
+    else:
+        sv_arg = None
+
+    result = _loadings_update_dense_masked_ext(
+        x_data=x_arr,
+        mask=mask_arr,
+        scores=np.asarray(state.scores, dtype=np.float64),
+        score_covariances=sv_arg,
+        prior_prec=np.asarray(prior_prec, dtype=np.float64),
+        noise_var=float(state.noise_var),
+        return_covariances=return_loading_covariances,
+    )
+
+    loadings = np.asarray(result["loadings"], dtype=float)
+
+    n_features = x_arr.shape[0]
+    if return_loading_covariances and "loading_covariances" in result:
+        loading_covariances_arr = np.asarray(result["loading_covariances"], dtype=float)
+        state.loading_covariances = [
+            loading_covariances_arr[i, :, :]
+            for i in range(loading_covariances_arr.shape[0])
+        ]
+
+    for i in range(n_features):
+        log_progress(
+            state.verbose,
+            current=i + 1,
+            total=n_features,
+            phase="Updating loadings",
+        )
+
+    return loadings, state.loading_covariances
+
+
+def _loadings_update_sparse_ext_apply(
+    state: LoadingsUpdateState,
+    x_csr: sp.csr_matrix,
+) -> np.ndarray:
+    has_score_covariances = _has_covariances(state.score_covariances)
+    return_loading_covariances = _has_covariances(state.loading_covariances)
+
+    sv_arg: np.ndarray | None
+    if has_score_covariances:
+        sv_arg = _covariances_stack(state.score_covariances)
+    else:
+        sv_arg = None
+
+    prior_prec = _prior_precision_matrix(state.va, state.noise_var)
+    result = _loadings_update_sparse_ext(
+        x_data=x_csr.data.astype(np.float64, copy=False),
+        x_indices=x_csr.indices.astype(np.int32, copy=False),
+        x_indptr=x_csr.indptr.astype(np.int32, copy=False),
+        scores=np.asarray(state.scores, dtype=np.float64),
+        score_covariances=sv_arg,
+        prior_prec=np.asarray(prior_prec, dtype=np.float64),
+        noise_var=float(state.noise_var),
+        return_covariances=return_loading_covariances,
+        num_cpu=0,
+    )
+
+    loadings_arr = np.asarray(result["loadings"], dtype=float)
+    loadings = loadings_arr
+
+    if return_loading_covariances and "loading_covariances" in result:
+        loading_covariances_arr = np.asarray(
+            result["loading_covariances"],
+            dtype=float,
+        )
+        state.loading_covariances = [
+            loading_covariances_arr[i, :, :]
+            for i in range(loading_covariances_arr.shape[0])
+        ]
+
+    if state.verbose == 2:
+        logger.info("Updating loadings")
+
+    return loadings
+
+
 def _update_loadings(
     state: LoadingsUpdateState,
 ) -> tuple[
@@ -1020,11 +1298,16 @@ def _update_loadings(
     """
     dense_mask = None
     fully_observed = False
-    sv_contrib = bool(state.score_covariances)
+    sv_contrib = _has_covariances(state.score_covariances)
 
     if not sp.issparse(state.mask):
         dense_mask = np.asarray(state.mask, dtype=float)
         fully_observed = bool(np.all(dense_mask > 0))
+
+    if state.pattern_index is None and sp.issparse(state.x_data) and sp.issparse(
+        state.mask
+    ):
+        return _loadings_update_sparse_no_patterns(state)
 
     if dense_mask is not None and fully_observed and not sv_contrib:
         return _loadings_update_fast_dense_no_sv(state)
@@ -1043,7 +1326,7 @@ def _recompute_rms(ctx: RmsContext) -> tuple[float, float, Matrix]:
     Returns:
         RMS on data, RMS on probe, and error matrix.
     """
-    cfg_data = RmsConfig(n_observed=int(ctx.n_data), num_cpu=1)
+    cfg_data = RmsConfig(n_observed=int(ctx.n_data), num_cpu=int(ctx.num_cpu))
     rms, err_mx_raw = compute_rms(
         ctx.x_data,
         ctx.loadings,
@@ -1062,7 +1345,7 @@ def _recompute_rms(ctx: RmsContext) -> tuple[float, float, Matrix]:
         err_mx = np.asarray(err_mx_raw)
 
     if ctx.n_probe > 0 and ctx.x_probe is not None and ctx.mask_probe is not None:
-        cfg_probe = RmsConfig(n_observed=int(ctx.n_probe), num_cpu=1)
+        cfg_probe = RmsConfig(n_observed=int(ctx.n_probe), num_cpu=int(ctx.num_cpu))
         prms, _ = compute_rms(
             ctx.x_probe,
             ctx.loadings,
@@ -1093,47 +1376,120 @@ def _update_noise_variance(
     Returns:
         Updated noise state and accumulated ``s_xv``.
     """
-    s_xv = 0.0
     loadings = noise_state.loadings
     scores = noise_state.scores
     loading_covariances = noise_state.loading_covariances
     score_covariances = noise_state.score_covariances
     pattern_index = noise_state.pattern_index
 
-    def _accumulate_entry(i: int, j: int, sv_j: np.ndarray) -> None:
-        nonlocal s_xv
-        a_i = loadings[i, :][None, :]  # (1, k)
-        s_xv += float((a_i @ sv_j @ a_i.T)[0, 0].item())
-        if not loading_covariances:
-            return
+    n_features = int(loadings.shape[0])
+    n_samples = int(scores.shape[1])
+    fully_observed = int(ix.size) == (n_features * n_samples)
 
-        s_j = scores[:, j][:, None]
-        cov_term = s_j.T @ loading_covariances[i] @ s_j
-        cov_term += np.sum(sv_j * loading_covariances[i])
-        s_xv += float(np.asarray(cov_term).item())
+    if fully_observed and _has_covariances(score_covariances):
+        sv_by_col = _score_covariances_by_column(
+            score_covariances,
+            pattern_index,
+            n_samples,
+        )
+        s_xv = _fully_observed_s_xv(
+            loadings=loadings,
+            scores=scores,
+            loading_covariances=loading_covariances,
+            sv_by_col=sv_by_col,
+            mu_variances=noise_state.mu_variances,
+            n_samples=n_samples,
+        )
+        s_xv += (rms**2) * noise_state.n_data
+        return _finalize_noise_state(noise_state, s_xv, hp_v)
 
-    if pattern_index is None:
-        for i, j in zip(ix, jx, strict=True):
-            _accumulate_entry(int(i), int(j), score_covariances[int(j)])
+    s_xv = 0.0
+
+    sv_by_col = _score_covariances_by_column(
+        score_covariances,
+        pattern_index,
+        n_samples,
+    )
+
+    has_loading_covariances = _has_covariances(loading_covariances)
+
+    av_arg: np.ndarray | None
+    if has_loading_covariances:
+        av_arg = _covariances_stack(loading_covariances)
     else:
-        for i, j in zip(ix, jx, strict=True):
-            sv_j = score_covariances[int(pattern_index[int(j)])]
-            _accumulate_entry(int(i), int(j), sv_j)
+        av_arg = None
+
+    sv_arr = np.stack(sv_by_col, axis=0).astype(np.float64, copy=False)
+    s_xv = float(
+        _noise_sxv_sum_ext(
+            ix=np.asarray(ix, dtype=np.int32),
+            jx=np.asarray(jx, dtype=np.int32),
+            loadings=np.asarray(loadings, dtype=np.float64),
+            scores=np.asarray(scores, dtype=np.float64),
+            sv_by_col=sv_arr,
+            loading_covariances=av_arg,
+            num_cpu=0,
+        )
+    )
 
     if noise_state.mu_variances.size > 0:
         s_xv += float(np.sum(noise_state.mu_variances[ix, 0]).item())
 
     s_xv += (rms**2) * noise_state.n_data
+    return _finalize_noise_state(noise_state, s_xv, hp_v)
+
+
+def _score_covariances_by_column(
+    score_covariances: CovarianceStore,
+    pattern_index: np.ndarray | None,
+    n_samples: int,
+) -> list[np.ndarray]:
+    if pattern_index is None:
+        return score_covariances
+    return [
+        _covariance_at(score_covariances, int(pattern_index[j]))
+        for j in range(n_samples)
+    ]
+
+
+def _fully_observed_s_xv(  # noqa: PLR0913
+    *,
+    loadings: np.ndarray,
+    scores: np.ndarray,
+    loading_covariances: list[np.ndarray],
+    sv_by_col: list[np.ndarray],
+    mu_variances: np.ndarray,
+    n_samples: int,
+) -> float:
+    gram = loadings.T @ loadings
+    s_xv = float(sum(np.trace(sv_j @ gram) for sv_j in sv_by_col))
+
+    if _has_covariances(loading_covariances):
+        av_sum = np.sum(_covariances_stack(loading_covariances), axis=0)
+        s_xv += float(np.sum(scores * (av_sum @ scores)))
+        s_xv += float(sum(np.sum(sv_j * av_sum) for sv_j in sv_by_col))
+
+    if mu_variances.size > 0:
+        s_xv += float(np.sum(mu_variances[:, 0]) * n_samples)
+
+    return s_xv
+
+
+def _finalize_noise_state(
+    noise_state: NoiseState,
+    s_xv: float,
+    hp_v: float,
+) -> tuple[NoiseState, float]:
     v_new = (s_xv + 2.0 * hp_v) / (noise_state.n_data + 2.0 * hp_v)
     v_new = max(float(v_new), _EPS_VAR)
 
     updated_state = NoiseState(
-        loadings=loadings,
-        scores=scores,
-        loading_covariances=loading_covariances,
-        score_covariances=score_covariances,
+        loadings=noise_state.loadings,
+        scores=noise_state.scores,
+        loading_covariances=noise_state.loading_covariances,
+        score_covariances=noise_state.score_covariances,
         mu_variances=noise_state.mu_variances,
-        pattern_index=pattern_index,
+        pattern_index=noise_state.pattern_index,
         n_data=noise_state.n_data,
         noise_var=v_new,
     )

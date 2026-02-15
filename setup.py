@@ -66,6 +66,45 @@ ext_modules = [
         language="c++",
         extra_compile_args=["-O3", "-std=c++11"],
     ),
+    Extension(
+        name="vbpca_py.sparse_update_kernels",
+        sources=["src/vbpca_py/sparse_update_kernels.cpp"],
+        include_dirs=[
+            get_pybind_include(),
+            get_eigen_include_path(),
+        ],
+        language="c++",
+        extra_compile_args=["-O3", "-std=c++14"],
+    ),
+    Extension(
+        name="vbpca_py.dense_update_kernels",
+        sources=["src/vbpca_py/dense_update_kernels.cpp"],
+        include_dirs=[
+            get_pybind_include(),
+            get_eigen_include_path(),
+        ],
+        language="c++",
+        extra_compile_args=["-O3", "-std=c++14"],
+    ),
+    Extension(
+        name="vbpca_py.noise_update_kernels",
+        sources=["src/vbpca_py/noise_update_kernels.cpp"],
+        include_dirs=[
+            get_pybind_include(),
+        ],
+        language="c++",
+        extra_compile_args=["-O3", "-std=c++14"],
+    ),
+    Extension(
+        name="vbpca_py.rotate_update_kernels",
+        sources=["src/vbpca_py/rotate_update_kernels.cpp"],
+        include_dirs=[
+            get_pybind_include(),
+            get_eigen_include_path(),
+        ],
+        language="c++",
+        extra_compile_args=["-O3", "-std=c++14"],
+    ),
 ]
 
 setup(

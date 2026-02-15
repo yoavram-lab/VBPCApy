@@ -19,6 +19,17 @@ This package targets researchers and practitioners who need:
 
 VBPCApy implements the Illin & Raiko (2010) VB-PCA formulation with modern Python ergonomics. The default `compat_mode="strict_legacy"` preserves historical behavior; `compat_mode="modern"` is available for updated semantics in selected preprocessing/masking cases.
 
+## Runtime backend selection
+
+The package now uses optimized kernels by default when extension modules are available in your Python environment. You do not need to enable a special "fast mode".
+
+- **Default behavior**: dense/sparse/noise update kernels are selected automatically from data and mask structure.
+- **Fallback behavior**: if an extension cannot be imported (for example, partial build or unavailable binary), the equivalent NumPy/SciPy implementation is used automatically.
+- **Behavioral compatibility**: `compat_mode` controls numerical compatibility semantics (`strict_legacy` vs `modern`) and is independent of whether C++ or Python kernels execute.
+- **Thread control**: thread counts can be constrained with environment variables (for example `VBPCA_NUM_THREADS`, and operation-specific overrides used by some kernels).
+
+In short: backend selection affects runtime, not model semantics.
+
 ## Features
 - Variational Bayesian PCA on dense or sparse data with explicit missing-entry masks.
 - Optional bias (per-feature mean) estimation and rotation to a PCA-aligned solution.
@@ -138,6 +149,11 @@ x_recon = auto.inverse_transform(z_recon)
 - `rotation`: final orthogonal rotation to a PCA-aligned solution.
 - `compat_mode`: compatibility policy for sparse empty-row/column handling (`strict_legacy` default, `modern` available).
 
+Legacy option note:
+- The project still accepts several MATLAB-compatibility-era option names.
+- `autosave` and `filename` are currently accepted for compatibility but have no effect in the Python package.
+- Pre-release cleanup will prefer removing no-op compatibility options while retaining options that still control behavior (`algorithm`, `rotate2pca`, `num_cpu`, probe settings, and convergence settings).
+
 ### Convergence and stopping
 Each fit (including every k tried in `select_n_components`) runs the PCA_FULL EM loop until one of these criteria triggers or `maxiters` is reached:
 - Subspace angle below `minangle` (default `1e-8`).
@@ -238,6 +254,22 @@ just bench-scale
 # Python vs Octave compare suite
 just bench-octave
 ```
+
+Run the script-based comparison study (mean+PCA vs MICE+PCA vs VBPCA):
+```bash
+# quick pilot end-to-end (replicates + summaries + paper artifacts)
+just bench-study-pipeline
+
+# full sweep + aggregation + paper outputs
+just bench-study-full
+just bench-study-summary
+just bench-study-paper
+
+# deterministic reproducibility check for a fixed-seed pilot setting
+just bench-study-repro
+```
+
+The study writes `results/replicates*.csv`, summary tables, and paper-ready artifacts under `results/paper/`. See `scripts/benchmark_study.md` for details.
 
 
 ### Full legacy parity test requirements

@@ -8,10 +8,38 @@ Guarantees:
 
 from __future__ import annotations
 
+import os
+
 import numpy as np
 import scipy.sparse as sp
 
 from vbpca_py.errpca_pt import errpca_pt as _errpca_pt_ext
+
+
+def _resolve_num_cpu(num_cpu: int) -> int:
+    """Resolve worker count for sparse kernels.
+
+    Semantics:
+    - ``num_cpu > 0``: use the provided value.
+    - ``num_cpu <= 0``: read ``VBPCA_NUM_THREADS`` if set to a positive integer,
+      else fall back to ``1``.
+
+    Returns:
+                Effective worker count used for sparse kernels.
+    """
+    if num_cpu > 0:
+        return num_cpu
+
+    env_val = os.environ.get("VBPCA_NUM_THREADS", "").strip()
+    if env_val:
+        try:
+            parsed = int(env_val)
+        except ValueError:
+            parsed = 0
+        if parsed > 0:
+            return parsed
+
+    return 1
 
 
 def sparse_reconstruction_error(
@@ -65,7 +93,7 @@ def sparse_reconstruction_error(
         )
         raise ValueError(err_msg)
 
-    num_cpu = max(int(num_cpu), 1)
+    num_cpu = _resolve_num_cpu(int(num_cpu))
 
     # Ensure expected dtypes for the extension
     x_data = x_csr.data.astype(np.float64, copy=False)

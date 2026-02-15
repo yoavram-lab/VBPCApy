@@ -36,6 +36,7 @@ class SelectionConfig:
     """Configuration for component selection."""
 
     metric: Metric = "prms"
+    stop_on_metric_reversal: bool = False
     patience: int | None = None
     max_trials: int | None = None
     compute_explained_variance: bool = True
@@ -86,6 +87,24 @@ def _metric_value(metric: Metric, rms: float, prms: float, cost: float) -> float
     return cost if np.isfinite(cost) else rms
 
 
+def _metric_value_from_entry(metric: Metric, entry: dict[str, object]) -> float:
+    return _metric_value(
+        metric,
+        rms=cast("float", entry["rms"]),
+        prms=cast("float", entry["prms"]),
+        cost=cast("float", entry["cost"]),
+    )
+
+
+def _is_metric_reversal(previous: float, current: float) -> bool:
+    return (np.isfinite(previous) and not np.isfinite(current)) or (
+        np.isfinite(previous)
+        and np.isfinite(current)
+        and current > previous
+        and not np.isclose(current, previous, equal_nan=False)
+    )
+
+
 def _fit_candidate(
     k: int,
     x_arr: np.ndarray | sp.csr_matrix,
@@ -131,8 +150,9 @@ def select_n_components(
         mask: Optional boolean mask with the same shape as ``x``.
         components: Candidate component counts. Defaults to
             ``1..min(n_features, n_samples)``.
-        config: Selection parameters controlling metric, patience, trials, and
-            whether to compute explained variance or retain the best model.
+        config: Selection parameters controlling metric, stopping behavior,
+            patience, trials, and whether to compute explained variance or
+            retain the best model.
         **opts: Additional options forwarded to the ``VBPCA`` constructor and fit.
 
     Returns:
@@ -151,9 +171,7 @@ def select_n_components(
         raise ValueError(msg)
 
     x_arr = sp.csr_matrix(x) if sp.issparse(x) else np.asarray(x)
-    shape = x_arr.shape[:2]
-
-    k_values = _normalize_components(components, shape[0], shape[1])
+    k_values = _normalize_components(components, x_arr.shape[0], x_arr.shape[1])
 
     trace: list[dict[str, object]] = []
     state = _SweepState(
@@ -170,6 +188,9 @@ def select_n_components(
     )
 
     fit_opts: dict[str, object] = dict(opts)
+    prev_metric_val: float | None = None
+    prev_entry: dict[str, object] | None = None
+    prev_model: VBPCA | None = None
 
     for idx, k in enumerate(k_values):
         if cfg.max_trials is not None and idx >= int(cfg.max_trials):
@@ -178,12 +199,23 @@ def select_n_components(
         entry, est = _fit_candidate(k, x_arr, mask, cfg, fit_opts)
         trace.append(entry)
 
-        rms_val = cast("float", entry["rms"])
-        prms_val = cast("float", entry["prms"])
-        cost_val = cast("float", entry["cost"])
-        metric_val = _metric_value(
-            cfg.metric, rms=rms_val, prms=prms_val, cost=cost_val
-        )
+        metric_val = _metric_value_from_entry(cfg.metric, entry)
+
+        # Optional local stopping rule: as soon as metric worsens at k compared
+        # with k-1, select k-1 and stop.
+        if (
+            cfg.stop_on_metric_reversal
+            and prev_metric_val is not None
+            and _is_metric_reversal(prev_metric_val, metric_val)
+            and prev_entry is not None
+        ):
+            state.best_k = int(cast("int", prev_entry["k"]))
+            state.best_val = prev_metric_val
+            state.best_metrics = prev_entry
+            if cfg.return_best_model:
+                state.best_model = prev_model
+            break
+
         if metric_val < state.best_val or (
             np.isclose(metric_val, state.best_val, equal_nan=False) and k < state.best_k
         ):
@@ -198,5 +230,9 @@ def select_n_components(
 
         if cfg.patience is not None and state.no_improve > int(cfg.patience):
             break
+
+        prev_metric_val = metric_val
+        prev_entry = entry
+        prev_model = est if cfg.return_best_model else None
 
     return state.best_k, state.best_metrics, trace, state.best_model

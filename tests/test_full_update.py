@@ -215,7 +215,7 @@ def test_build_masks_dense_strict_legacy_rewrites_observed_zeros_to_eps() -> Non
 
 
 def test_build_masks_dense_modern_keeps_observed_zeros_exact() -> None:
-    """modern mode should keep observed zeros as zero in dense preprocessing."""
+    """Modern mode should keep observed zeros as zero in dense preprocessing."""
     x = np.array([[0.0, np.nan], [2.0, 0.0]], dtype=float)
     opts: dict[str, object] = {
         "xprobe": None,
@@ -250,7 +250,7 @@ def test_observed_indices_match_nonzero_dense_raw() -> None:
 
 
 def test_observed_indices_with_mode_modern_uses_mask_dense() -> None:
-    """modern mode should use mask-defined observed entries for dense inputs."""
+    """Modern mode should use mask-defined observed entries for dense inputs."""
     x = np.array([[0.0, 0.0], [5.0, 0.0]], dtype=float)
     mask = np.array([[True, True], [True, False]], dtype=bool)
 
@@ -258,6 +258,84 @@ def test_observed_indices_with_mode_modern_uses_mask_dense() -> None:
     observed = _set_of_pairs(ix, jx)
 
     assert observed == {(0, 0), (0, 1), (1, 0)}
+
+
+def test_score_update_sparse_no_patterns_returns_finite_outputs() -> None:
+    rng = np.random.default_rng(914)
+    x_dense = np.array(
+        [
+            [1.0, 0.0, 2.0],
+            [0.0, 3.0, 0.0],
+            [4.0, 0.0, 5.0],
+        ],
+        dtype=float,
+    )
+    x_csr = sp.csr_matrix(x_dense)
+    mask = x_csr.copy()
+    mask.data[:] = 1.0
+
+    n_features, n_samples = x_csr.shape
+    n_components = 2
+
+    state = ScoreState(
+        x_data=x_csr,
+        mask=mask,
+        loadings=rng.standard_normal((n_features, n_components)),
+        scores=np.zeros((n_components, n_samples), dtype=float),
+        loading_covariances=[],
+        score_covariances=[np.eye(n_components) for _ in range(n_samples)],
+        pattern_index=None,
+        obs_patterns=[],
+        noise_var=1.0,
+        eye_components=np.eye(n_components),
+        verbose=0,
+        x_csr=x_csr,
+        x_csc=x_csr.tocsc(),
+    )
+
+    out = _update_scores(state)
+
+    assert out.scores.shape == (n_components, n_samples)
+    assert np.all(np.isfinite(out.scores))
+    assert len(out.score_covariances) == n_samples
+
+
+def test_loadings_update_sparse_no_patterns_returns_finite_outputs() -> None:
+    rng = np.random.default_rng(915)
+    x_dense = np.array(
+        [
+            [1.0, 0.0, 2.0],
+            [0.0, 3.0, 0.0],
+            [4.0, 0.0, 5.0],
+        ],
+        dtype=float,
+    )
+    x_csr = sp.csr_matrix(x_dense)
+    mask = x_csr.copy()
+    mask.data[:] = 1.0
+
+    n_features, n_samples = x_csr.shape
+    n_components = 2
+
+    state = LoadingsUpdateState(
+        x_data=x_csr,
+        mask=mask,
+        scores=rng.standard_normal((n_components, n_samples)),
+        loading_covariances=[np.eye(n_components) for _ in range(n_features)],
+        score_covariances=[],
+        pattern_index=None,
+        va=np.ones(n_components, dtype=float),
+        noise_var=1.0,
+        verbose=0,
+        x_csr=x_csr,
+        x_csc=x_csr.tocsc(),
+    )
+
+    loadings, loading_covariances = _update_loadings(state)
+
+    assert loadings.shape == (n_features, n_components)
+    assert np.all(np.isfinite(loadings))
+    assert len(loading_covariances) == n_features
 
 
 def test_observed_indices_with_mode_strict_matches_nonzero_dense() -> None:
@@ -833,6 +911,47 @@ def test_update_bias_handles_rows_with_no_observations() -> None:
     assert np.all(np.isfinite(new_centering.x_data))
 
 
+def test_update_bias_accepts_sparse_error_matrix() -> None:
+    x = np.zeros((3, 3), dtype=float)
+    mask = np.ones_like(x, dtype=bool)
+    n_obs_row = np.array([3.0, 3.0, 3.0])
+
+    bias_state = BiasState(
+        mu=np.zeros((3, 1), dtype=float),
+        muv=np.zeros((3, 1), dtype=float),
+        noise_var=1.0,
+        vmu=10.0,
+        n_obs_row=n_obs_row,
+    )
+    centering = CenteringState(
+        x_data=x.copy(),
+        x_probe=None,
+        mask=mask,
+        mask_probe=None,
+    )
+
+    err_dense = np.array(
+        [
+            [1.0, 0.0, 2.0],
+            [0.0, 1.0, 0.0],
+            [0.5, 0.0, 0.5],
+        ],
+        dtype=float,
+    )
+    err_sparse = sp.csr_matrix(err_dense)
+
+    new_bias_state, new_centering = _update_bias(
+        bias_enabled=True,
+        bias_state=bias_state,
+        err_mx=err_sparse,
+        centering=centering,
+    )
+
+    assert np.all(np.isfinite(new_bias_state.mu))
+    assert np.all(np.isfinite(new_centering.x_data))
+    assert new_centering.x_data.shape == x.shape
+
+
 def test_update_bias_incremental_recentering_matches_full_recentering() -> None:
     """Diagnostic: incremental centering using d_mu_update should match full recenter.
 
@@ -1124,6 +1243,222 @@ def test_loadings_fast_path_equals_general_path_when_sv_disabled() -> None:
     assert av_fast == av_gen == []
 
 
+def test_scores_sparse_no_pattern_path_equals_general() -> None:
+    """Sparse pattern-free score update matches general implementation."""
+    rng = np.random.default_rng(302)
+    n_features, n_samples, n_components = 7, 9, 3
+
+    x_dense = rng.standard_normal((n_features, n_samples))
+    x_dense[rng.random(x_dense.shape) < 0.55] = 0.0
+    x_sparse = sp.csr_matrix(x_dense)
+    mask_sparse = x_sparse.copy()
+    mask_sparse.data[:] = 1.0
+
+    loadings = rng.standard_normal((n_features, n_components))
+    eye = np.eye(n_components)
+    noise_var = 0.2
+
+    state_sparse = ScoreState(
+        x_data=x_sparse,
+        mask=mask_sparse,
+        loadings=loadings,
+        scores=np.zeros((n_components, n_samples)),
+        loading_covariances=[],
+        score_covariances=[
+            np.zeros((n_components, n_components)) for _ in range(n_samples)
+        ],
+        pattern_index=None,
+        obs_patterns=[],
+        noise_var=noise_var,
+        eye_components=eye,
+        verbose=0,
+    )
+    out_sparse = _update_scores(state_sparse)
+
+    state_general = ScoreState(
+        x_data=x_sparse,
+        mask=mask_sparse,
+        loadings=loadings,
+        scores=np.zeros((n_components, n_samples)),
+        loading_covariances=[],
+        score_covariances=[
+            np.zeros((n_components, n_components)) for _ in range(n_samples)
+        ],
+        pattern_index=None,
+        obs_patterns=[],
+        noise_var=noise_var,
+        eye_components=eye,
+        verbose=0,
+    )
+    out_general = _score_update_general_no_patterns(state_general)
+
+    assert_allclose(out_sparse.scores, out_general.scores, rtol=1e-10, atol=1e-12)
+    for j in range(n_samples):
+        assert_allclose(
+            out_sparse.score_covariances[j],
+            out_general.score_covariances[j],
+            rtol=1e-10,
+            atol=1e-12,
+        )
+
+
+def test_loadings_sparse_no_pattern_path_equals_general() -> None:
+    """Sparse pattern-free loadings update matches general implementation."""
+    rng = np.random.default_rng(303)
+    n_features, n_samples, n_components = 8, 10, 3
+
+    x_dense = rng.standard_normal((n_features, n_samples))
+    x_dense[rng.random(x_dense.shape) < 0.5] = 0.0
+    x_sparse = sp.csr_matrix(x_dense)
+    mask_sparse = x_sparse.copy()
+    mask_sparse.data[:] = 1.0
+
+    scores = rng.standard_normal((n_components, n_samples))
+    va = np.full(n_components, 3.0)
+    noise_var = 0.35
+
+    state_sparse = LoadingsUpdateState(
+        x_data=x_sparse,
+        mask=mask_sparse,
+        scores=scores,
+        loading_covariances=[],
+        score_covariances=[],
+        pattern_index=None,
+        va=va,
+        noise_var=noise_var,
+        verbose=0,
+    )
+    a_sparse, av_sparse = _update_loadings(state_sparse)
+
+    state_general = LoadingsUpdateState(
+        x_data=x_sparse,
+        mask=mask_sparse,
+        scores=scores,
+        loading_covariances=[],
+        score_covariances=[],
+        pattern_index=None,
+        va=va,
+        noise_var=noise_var,
+        verbose=0,
+    )
+    a_general, av_general = _loadings_update_general(state_general)
+
+    assert_allclose(a_sparse, a_general, rtol=1e-10, atol=1e-12)
+    assert av_sparse == av_general == []
+
+
+def test_scores_sparse_no_pattern_path_equals_general_with_av() -> None:
+    """Sparse pattern-free score update with Av matches general implementation."""
+    rng = np.random.default_rng(304)
+    n_features, n_samples, n_components = 6, 8, 2
+
+    x_dense = rng.standard_normal((n_features, n_samples))
+    x_dense[rng.random(x_dense.shape) < 0.45] = 0.0
+    x_sparse = sp.csr_matrix(x_dense)
+    mask_sparse = x_sparse.copy()
+    mask_sparse.data[:] = 1.0
+
+    loadings = rng.standard_normal((n_features, n_components))
+    av = [
+        np.array([[0.03, 0.005], [0.005, 0.025]], dtype=float)
+        for _ in range(n_features)
+    ]
+    eye = np.eye(n_components)
+    noise_var = 0.22
+
+    state_sparse = ScoreState(
+        x_data=x_sparse,
+        mask=mask_sparse,
+        loadings=loadings,
+        scores=np.zeros((n_components, n_samples)),
+        loading_covariances=[m.copy() for m in av],
+        score_covariances=[
+            np.zeros((n_components, n_components)) for _ in range(n_samples)
+        ],
+        pattern_index=None,
+        obs_patterns=[],
+        noise_var=noise_var,
+        eye_components=eye,
+        verbose=0,
+    )
+    out_sparse = _update_scores(state_sparse)
+
+    state_general = ScoreState(
+        x_data=x_sparse,
+        mask=mask_sparse,
+        loadings=loadings,
+        scores=np.zeros((n_components, n_samples)),
+        loading_covariances=[m.copy() for m in av],
+        score_covariances=[
+            np.zeros((n_components, n_components)) for _ in range(n_samples)
+        ],
+        pattern_index=None,
+        obs_patterns=[],
+        noise_var=noise_var,
+        eye_components=eye,
+        verbose=0,
+    )
+    out_general = _score_update_general_no_patterns(state_general)
+
+    assert_allclose(out_sparse.scores, out_general.scores, rtol=1e-10, atol=1e-12)
+    for j in range(n_samples):
+        assert_allclose(
+            out_sparse.score_covariances[j],
+            out_general.score_covariances[j],
+            rtol=1e-10,
+            atol=1e-12,
+        )
+
+
+def test_loadings_sparse_no_pattern_path_equals_general_with_sv() -> None:
+    """Sparse pattern-free loadings update with Sv matches general implementation."""
+    rng = np.random.default_rng(305)
+    n_features, n_samples, n_components = 7, 9, 2
+
+    x_dense = rng.standard_normal((n_features, n_samples))
+    x_dense[rng.random(x_dense.shape) < 0.45] = 0.0
+    x_sparse = sp.csr_matrix(x_dense)
+    mask_sparse = x_sparse.copy()
+    mask_sparse.data[:] = 1.0
+
+    scores = rng.standard_normal((n_components, n_samples))
+    sv = [
+        np.array([[0.04, -0.003], [-0.003, 0.02]], dtype=float)
+        for _ in range(n_samples)
+    ]
+    va = np.full(n_components, 4.0)
+    noise_var = 0.3
+
+    state_sparse = LoadingsUpdateState(
+        x_data=x_sparse,
+        mask=mask_sparse,
+        scores=scores,
+        loading_covariances=[],
+        score_covariances=[m.copy() for m in sv],
+        pattern_index=None,
+        va=va,
+        noise_var=noise_var,
+        verbose=0,
+    )
+    a_sparse, av_sparse = _update_loadings(state_sparse)
+
+    state_general = LoadingsUpdateState(
+        x_data=x_sparse,
+        mask=mask_sparse,
+        scores=scores,
+        loading_covariances=[],
+        score_covariances=[m.copy() for m in sv],
+        pattern_index=None,
+        va=va,
+        noise_var=noise_var,
+        verbose=0,
+    )
+    a_general, av_general = _loadings_update_general(state_general)
+
+    assert_allclose(a_sparse, a_general, rtol=1e-10, atol=1e-12)
+    assert av_sparse == av_general == []
+
+
 def test_scores_pattern_mode_equals_expanded_mode() -> None:
     """Pattern-mode score updates should match expanded per-sample mode."""
     rng = np.random.default_rng(400)
@@ -1340,6 +1675,7 @@ def test_recompute_rms_matches_manual() -> None:
         n_probe=0,
         loadings=loadings,
         scores=scores,
+        num_cpu=1,
     )
 
     rms, prms, err_mx = _recompute_rms(ctx)
@@ -1347,6 +1683,43 @@ def test_recompute_rms_matches_manual() -> None:
     assert np.isnan(prms)
     assert err_mx.shape == x.shape
     assert_allclose(rms, rms_manual, rtol=1e-6, atol=1e-8)
+
+
+def test_recompute_rms_forwards_num_cpu(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: list[int] = []
+
+    def _fake_compute_rms(
+        data: np.ndarray,
+        loadings: np.ndarray,
+        scores: np.ndarray,
+        mask: np.ndarray,
+        config: object,
+    ) -> tuple[float, np.ndarray]:
+        captured.append(int(config.num_cpu))
+        err = np.zeros_like(np.asarray(data, dtype=float))
+        return 0.0, err
+
+    monkeypatch.setattr("vbpca_py._full_update.compute_rms", _fake_compute_rms)
+
+    x = np.zeros((3, 4), dtype=float)
+    mask = np.ones_like(x, dtype=float)
+    loadings = np.zeros((3, 2), dtype=float)
+    scores = np.zeros((2, 4), dtype=float)
+
+    ctx = RmsContext(
+        x_data=x,
+        x_probe=None,
+        mask=mask,
+        mask_probe=None,
+        n_data=float(mask.size),
+        n_probe=0,
+        loadings=loadings,
+        scores=scores,
+        num_cpu=4,
+    )
+    _recompute_rms(ctx)
+
+    assert captured == [4]
 
 
 def test_update_noise_variance_positive_and_finite() -> None:
@@ -1380,6 +1753,97 @@ def test_update_noise_variance_positive_and_finite() -> None:
     assert s_xv > 0.0
     assert updated_state.noise_var > 0.0
     assert np.isfinite(updated_state.noise_var)
+
+
+def test_update_noise_variance_fully_observed_matches_manual_formula() -> None:
+    rng = np.random.default_rng(404)
+    n_features, n_samples, n_components = 4, 5, 3
+
+    loadings = rng.standard_normal((n_features, n_components))
+    scores = rng.standard_normal((n_components, n_samples))
+    score_covariances = [
+        np.eye(n_components) * (0.5 + 0.1 * j) for j in range(n_samples)
+    ]
+    loading_covariances = [
+        np.eye(n_components) * (0.2 + 0.05 * i) for i in range(n_features)
+    ]
+    mu_variances = np.full((n_features, 1), 0.03)
+
+    noise_state = NoiseState(
+        loadings=loadings,
+        scores=scores,
+        loading_covariances=loading_covariances,
+        score_covariances=score_covariances,
+        mu_variances=mu_variances,
+        pattern_index=None,
+        n_data=float(n_features * n_samples),
+        noise_var=0.7,
+    )
+
+    ix, jx = np.nonzero(np.ones((n_features, n_samples), dtype=bool))
+    rms = 0.9
+
+    updated_state, s_xv = _update_noise_variance(noise_state, rms, ix, jx)
+
+    s_xv_manual = 0.0
+    for i, j in zip(ix, jx, strict=True):
+        a_i = loadings[int(i), :][None, :]
+        sv_j = score_covariances[int(j)]
+        s_j = scores[:, int(j)][:, None]
+        s_xv_manual += float((a_i @ sv_j @ a_i.T)[0, 0])
+        s_xv_manual += float((s_j.T @ loading_covariances[int(i)] @ s_j)[0, 0])
+        s_xv_manual += float(np.sum(sv_j * loading_covariances[int(i)]))
+        s_xv_manual += float(mu_variances[int(i), 0])
+    s_xv_manual += (rms**2) * noise_state.n_data
+
+    assert_allclose(s_xv, s_xv_manual, rtol=1e-10, atol=1e-10)
+    assert updated_state.noise_var > 0.0
+
+
+def test_update_noise_variance_partial_observed_matches_manual_formula() -> None:
+    rng = np.random.default_rng(505)
+    n_features, n_samples, n_components = 5, 6, 3
+
+    loadings = rng.standard_normal((n_features, n_components))
+    scores = rng.standard_normal((n_components, n_samples))
+    score_covariances = [
+        np.eye(n_components) * (0.2 + 0.03 * j) for j in range(n_samples)
+    ]
+    loading_covariances = [
+        np.eye(n_components) * (0.15 + 0.02 * i) for i in range(n_features)
+    ]
+    mu_variances = np.full((n_features, 1), 0.01)
+
+    noise_state = NoiseState(
+        loadings=loadings,
+        scores=scores,
+        loading_covariances=loading_covariances,
+        score_covariances=score_covariances,
+        mu_variances=mu_variances,
+        pattern_index=None,
+        n_data=20.0,
+        noise_var=0.6,
+    )
+
+    observed = rng.random((n_features, n_samples)) < 0.65
+    ix, jx = np.nonzero(observed)
+    rms = 0.8
+
+    updated_state, s_xv = _update_noise_variance(noise_state, rms, ix, jx)
+
+    s_xv_manual = 0.0
+    for i, j in zip(ix, jx, strict=True):
+        a_i = loadings[int(i), :][None, :]
+        sv_j = score_covariances[int(j)]
+        s_j = scores[:, int(j)][:, None]
+        s_xv_manual += float((a_i @ sv_j @ a_i.T)[0, 0])
+        s_xv_manual += float((s_j.T @ loading_covariances[int(i)] @ s_j)[0, 0])
+        s_xv_manual += float(np.sum(sv_j * loading_covariances[int(i)]))
+        s_xv_manual += float(mu_variances[int(i), 0])
+    s_xv_manual += (rms**2) * noise_state.n_data
+
+    assert_allclose(s_xv, s_xv_manual, rtol=1e-10, atol=1e-10)
+    assert updated_state.noise_var > 0.0
 
 
 # ----------------------------------------------------------------------
