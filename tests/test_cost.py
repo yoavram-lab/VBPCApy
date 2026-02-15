@@ -28,6 +28,7 @@ import pytest
 import scipy.sparse as sp
 from scipy.io import loadmat, savemat
 
+import vbpca_py._cost as cost_mod
 from vbpca_py._cost import CostParams, compute_full_cost
 
 
@@ -304,6 +305,100 @@ def test_cost_loading_covariances_validation() -> None:
             a,
             s,
             CostParams(mu=mu, noise_variance=1.0, loading_covariances=bad_shape),
+        )
+
+
+def test_cost_private_mu_and_mask_helpers() -> None:
+    mu_col = np.array([[1.0], [2.0], [3.0]])
+    mu_flat = cost_mod._normalize_mu(mu_col, 3)  # noqa: SLF001
+    assert np.array_equal(mu_flat, np.array([1.0, 2.0, 3.0]))
+
+    with pytest.raises(ValueError, match=r"mu must be a 1D array"):
+        cost_mod._normalize_mu(np.array([[1.0, 2.0]]), 2)  # noqa: SLF001
+
+    dense_mask = np.array([[1, 0], [2, 0]], dtype=int)
+    as_bool = cost_mod._coerce_dense_mask_to_bool(dense_mask)  # noqa: SLF001
+    assert as_bool.dtype == bool
+    assert np.array_equal(as_bool, np.array([[True, False], [True, False]]))
+
+
+def test_cost_private_nan_checks_and_sparse_mask_paths() -> None:
+    x_sparse = sp.csr_matrix(np.array([[1.0, 0.0], [0.0, np.nan]], dtype=float))
+    mask_sparse = x_sparse.copy()
+    mask_sparse.data[:] = 1.0
+
+    with pytest.raises(ValueError, match=r"contains NaN on observed"):
+        cost_mod._build_mask_and_clean_x(x_sparse, mask_sparse)  # noqa: SLF001
+
+    x_dense = np.array([[1.0, np.nan], [2.0, 3.0]], dtype=float)
+    mask_sparse_obs = sp.csr_matrix(np.array([[1, 1], [0, 0]], dtype=int))
+    rows, cols = mask_sparse_obs.nonzero()
+    with pytest.raises(ValueError, match=r"contains NaN on observed"):
+        cost_mod._ensure_no_nan_on_observed(  # noqa: SLF001
+            mask_sparse_obs,
+            x_dense,
+            mask_sparse_obs,
+            np.asarray(rows, dtype=np.intp),
+            np.asarray(cols, dtype=np.intp),
+        )
+
+
+def test_cost_private_mu_loading_and_score_inf_det_branches() -> None:
+    mu = np.array([1.0, -1.0])
+
+    cost_mu = cost_mod._compute_mu_cost(  # noqa: SLF001
+        mu=mu,
+        mu_variances=None,
+        n_features=2,
+        mu_prior_variance=2.0,
+        loading_priors=np.array([1.0, 1.0]),
+    )
+    assert np.isfinite(cost_mu)
+
+    singular_cov = [np.array([[1.0, 0.0], [0.0, 0.0]]) for _ in range(2)]
+    no_prior = cost_mod._loading_cost_no_prior(singular_cov, 2, 2)  # noqa: SLF001
+    assert np.isinf(no_prior)
+
+    with_prior = cost_mod._loading_cost_with_prior(  # noqa: SLF001
+        a=np.eye(2),
+        loading_covariances=singular_cov,
+        va_arr=np.array([1.0, 1.0]),
+        n_features=2,
+        n_components=2,
+    )
+    assert np.isinf(with_prior)
+
+    s = np.ones((2, 3), dtype=float)
+    sv = [np.array([[1.0, 0.0], [0.0, 0.0]]) for _ in range(3)]
+    score_cost = cost_mod._compute_score_cost(  # noqa: SLF001
+        s=s,
+        score_covariances=sv,
+        score_pattern_index=None,
+        n_components=2,
+        n_samples=3,
+    )
+    assert np.isinf(score_cost)
+
+
+def test_cost_private_compute_loading_cost_shape_errors() -> None:
+    a = np.eye(2)
+
+    with pytest.raises(ValueError, match=r"length must equal number of features"):
+        cost_mod._compute_loading_cost(  # noqa: SLF001
+            a=a,
+            loading_covariances=[np.eye(2)],
+            loading_priors=np.array([1.0, 1.0]),
+            n_features=2,
+            n_components=2,
+        )
+
+    with pytest.raises(ValueError, match=r"shape \(n_components, n_components\)"):
+        cost_mod._compute_loading_cost(  # noqa: SLF001
+            a=a,
+            loading_covariances=[np.eye(2), np.ones((2, 1))],
+            loading_priors=np.array([1.0, 1.0]),
+            n_features=2,
+            n_components=2,
         )
 
 

@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Run paired missing-data PCA benchmark sweeps.
 
-This script benchmarks three methods under controlled missingness:
+This script benchmarks methods under controlled missingness:
 - mean imputation + PCA
 - IterativeImputer (MICE-style) + PCA
+- KNN imputation + PCA
 - VBPCApy (algorithm="vb", compat_mode="modern")
 
 Outputs one long-form CSV with one row per (setting, replicate, method).
@@ -26,9 +27,14 @@ from sklearn.datasets import load_breast_cancer, load_diabetes, load_wine
 from sklearn.decomposition import PCA
 from sklearn.experimental import enable_iterative_imputer  # noqa: F401
 from sklearn.exceptions import ConvergenceWarning
-from sklearn.impute import IterativeImputer, SimpleImputer
+from sklearn.impute import IterativeImputer, KNNImputer, SimpleImputer
 
-from vbpca_py import VBPCA, SelectionConfig, select_n_components
+from vbpca_py import (
+    MissingAwareStandardScaler,
+    SelectionConfig,
+    VBPCA,
+    select_n_components,
+)
 
 
 @dataclass(frozen=True)
@@ -48,6 +54,12 @@ class ReplicateTask:
     seed_data: int
     seed_mask: int
     seed_method: int
+
+
+@dataclass(frozen=True)
+class SelectionPlan:
+    anchor_k: int
+    local_components: tuple[int, ...] | None
 
 
 def _parse_csv_values(raw: str) -> list[str]:
@@ -88,6 +100,20 @@ def _load_dataset(
         noise = noise_scale * rng.standard_normal((n_samples, n_features))
         return factors @ loadings + noise
 
+    if dataset == "genomics_like":
+        n_samples, n_features = synthetic_shape
+        rank = max(2, latent_rank)
+        factors = rng.standard_normal((n_samples, rank))
+        loadings = np.zeros((rank, n_features), dtype=float)
+        active_per_factor = max(1, n_features // (rank * 6))
+        for idx in range(rank):
+            active = rng.choice(n_features, size=active_per_factor, replace=False)
+            loadings[idx, active] = rng.normal(loc=0.0, scale=1.0, size=active_per_factor)
+        signal = factors @ loadings
+        hetero_scale = rng.uniform(0.75, 1.5, size=(1, n_features))
+        noise = noise_scale * hetero_scale * rng.standard_normal((n_samples, n_features))
+        return signal + noise
+
     if dataset == "diabetes":
         data = load_diabetes()
         return np.asarray(data.data, dtype=float)
@@ -104,27 +130,34 @@ def _load_dataset(
     raise ValueError(msg)
 
 
-def _fit_missing_aware_scaler(x_obs: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """Fit column-wise z-score parameters using observed entries only."""
-    means = np.nanmean(x_obs, axis=0)
-    means = np.where(np.isnan(means), 0.0, means)
-
-    stds = np.nanstd(x_obs, axis=0)
-    stds = np.where((stds == 0.0) | np.isnan(stds), 1.0, stds)
-    return means, stds
-
-
-def _apply_scaler(
+def _scale_with_package_standard_scaler(
     x_true: np.ndarray,
     x_obs: np.ndarray,
-    means: np.ndarray,
-    stds: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Apply fitted scaling params to truth and observed matrices."""
-    x_true_scaled = (x_true - means) / stds
-    x_obs_scaled = (x_obs - means) / stds
-    x_obs_scaled[np.isnan(x_obs)] = np.nan
+    """Scale with package-native missing-aware standardization.
+
+    Fit on observed entries from ``x_obs`` only, then apply the same transform to:
+    - full ``x_true`` (for holdout metric ground truth), and
+    - masked ``x_obs`` (retaining NaNs on missing entries).
+    """
+    observed_mask = ~np.isnan(x_obs)
+    scaler = MissingAwareStandardScaler()
+    scaler.fit(x_obs, mask=observed_mask)
+
+    x_true_scaled = scaler.transform(x_true, mask=np.ones_like(observed_mask, dtype=bool))
+    x_obs_scaled = scaler.transform(x_obs, mask=observed_mask)
     return x_true_scaled, x_obs_scaled
+
+
+def _dataset_vbpca_controls(
+    dataset: str,
+    *,
+    base_maxiters: int,
+    genomics_maxiters: int,
+) -> int:
+    if dataset == "genomics_like":
+        return int(genomics_maxiters)
+    return int(base_maxiters)
 
 
 def _make_holdout_mask(
@@ -279,12 +312,28 @@ def _run_mice_pca(
     return pca.inverse_transform(scores), converged, n_iter, retry_used
 
 
+def _run_knn_pca(
+    x_obs: np.ndarray,
+    n_components: int,
+    seed: int,
+    n_neighbors: int,
+) -> np.ndarray:
+    imputer = KNNImputer(n_neighbors=n_neighbors, keep_empty_features=True)
+    x_imp = imputer.fit_transform(x_obs)
+    pca = PCA(n_components=n_components, random_state=seed)
+    scores = pca.fit_transform(x_imp)
+    return pca.inverse_transform(scores)
+
+
 def _run_vbpca(
     x_obs: np.ndarray,
     n_components: int,
     maxiters: int,
     seed: int,
     use_model_selection: bool,
+    selection_patience: int | None,
+    selection_max_trials: int | None,
+    selection_components: list[int] | None,
 ) -> tuple[np.ndarray, float, int, list[dict[str, float]]]:
     # Benchmark convention: (n_samples, n_features). VBPCA expects
     # (n_features, n_samples), so we transpose before fit.
@@ -300,14 +349,15 @@ def _run_vbpca(
         cfg = SelectionConfig(
             metric="rms",
             stop_on_metric_reversal=True,
-            patience=None,
-            max_trials=None,
+            patience=selection_patience,
+            max_trials=selection_max_trials,
             compute_explained_variance=False,
             return_best_model=True,
         )
         best_k, _best_metrics, _trace, best_model = select_n_components(
             x_f_by_n,
             mask=observed_mask.T,
+            components=selection_components,
             config=cfg,
             maxiters=maxiters,
             verbose=0,
@@ -378,7 +428,12 @@ def _evaluate_methods(
     mice_max_iter: int,
     mice_tol: float,
     include_mice: bool,
+    include_knn: bool,
+    knn_neighbors: int,
     vbpca_select_components: bool,
+    vbpca_selection_patience: int | None,
+    vbpca_selection_max_trials: int | None,
+    vbpca_selection_components: list[int] | None,
     use_selected_k_for_all_methods: bool,
 ) -> tuple[list[dict[str, Any]], list[dict[str, float]]]:
     rows: list[dict[str, Any]] = []
@@ -391,6 +446,9 @@ def _evaluate_methods(
         maxiters=vbpca_maxiters,
         seed=seed_method,
         use_model_selection=vbpca_select_components,
+        selection_patience=vbpca_selection_patience,
+        selection_max_trials=vbpca_selection_max_trials,
+        selection_components=vbpca_selection_components,
     )
     _validate_same_shape("vbpca_vb_modern", x_true, recon_vbpca, holdout_mask)
     vbpca_time = time.perf_counter() - start
@@ -442,6 +500,31 @@ def _evaluate_methods(
             }
         )
 
+    if include_knn:
+        start = time.perf_counter()
+        recon_knn = _run_knn_pca(
+            x_obs,
+            n_components=effective_k,
+            seed=seed_method,
+            n_neighbors=knn_neighbors,
+        )
+        _validate_same_shape("knn_pca", x_true, recon_knn, holdout_mask)
+        knn_time = time.perf_counter() - start
+        rows.append(
+            {
+                "method": "knn_pca",
+                "rmse": _masked_rmse(x_true, recon_knn, holdout_mask),
+                "mae": _masked_mae(x_true, recon_knn, holdout_mask),
+                "wall_time_sec": knn_time,
+                "vbpca_mean_variance": np.nan,
+                "mice_converged": np.nan,
+                "mice_n_iter": np.nan,
+                "mice_retry_used": np.nan,
+                "vbpca_selected_k": int(selected_k),
+                "k_used": int(effective_k),
+            }
+        )
+
     rows.append(
         {
             "method": "vbpca_vb_modern",
@@ -466,11 +549,17 @@ def _run_one_task(
     noise_scale: float,
     synthetic_shape: tuple[int, int],
     vbpca_maxiters: int,
+    vbpca_maxiters_genomics: int,
+    vbpca_selection_patience: int | None,
+    vbpca_selection_max_trials: int | None,
     mice_max_iter: int,
     mice_tol: float,
     include_mice: bool,
+    include_knn: bool,
+    knn_neighbors: int,
     vbpca_select_components: bool,
     use_selected_k_for_all_methods: bool,
+    selection_plan: SelectionPlan | None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     rng_data = np.random.default_rng(task.seed_data)
     rng_mask = np.random.default_rng(task.seed_mask)
@@ -494,11 +583,28 @@ def _run_one_task(
     x_obs = np.asarray(x_true, dtype=float).copy()
     x_obs[holdout_mask] = np.nan
 
-    scale_means, scale_stds = _fit_missing_aware_scaler(x_obs)
-    x_true, x_obs = _apply_scaler(x_true, x_obs, scale_means, scale_stds)
+    x_true, x_obs = _scale_with_package_standard_scaler(x_true, x_obs)
 
     n_samples, n_features = x_true.shape
     k = max(1, min(task.setting.n_components, n_features, n_samples))
+    resolved_vbpca_maxiters = _dataset_vbpca_controls(
+        task.setting.dataset,
+        base_maxiters=vbpca_maxiters,
+        genomics_maxiters=vbpca_maxiters_genomics,
+    )
+
+    local_components: list[int] | None = None
+    anchor_k: int | float = np.nan
+    if selection_plan is not None:
+        anchor_k = int(selection_plan.anchor_k)
+        if selection_plan.local_components is not None:
+            local_components = [
+                int(comp)
+                for comp in selection_plan.local_components
+                if 1 <= int(comp) <= int(k)
+            ]
+            if not local_components:
+                local_components = [int(max(1, min(int(anchor_k), int(k))))]
 
     method_rows, selection_trace_rows = _evaluate_methods(
         x_true=x_true,
@@ -506,11 +612,16 @@ def _run_one_task(
         holdout_mask=holdout_mask,
         n_components=k,
         seed_method=task.seed_method,
-        vbpca_maxiters=vbpca_maxiters,
+        vbpca_maxiters=resolved_vbpca_maxiters,
         mice_max_iter=mice_max_iter,
         mice_tol=mice_tol,
         include_mice=include_mice,
+        include_knn=include_knn,
+        knn_neighbors=knn_neighbors,
         vbpca_select_components=vbpca_select_components,
+        vbpca_selection_patience=vbpca_selection_patience,
+        vbpca_selection_max_trials=vbpca_selection_max_trials,
+        vbpca_selection_components=local_components,
         use_selected_k_for_all_methods=use_selected_k_for_all_methods,
     )
 
@@ -528,9 +639,28 @@ def _run_one_task(
         "n_samples": n_samples,
         "n_features": n_features,
         "n_holdout": int(np.count_nonzero(holdout_mask)),
-        "scaling": "zscore_observed_only",
+        "scaling": "MissingAwareStandardScaler_observed_only",
         "include_mice": bool(include_mice),
+        "include_knn": bool(include_knn),
+        "knn_neighbors": int(knn_neighbors),
         "vbpca_model_selection": bool(vbpca_select_components),
+        "vbpca_maxiters_used": int(resolved_vbpca_maxiters),
+        "vbpca_selection_patience": (
+            int(vbpca_selection_patience)
+            if vbpca_selection_patience is not None
+            else np.nan
+        ),
+        "vbpca_selection_max_trials": (
+            int(vbpca_selection_max_trials)
+            if vbpca_selection_max_trials is not None
+            else np.nan
+        ),
+        "vbpca_anchor_k": anchor_k,
+        "vbpca_local_selection_components": (
+            ",".join(str(int(comp)) for comp in local_components)
+            if local_components is not None
+            else ""
+        ),
         "use_selected_k_for_all_methods": bool(use_selected_k_for_all_methods),
     }
 
@@ -593,13 +723,111 @@ def _build_tasks(
     return tasks
 
 
+def _setting_key(setting: Setting) -> tuple[str, str, str, float, int, str]:
+    return (
+        setting.dataset,
+        setting.mechanism,
+        setting.pattern,
+        float(setting.missing_rate),
+        int(setting.n_components),
+        setting.synthetic_shape,
+    )
+
+
+def _build_local_components(anchor_k: int, upper_k: int, window: int) -> tuple[int, ...]:
+    if window <= 0:
+        return (int(max(1, min(anchor_k, upper_k))),)
+    lo = max(1, int(anchor_k) - int(window))
+    hi = min(int(upper_k), int(anchor_k) + int(window))
+    if lo > hi:
+        val = int(max(1, min(anchor_k, upper_k)))
+        return (val,)
+    return tuple(range(lo, hi + 1))
+
+
+def _build_selection_plans(
+    *,
+    tasks: list[ReplicateTask],
+    latent_rank: int,
+    noise_scale: float,
+    synthetic_shape: tuple[int, int],
+    vbpca_maxiters: int,
+    vbpca_maxiters_genomics: int,
+    vbpca_selection_patience: int | None,
+    vbpca_selection_max_trials: int | None,
+    local_window: int,
+) -> dict[tuple[str, str, str, float, int, str], SelectionPlan]:
+    plans: dict[tuple[str, str, str, float, int, str], SelectionPlan] = {}
+    anchor_tasks: dict[tuple[str, str, str, float, int, str], ReplicateTask] = {}
+
+    for task in tasks:
+        key = _setting_key(task.setting)
+        if key not in anchor_tasks or task.replicate_id < anchor_tasks[key].replicate_id:
+            anchor_tasks[key] = task
+
+    for key, task in anchor_tasks.items():
+        rng_data = np.random.default_rng(task.seed_data)
+        rng_mask = np.random.default_rng(task.seed_mask)
+        x_true = _load_dataset(
+            dataset=task.setting.dataset,
+            rng=rng_data,
+            synthetic_shape=synthetic_shape,
+            latent_rank=latent_rank,
+            noise_scale=noise_scale,
+        )
+        holdout_mask = _make_holdout_mask(
+            x=x_true,
+            mechanism=task.setting.mechanism,
+            pattern=task.setting.pattern,
+            missing_rate=task.setting.missing_rate,
+            rng=rng_mask,
+        )
+        x_obs = np.asarray(x_true, dtype=float).copy()
+        x_obs[holdout_mask] = np.nan
+        x_true_scaled, x_obs_scaled = _scale_with_package_standard_scaler(x_true, x_obs)
+
+        n_samples, n_features = x_true_scaled.shape
+        k_cap = max(1, min(task.setting.n_components, n_features, n_samples))
+        resolved_vbpca_maxiters = _dataset_vbpca_controls(
+            task.setting.dataset,
+            base_maxiters=vbpca_maxiters,
+            genomics_maxiters=vbpca_maxiters_genomics,
+        )
+
+        _recon, _var, selected_k, _trace = _run_vbpca(
+            x_obs_scaled,
+            n_components=int(k_cap),
+            maxiters=resolved_vbpca_maxiters,
+            seed=task.seed_method,
+            use_model_selection=True,
+            selection_patience=vbpca_selection_patience,
+            selection_max_trials=vbpca_selection_max_trials,
+            selection_components=None,
+        )
+
+        local_components = _build_local_components(
+            anchor_k=int(selected_k),
+            upper_k=int(k_cap),
+            window=int(local_window),
+        )
+        plans[key] = SelectionPlan(
+            anchor_k=int(selected_k),
+            local_components=local_components,
+        )
+
+    return plans
+
+
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--datasets",
         type=str,
-        default="synthetic,diabetes,wine",
-        help="Comma-separated datasets from {synthetic,diabetes,wine,breast_cancer}",
+        default="synthetic,diabetes,wine,genomics_like",
+        help=(
+            "Comma-separated datasets from "
+            "{synthetic,genomics_like,diabetes,wine,breast_cancer}"
+        ),
     )
     parser.add_argument(
         "--mechanisms",
@@ -632,10 +860,37 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--synthetic-noise", type=float, default=0.15)
     parser.add_argument("--vbpca-maxiters", type=int, default=60)
     parser.add_argument(
+        "--vbpca-maxiters-genomics",
+        type=int,
+        default=45,
+        help="Max iterations for genomics_like dataset (controls runtime blow-up).",
+    )
+    parser.add_argument(
         "--vbpca-select-components",
         action=argparse.BooleanOptionalAction,
         default=True,
         help="Whether to run VBPCA model selection over 1..n_components.",
+    )
+    parser.add_argument(
+        "--vbpca-selection-patience",
+        type=int,
+        default=1,
+        help="Patience used in VBPCA model selection (set 0/negative to disable).",
+    )
+    parser.add_argument(
+        "--vbpca-selection-max-trials",
+        type=int,
+        default=8,
+        help="Hard cap on number of k-trials in model selection (set 0/negative to disable).",
+    )
+    parser.add_argument(
+        "--vbpca-local-window",
+        type=int,
+        default=2,
+        help=(
+            "After anchor selection, evaluate local component candidates in "
+            "[anchor-window, anchor+window] per replicate. Set <=0 to use anchor only."
+        ),
     )
     parser.add_argument(
         "--use-selected-k-for-all-methods",
@@ -651,6 +906,13 @@ def _parse_args() -> argparse.Namespace:
         default=True,
         help="Include MICE+PCA comparator (disable for very large-loci wall-time runs).",
     )
+    parser.add_argument(
+        "--include-knn",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Include KNN+PCA comparator.",
+    )
+    parser.add_argument("--knn-neighbors", type=int, default=5)
     parser.add_argument("--n-jobs", type=int, default=-2)
     parser.add_argument(
         "--output",
@@ -678,12 +940,34 @@ def main() -> None:
         msg = "At least one dataset must be provided"
         raise ValueError(msg)
 
+    if args.knn_neighbors < 1:
+        msg = "--knn-neighbors must be >= 1"
+        raise ValueError(msg)
+
+    if args.vbpca_maxiters < 1 or args.vbpca_maxiters_genomics < 1:
+        msg = "--vbpca-maxiters and --vbpca-maxiters-genomics must be >= 1"
+        raise ValueError(msg)
+
+    if int(args.vbpca_local_window) < 0:
+        msg = "--vbpca-local-window must be >= 0"
+        raise ValueError(msg)
+
     for rate in missing_rates:
         if not (0 < rate < 1):
             msg = f"Invalid missing rate {rate}; expected 0 < rate < 1"
             raise ValueError(msg)
 
     synthetic_shape = _parse_shape(args.synthetic_shape)
+    selection_patience = (
+        int(args.vbpca_selection_patience)
+        if int(args.vbpca_selection_patience) > 0
+        else None
+    )
+    selection_max_trials = (
+        int(args.vbpca_selection_max_trials)
+        if int(args.vbpca_selection_max_trials) > 0
+        else None
+    )
 
     tasks = _build_tasks(
         datasets=datasets,
@@ -696,6 +980,20 @@ def main() -> None:
         synthetic_shape=args.synthetic_shape,
     )
 
+    selection_plans: dict[tuple[str, str, str, float, int, str], SelectionPlan] = {}
+    if bool(args.vbpca_select_components):
+        selection_plans = _build_selection_plans(
+            tasks=tasks,
+            latent_rank=args.synthetic_rank,
+            noise_scale=args.synthetic_noise,
+            synthetic_shape=synthetic_shape,
+            vbpca_maxiters=int(args.vbpca_maxiters),
+            vbpca_maxiters_genomics=int(args.vbpca_maxiters_genomics),
+            vbpca_selection_patience=selection_patience,
+            vbpca_selection_max_trials=selection_max_trials,
+            local_window=int(args.vbpca_local_window),
+        )
+
     resolved_n_jobs = _resolve_n_jobs(args.n_jobs)
 
     rows_nested = Parallel(n_jobs=resolved_n_jobs, backend="loky", verbose=10)(
@@ -705,11 +1003,17 @@ def main() -> None:
             noise_scale=args.synthetic_noise,
             synthetic_shape=synthetic_shape,
             vbpca_maxiters=args.vbpca_maxiters,
+            vbpca_maxiters_genomics=args.vbpca_maxiters_genomics,
+            vbpca_selection_patience=selection_patience,
+            vbpca_selection_max_trials=selection_max_trials,
             mice_max_iter=args.mice_max_iter,
             mice_tol=args.mice_tol,
             include_mice=bool(args.include_mice),
+            include_knn=bool(args.include_knn),
+            knn_neighbors=int(args.knn_neighbors),
             vbpca_select_components=bool(args.vbpca_select_components),
             use_selected_k_for_all_methods=bool(args.use_selected_k_for_all_methods),
+            selection_plan=selection_plans.get(_setting_key(task.setting)),
         )
         for task in tasks
     )

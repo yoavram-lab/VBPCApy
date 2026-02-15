@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 import scipy.sparse as sp
 
+import vbpca_py._remove_empty as rem
 from vbpca_py._remove_empty import remove_empty_entries
 
 
@@ -251,3 +252,127 @@ def test_remove_empty_invalid_compat_mode_raises() -> None:
     x = np.array([[1.0, np.nan], [2.0, 3.0]], dtype=float)
     with pytest.raises(ValueError, match="compat_mode"):
         remove_empty_entries(x, None, None, compat_mode="legacy")
+
+
+def test_sparse_remove_empty_rows_only() -> None:
+    """Exercise sparse row-only slicing branch."""
+    x = sp.csr_matrix(
+        np.array(
+            [
+                [1.0, 0.0],
+                [0.0, 0.0],
+                [2.0, 3.0],
+            ],
+            dtype=float,
+        )
+    )
+
+    x_out, x_probe_out, ir, ic, _ = remove_empty_entries(x, x.copy(), None)
+
+    assert np.array_equal(ir, np.array([0, 2]))
+    assert np.array_equal(ic, np.array([0, 1]))
+    assert sp.isspmatrix_csr(x_out)
+    assert x_out.shape == (2, 2)
+    assert x_probe_out is not None
+    assert sp.isspmatrix_csr(x_probe_out)
+
+
+def test_sparse_remove_empty_columns_only_and_ndarray_covariances() -> None:
+    """Exercise sparse col-only slicing and ndarray Av/Sv update paths."""
+    x = sp.csr_matrix(
+        np.array(
+            [
+                [1.0, 0.0, 2.0],
+                [0.0, 0.0, 3.0],
+            ],
+            dtype=float,
+        )
+    )
+
+    init = {
+        "A": np.arange(2 * 2, dtype=float).reshape(2, 2),
+        "Av": np.arange(2 * 2 * 2, dtype=float).reshape(2, 2, 2),
+        "S": np.arange(2 * 3, dtype=float).reshape(2, 3),
+        "Sv": np.arange(2 * 3 * 3, dtype=float).reshape(2, 3, 3),
+    }
+    a_orig = init["A"].copy()
+    av_orig = init["Av"].copy()
+    s_orig = init["S"].copy()
+    sv_orig = init["Sv"].copy()
+
+    x_out, _, ir, ic, init_out = remove_empty_entries(x, None, init)
+
+    assert np.array_equal(ir, np.array([0, 1]))
+    assert np.array_equal(ic, np.array([0, 2]))
+    assert sp.isspmatrix_csr(x_out)
+    assert x_out.shape == (2, 2)
+
+    assert np.array_equal(init_out["A"], a_orig)
+    assert np.array_equal(init_out["Av"], av_orig)
+    assert np.array_equal(init_out["S"], s_orig[:, ic])
+    assert np.array_equal(init_out["Sv"], sv_orig[:, ic])
+
+
+def test_slice_matrix_like_dense_row_and_col_only_paths() -> None:
+    """Directly exercise dense row-only, col-only, and no-slice helper paths."""
+    mat = np.arange(12, dtype=float).reshape(3, 4)
+
+    no_slice = rem._slice_matrix_like(  # noqa: SLF001
+        mat,
+        ir=np.array([0, 1, 2]),
+        ic=np.array([0, 1, 2, 3]),
+        n_rows_orig=3,
+        n_cols_orig=4,
+    )
+    assert no_slice is mat
+
+    row_only = rem._slice_matrix_like(  # noqa: SLF001
+        mat,
+        ir=np.array([0, 2]),
+        ic=np.array([0, 1, 2, 3]),
+        n_rows_orig=3,
+        n_cols_orig=4,
+    )
+    assert np.array_equal(row_only, mat[[0, 2], :])
+
+    col_only = rem._slice_matrix_like(  # noqa: SLF001
+        mat,
+        ir=np.array([0, 1, 2]),
+        ic=np.array([0, 2]),
+        n_rows_orig=3,
+        n_cols_orig=4,
+    )
+    assert np.array_equal(col_only, mat[:, [0, 2]])
+
+
+def test_update_init_dict_row_only_with_ndarray_av() -> None:
+    """Cover ndarray Av row-slicing branch in _update_init_dict."""
+    init = {
+        "A": np.arange(3 * 2, dtype=float).reshape(3, 2),
+        "Av": np.arange(3 * 2 * 2, dtype=float).reshape(3, 2, 2),
+        "S": np.arange(2 * 2, dtype=float).reshape(2, 2),
+        "Sv": np.arange(2 * 2 * 2, dtype=float).reshape(2, 2, 2),
+    }
+
+    ir = np.array([0, 2])
+    ic = np.array([0, 1])
+    out = rem._update_init_dict(init, ir, ic, n_rows_orig=3, n_cols_orig=2)  # noqa: SLF001
+
+    assert np.array_equal(out["A"], np.array([[0.0, 1.0], [4.0, 5.0]]))
+    assert out["Av"].shape == (2, 2, 2)
+    assert np.array_equal(out["Av"], np.arange(3 * 2 * 2, dtype=float).reshape(3, 2, 2)[ir, :])
+
+
+def test_remove_empty_raises_when_internal_slice_returns_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Force RuntimeError guard branch when internal slice unexpectedly returns None."""
+
+    def fake_slice(*args: object, **kwargs: object) -> None:  # noqa: ARG001
+        return None
+
+    monkeypatch.setattr(rem, "_slice_matrix_like", fake_slice)
+    x = np.array([[1.0, np.nan], [np.nan, np.nan]], dtype=float)
+
+    with pytest.raises(RuntimeError, match="x_out cannot be None"):
+        remove_empty_entries(x, None, None)

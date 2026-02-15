@@ -15,7 +15,7 @@ import logging
 import time
 from collections.abc import MutableMapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, SupportsIndex, SupportsInt, cast
+from typing import TYPE_CHECKING, SupportsFloat, SupportsIndex, SupportsInt, cast
 
 import numpy as np
 import scipy.sparse as sp
@@ -87,6 +87,20 @@ def _int_opt(val: object, default: int = 0) -> int:
     return default
 
 
+def _float_opt(val: object, default: float = 0.0) -> float:
+    if val is None:
+        return default
+    if isinstance(val, (bytes, bytearray)):
+        try:
+            return float(val.decode())
+        except (TypeError, ValueError):
+            return default
+    try:
+        return float(cast("str | SupportsFloat | SupportsIndex", val))
+    except (TypeError, ValueError):
+        return default
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -130,6 +144,10 @@ def pca_full(x: Matrix, n_components: int, **kwargs: object) -> dict[str, object
     return _pack_result(
         final,
         include_diagnostics=bool(opts.get("return_diagnostics", True)),
+        explained_var_solver=str(opts.get("explained_var_solver", "auto")),
+        explained_var_gram_ratio=_float_opt(
+            opts.get("explained_var_gram_ratio", 4.0), default=4.0
+        ),
     )
 
 
@@ -840,7 +858,11 @@ def _marginal_variance(final: FinalState) -> np.ndarray:
 
 
 def _explained_variance(
-    xrec: np.ndarray, n_components: int
+    xrec: np.ndarray,
+    n_components: int,
+    *,
+    solver: str = "auto",
+    gram_ratio: float = 4.0,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Compute per-component explained variance from the reconstruction.
 
@@ -859,20 +881,51 @@ def _explained_variance(
     xrec_arr = np.asarray(xrec, dtype=float)
     n_features, n_samples = xrec_arr.shape
 
+    solver_norm = str(solver).strip().lower()
+    if solver_norm not in {"auto", "svd", "gram"}:
+        solver_norm = "auto"
+
     if n_samples > 1 and n_features > n_samples:
         x_centered = xrec_arr - np.mean(xrec_arr, axis=1, keepdims=True)
-        singular_values = np.linalg.svd(x_centered, compute_uv=False)
-        eigvals_sorted = (singular_values**2) / float(n_samples - 1)
+        eigvals_sorted = _explained_variance_tall(
+            x_centered=x_centered,
+            solver=solver_norm,
+            gram_ratio=gram_ratio,
+        )
     else:
         cov = np.cov(xrec_arr)
         eigvals = np.linalg.eigvalsh(cov)
         eigvals_sorted = np.flip(np.sort(np.real(eigvals)))
+
+    eigvals_sorted = np.maximum(eigvals_sorted, 0.0)
 
     eigvals_top = eigvals_sorted[:n_components]
     total = float(np.sum(eigvals_sorted))
     ratios = np.zeros_like(eigvals_top) if total <= 0.0 else eigvals_top / total
 
     return eigvals_top, ratios
+
+
+def _explained_variance_tall(
+    *,
+    x_centered: np.ndarray,
+    solver: str,
+    gram_ratio: float,
+) -> np.ndarray:
+    n_features, n_samples = x_centered.shape
+    safe_ratio = gram_ratio if gram_ratio > 0.0 else 3.0
+    feature_sample_ratio = n_features / float(max(n_samples, 1))
+    use_gram = solver == "gram" or (
+        solver == "auto" and feature_sample_ratio >= safe_ratio
+    )
+
+    if use_gram:
+        gram = (x_centered.T @ x_centered) / float(n_samples - 1)
+        eigvals = np.linalg.eigvalsh(gram)
+        return np.flip(np.sort(np.real(eigvals)))
+
+    singular_values = np.linalg.svd(x_centered, compute_uv=False)
+    return (singular_values**2) / float(n_samples - 1)
 
 
 def _last_metric(lc: dict[str, list[float]], key: str) -> float:
@@ -889,6 +942,8 @@ def _pack_result(
     final: FinalState,
     *,
     include_diagnostics: bool = True,
+    explained_var_solver: str = "auto",
+    explained_var_gram_ratio: float = 4.0,
 ) -> dict[str, object]:
     """Pack final values into the historical PCA_FULL result dictionary.
 
@@ -898,7 +953,12 @@ def _pack_result(
     if include_diagnostics:
         xrec = _reconstruct_data(final.a, final.s, final.mu)
         vr = _marginal_variance(final)
-        ev, evr = _explained_variance(xrec, final.a.shape[1])
+        ev, evr = _explained_variance(
+            xrec,
+            final.a.shape[1],
+            solver=explained_var_solver,
+            gram_ratio=explained_var_gram_ratio,
+        )
     else:
         xrec = None
         vr = None
@@ -972,6 +1032,8 @@ def _build_options(kwargs: Mapping[str, object]) -> dict[str, object]:
         "display": 0,
         "compat_mode": "strict_legacy",
         "return_diagnostics": 1,
+        "explained_var_solver": "auto",
+        "explained_var_gram_ratio": 4.0,
     }
 
     opts, wrnmsg = _options(opts_default, **kwargs)
@@ -987,6 +1049,21 @@ def _build_options(kwargs: Mapping[str, object]) -> dict[str, object]:
     opts["compat_mode"] = compat_mode
     opts["angle_every"] = max(1, _int_opt(opts.get("angle_every", 1), default=1))
     opts["return_diagnostics"] = int(bool(opts.get("return_diagnostics", 1)))
+
+    solver_raw = str(opts.get("explained_var_solver", "auto"))
+    solver = solver_raw.strip().lower()
+    if solver not in {"auto", "svd", "gram"}:
+        msg = (
+            "explained_var_solver must be one of {'auto', 'svd', 'gram'} "
+            f"(got {solver_raw!r})."
+        )
+        raise ValueError(msg)
+    opts["explained_var_solver"] = solver
+
+    ratio = _float_opt(opts.get("explained_var_gram_ratio", 4.0), default=4.0)
+    if ratio <= 0.0:
+        ratio = 4.0
+    opts["explained_var_gram_ratio"] = ratio
 
     if wrnmsg:
         logger.warning("pca_full options warning: %s", wrnmsg)

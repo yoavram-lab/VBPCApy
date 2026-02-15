@@ -91,7 +91,7 @@ Add support for sparse matrix input
 just test
 
 # Run tests with coverage
-pytest --cov=vbpca_py --cov-report=html
+just test-cov
 
 # Run specific test file
 pytest tests/test_estimators.py
@@ -107,6 +107,12 @@ pytest tests/test_estimators.py::test_vbpca_fit_transform_shapes
 - Name test functions `test_*`
 - Use descriptive names that explain what is being tested
 - Follow the existing test structure and style
+
+### Public API and internals
+
+- Public API should be exported from `vbpca_py` (package root).
+- Internal modules/symbols are prefixed with `_` and may change without deprecation.
+- If a change adds new user-facing functionality, ensure it is intentionally exported and documented in README.
 
 ## Pull Request Process
 

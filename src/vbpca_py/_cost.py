@@ -752,10 +752,6 @@ def _compute_loading_cost(
     if not use_prior:
         return _loading_cost_no_prior(loading_covariances, n_features, n_components)
 
-    if loading_priors is None:
-        msg = ERR_LOADING_PRIORS_REQUIRED
-        raise ValueError(msg)
-
     va_arr = np.asarray(loading_priors)
     return _loading_cost_with_prior(
         a, loading_covariances, va_arr, n_features, n_components

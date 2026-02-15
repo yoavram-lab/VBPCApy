@@ -4,6 +4,7 @@
 import numpy as np
 import pytest
 
+import vbpca_py._missing as missing_mod
 from vbpca_py._missing import _missing_patterns
 
 # ---------------------------------------------------------------------------
@@ -114,6 +115,37 @@ def test_missing_patterns_zero_columns() -> None:
     assert n_patterns == 0
     assert pattern_columns == []
     assert column_pattern_index.shape == (0,)
+
+
+def test_missing_patterns_zero_columns_verbose_logs(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    mask = np.empty((3, 0), dtype=int)
+    caplog.set_level("DEBUG", logger=missing_mod.logger.name)
+
+    n_patterns, pattern_columns, column_pattern_index = _missing_patterns(
+        mask,
+        verbose=True,
+    )
+
+    assert n_patterns == 0
+    assert pattern_columns == []
+    assert column_pattern_index.size == 0
+    assert "zero columns" in caplog.text
+
+
+def test_missing_patterns_verbose_logs_non_degenerate(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    mask = np.array([[1, 0, 1], [0, 1, 0]], dtype=int)
+    caplog.set_level("DEBUG", logger=missing_mod.logger.name)
+
+    n_patterns, _pattern_columns, idx = _missing_patterns(mask, verbose=True)
+
+    assert n_patterns == 2
+    assert idx.shape == (3,)
+    assert "found" in caplog.text
+    assert "column pattern index" in caplog.text
 
 
 # ---------------------------------------------------------------------------

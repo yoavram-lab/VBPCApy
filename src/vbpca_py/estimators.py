@@ -7,6 +7,8 @@ import numpy as np
 from vbpca_py._pca_full import Matrix, _build_options, pca_full
 from vbpca_py.model_selection import SelectionConfig, select_n_components
 
+__all__ = ["VBPCA"]
+
 
 class VBPCA:
     """Variational Bayesian PCA with a sklearn-like interface."""

@@ -1,3 +1,0 @@
-method,rmse,mae,wall_time_sec,vbpca_mean_variance,mice_converged,mice_n_iter,mice_retry_used,vbpca_selected_k,k_used,dataset,mechanism,pattern,missing_rate,n_components_requested,synthetic_shape,replicate_id,seed_data,seed_mask,seed_method,n_samples,n_features,n_holdout,scaling,include_mice,vbpca_model_selection,use_selected_k_for_all_methods
-mean_pca,0.37344433247777553,0.2917134696666294,0.008352021992322989,,,,,8,8,synthetic,MCAR,random,0.3,4,200x800,0,33158374,1465339467,1273345680,200,800,48000,zscore_observed_only,False,True,True
-vbpca_vb_modern,0.07161945441044391,0.055689295306286295,3.025852118997136,0.001292352204055962,,,,8,8,synthetic,MCAR,random,0.3,4,200x800,0,33158374,1465339467,1273345680,200,800,48000,zscore_observed_only,False,True,True

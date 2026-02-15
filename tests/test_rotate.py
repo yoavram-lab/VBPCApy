@@ -31,6 +31,7 @@ import pytest
 from numpy.testing import assert_allclose
 from scipy.io import loadmat, savemat
 
+import vbpca_py._rotate as rot
 from vbpca_py._rotate import RotateParams, _build_cov_s, rotate_to_pca
 
 # --------------------------------------------------------------------------------------
@@ -831,3 +832,71 @@ def test_rotate_regression_python_only_fixture() -> None:
     assert_allclose(A1_aligned, expected_A1, rtol=5e-12, atol=5e-12)
     assert_allclose(S1_aligned, expected_S1, rtol=5e-12, atol=5e-12)
     assert_allclose(Sv1_aligned[0], expected_Sv0, rtol=5e-12, atol=5e-12)
+
+
+def test_rotate_private_validation_helpers_cover_error_paths() -> None:
+    with pytest.raises(ValueError, match=r"index array must be 1-D"):
+        rot._as_int_array(np.array([[1, 2]], dtype=int))  # noqa: SLF001
+
+    with pytest.raises(ValueError, match=r"loadings \(A\) must be a 2D"):
+        rot._validate_a_s_shapes(np.array([1.0, 2.0]), np.zeros((2, 3)))  # noqa: SLF001
+
+    with pytest.raises(ValueError, match=r"scores \(S\) must be a 2D"):
+        rot._validate_a_s_shapes(np.zeros((2, 2)), np.array([1.0, 2.0, 3.0]))  # noqa: SLF001
+
+    with pytest.raises(ValueError, match=r"n_components=2"):
+        rot._validate_a_s_shapes(np.zeros((3, 2)), np.zeros((3, 4)))  # noqa: SLF001
+
+    with pytest.raises(ValueError, match=r"must be a non-empty list"):
+        rot._validate_sv_shapes(tuple([np.eye(2)]), 2)  # type: ignore[arg-type]  # noqa: SLF001
+
+
+def test_rotate_build_cov_s_validation_branches() -> None:
+    scores = np.zeros((2, 3), dtype=float)
+    sv = [np.eye(2) for _ in range(3)]
+
+    with pytest.raises(ValueError, match=r"isv must have length"):
+        rot._build_cov_s(scores, sv, np.array([0, 1], dtype=int), None)  # noqa: SLF001
+
+    with pytest.raises(ValueError, match=r"must have length equal to n_samples"):
+        rot._build_cov_s(scores, sv[:2], np.array([], dtype=int), None)  # noqa: SLF001
+
+    isv = np.array([0, 0, 1], dtype=int)
+    with pytest.raises(ValueError, match=r"obscombj must be provided"):
+        rot._build_cov_s(scores, [np.eye(2), np.eye(2)], isv, None)  # noqa: SLF001
+
+    with pytest.raises(ValueError, match=r"length must match len\(obscombj\)"):
+        rot._build_cov_s(scores, [np.eye(2)], isv, [[0, 1], [2]])  # noqa: SLF001
+
+    with pytest.raises(ValueError, match=r"cover all sample indices"):
+        rot._build_cov_s(  # noqa: SLF001
+            scores,
+            [np.eye(2), np.eye(2)],
+            isv,
+            [[0, 1], [1, 2]],
+        )
+
+
+def test_rotate_transform_and_weighted_cov_ext_path() -> None:
+    left = np.array([[2.0, 0.0], [0.0, 3.0]])
+    right = np.array([[1.0, 0.0], [0.0, 4.0]])
+
+    empty_out = rot._transform_covariances([], left, right)  # noqa: SLF001
+    assert empty_out == []
+
+    covs = [np.eye(2), np.array([[2.0, 1.0], [1.0, 2.0]])]
+    transformed = rot._transform_covariances(covs, left, right)  # noqa: SLF001
+    assert len(transformed) == 2
+    assert_allclose(transformed[0], left @ covs[0] @ right)
+
+    base = np.array([[2.0, 1.0], [1.0, 2.0]], dtype=float)
+    cov, eigvals, eigvecs = rot._weighted_cov_eigh(  # noqa: SLF001
+        base,
+        covs,
+        np.array([1.0, 0.5], dtype=float),
+        normalizer=3.0,
+    )
+    assert cov.shape == (2, 2)
+    assert eigvals.shape == (2,)
+    assert eigvecs.shape == (2, 2)
+    assert_allclose(cov, cov.T, atol=1e-12)

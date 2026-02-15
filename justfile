@@ -62,15 +62,15 @@ core-perf-genetics:
 
 # Run script-based benchmark pilot (reduced reps for quick validation).
 bench-study-pilot:
-	python scripts/benchmark_missing_pca.py --n-reps 20 --mice-tol 1e-2 --n-jobs -2 --output results/replicates_pilot.csv --selection-trace-output results/vbpca_selection_trace_pilot.csv
+	python scripts/benchmark_missing_pca.py --datasets synthetic,diabetes,wine,genomics_like --n-reps 20 --mice-tol 1e-2 --vbpca-selection-patience 1 --vbpca-selection-max-trials 8 --vbpca-local-window 2 --vbpca-maxiters 60 --vbpca-maxiters-genomics 45 --n-jobs -2 --output results/replicates_pilot.csv --selection-trace-output results/vbpca_selection_trace_pilot.csv
 
 # Run full script-based benchmark sweep (publication configuration).
 bench-study-full:
-	python scripts/benchmark_missing_pca.py --n-reps 200 --mice-tol 1e-2 --n-jobs -2 --output results/replicates.csv --selection-trace-output results/vbpca_selection_trace.csv
+	python scripts/benchmark_missing_pca.py --datasets synthetic,diabetes,wine,genomics_like --n-reps 200 --mice-tol 1e-2 --vbpca-selection-patience 1 --vbpca-selection-max-trials 8 --vbpca-local-window 2 --vbpca-maxiters 60 --vbpca-maxiters-genomics 45 --n-jobs -2 --output results/replicates.csv --selection-trace-output results/vbpca_selection_trace.csv
 
 # Run genetics-like large-loci synthetic wall-time comparator sweep (MICE disabled).
 bench-study-genetics-pilot:
-	python scripts/benchmark_missing_pca.py --datasets synthetic --mechanisms MCAR --patterns random --missing-rates 0.3 --n-reps 6 --n-components 8 --synthetic-shape 1200x5000 --vbpca-maxiters 40 --no-include-mice --n-jobs -2 --output results/replicates_genetics_pilot.csv --selection-trace-output results/vbpca_selection_trace_genetics_pilot.csv
+	python scripts/benchmark_missing_pca.py --datasets genomics_like --mechanisms MCAR --patterns random --missing-rates 0.3 --n-reps 6 --n-components 8 --synthetic-shape 1200x5000 --vbpca-maxiters 60 --vbpca-maxiters-genomics 40 --vbpca-selection-patience 1 --vbpca-selection-max-trials 6 --vbpca-local-window 2 --no-include-mice --n-jobs -2 --output results/replicates_genetics_pilot.csv --selection-trace-output results/vbpca_selection_trace_genetics_pilot.csv
 
 # Aggregate benchmark summaries and paired deltas.
 bench-study-summary:

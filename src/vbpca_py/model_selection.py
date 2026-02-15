@@ -19,8 +19,10 @@ if TYPE_CHECKING:  # pragma: no cover
     from ._pca_full import Matrix
     from .estimators import VBPCA
 
-Metric = Literal["prms", "rms", "cost"]
-AllowedFloat = (
+__all__ = ["SelectionConfig", "select_n_components"]
+
+_Metric = Literal["prms", "rms", "cost"]
+_AllowedFloat = (
     SupportsFloat
     | SupportsIndex
     | np.floating[Any]
@@ -35,7 +37,7 @@ AllowedFloat = (
 class SelectionConfig:
     """Configuration for component selection."""
 
-    metric: Metric = "prms"
+    metric: _Metric = "prms"
     stop_on_metric_reversal: bool = False
     patience: int | None = None
     max_trials: int | None = None
@@ -74,12 +76,12 @@ def _normalize_components(
 
 def _to_float(val: object | None) -> float:
     try:
-        return float(cast("AllowedFloat", val))
+        return float(cast("_AllowedFloat", val))
     except (TypeError, ValueError):
         return float("nan")
 
 
-def _metric_value(metric: Metric, rms: float, prms: float, cost: float) -> float:
+def _metric_value(metric: _Metric, rms: float, prms: float, cost: float) -> float:
     if metric == "prms":
         return prms if np.isfinite(prms) else rms if np.isfinite(rms) else cost
     if metric == "rms":
@@ -87,7 +89,7 @@ def _metric_value(metric: Metric, rms: float, prms: float, cost: float) -> float
     return cost if np.isfinite(cost) else rms
 
 
-def _metric_value_from_entry(metric: Metric, entry: dict[str, object]) -> float:
+def _metric_value_from_entry(metric: _Metric, entry: dict[str, object]) -> float:
     return _metric_value(
         metric,
         rms=cast("float", entry["rms"]),

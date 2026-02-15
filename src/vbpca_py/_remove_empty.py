@@ -99,19 +99,15 @@ def _slice_matrix_like(
             result = mat[ir[:, None], ic]  # type: ignore[index]
         elif slice_rows:
             result = mat[ir, :]  # type: ignore[index]
-        elif slice_cols:
+        else:
             result = mat[:, ic]  # type: ignore[index]
-        else:  # safety fallback, though logically unreachable
-            result = mat
     # Dense ndarray
     elif slice_rows and slice_cols:
         result = mat[np.ix_(ir, ic)]
     elif slice_rows:
         result = mat[ir, :]
-    elif slice_cols:
+    else:
         result = mat[:, ic]
-    else:  # safety fallback
-        result = mat
 
     return result
 

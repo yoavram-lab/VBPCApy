@@ -356,6 +356,22 @@ def test_compute_rms_dense_raises_on_zero_observed_mask() -> None:
         compute_rms(X, A, S, M, cfg)
 
 
+def test_compute_rms_empty_dense_and_sparse_return_nan() -> None:
+    empty_dense = np.empty((0, 0), dtype=float)
+    empty_sparse = sp.csr_matrix((0, 0), dtype=float)
+    a = np.empty((0, 0), dtype=float)
+    s = np.empty((0, 0), dtype=float)
+    cfg = RmsConfig()
+
+    rms_dense, err_dense = compute_rms(empty_dense, a, s, np.empty((0, 0)), cfg)
+    rms_sparse, err_sparse = compute_rms(empty_sparse, a, s, None, cfg)
+
+    assert np.isnan(rms_dense)
+    assert np.isnan(rms_sparse)
+    assert isinstance(err_dense, np.ndarray) and err_dense.size == 0
+    assert isinstance(err_sparse, np.ndarray) and err_sparse.size == 0
+
+
 def test_compute_rms_dense_shape_and_mask_validation() -> None:
     rng = np.random.default_rng(321)
     X = rng.standard_normal((3, 4))
@@ -381,6 +397,48 @@ def test_compute_rms_dense_shape_and_mask_validation() -> None:
         compute_rms(X, A_ok, S, M, cfg_mismatch)
 
 
+def test_compute_rms_validate_shapes_requires_2d() -> None:
+    rng = np.random.default_rng(885)
+    x = rng.standard_normal((3, 4))
+    a_1d = rng.standard_normal(3)
+    s_2d = rng.standard_normal((2, 4))
+    mask = np.ones_like(x)
+
+    with pytest.raises(ValueError, match=r"must be 2-D"):
+        compute_rms(x, a_1d, s_2d, mask, RmsConfig())
+
+    a_2d = rng.standard_normal((3, 2))
+    s_1d = rng.standard_normal(4)
+    with pytest.raises(ValueError, match=r"must be 2-D"):
+        compute_rms(x, a_2d, s_1d, mask, RmsConfig())
+
+
+def test_compute_rms_dense_requires_mask_and_accepts_sparse_mask() -> None:
+    rng = np.random.default_rng(4242)
+    X = rng.standard_normal((3, 4))
+    A = rng.standard_normal((3, 2))
+    S = rng.standard_normal((2, 4))
+
+    cfg = RmsConfig(n_observed=None, num_cpu=1)
+    with pytest.raises(ValueError, match=r"mask must be provided"):
+        compute_rms(X, A, S, None, cfg)
+
+    mask_dense = (rng.random((3, 4)) > 0.25).astype(float)
+    n_obs = int(np.count_nonzero(mask_dense))
+    cfg_sparse_mask = RmsConfig(n_observed=n_obs, num_cpu=1)
+    rms_dense, err_dense = compute_rms(X, A, S, mask_dense, cfg_sparse_mask)
+    rms_sparse, err_sparse = compute_rms(
+        X,
+        A,
+        S,
+        sp.csr_matrix(mask_dense),
+        cfg_sparse_mask,
+    )
+
+    np.testing.assert_allclose(rms_dense, rms_sparse, rtol=0.0, atol=0.0)
+    np.testing.assert_allclose(err_dense, err_sparse, rtol=0.0, atol=0.0)
+
+
 def test_compute_rms_sparse_validation_errors() -> None:
     rng = np.random.default_rng(999)
     X_dense = (rng.random((4, 5)) > 0.6).astype(float)
@@ -398,6 +456,67 @@ def test_compute_rms_sparse_validation_errors() -> None:
     cfg = RmsConfig(n_observed=None, num_cpu=1, validate_sparse_mask=True)
     with pytest.raises(ValueError, match=r"sparsity pattern"):
         compute_rms(X, A, S, bad_mask, cfg)
+
+
+def test_compute_rms_sparse_csc_input_and_mask_validation_toggle() -> None:
+    rng = np.random.default_rng(5150)
+    x_dense = (rng.random((5, 4)) > 0.55).astype(float)
+    x_dense[x_dense != 0.0] = rng.standard_normal(np.count_nonzero(x_dense))
+
+    X_csc = sp.csc_matrix(x_dense)
+    A = rng.standard_normal((5, 2))
+    S = rng.standard_normal((2, 4))
+
+    bad_mask = np.ones_like(x_dense)
+    bad_mask[0, 0] = 0.0
+
+    cfg_strict = RmsConfig(validate_sparse_mask=True)
+    with pytest.raises(ValueError, match=r"sparsity pattern"):
+        compute_rms(X_csc, A, S, bad_mask, cfg_strict)
+
+    cfg_lenient = RmsConfig(validate_sparse_mask=False)
+    rms, err = compute_rms(X_csc, A, S, bad_mask, cfg_lenient)
+    assert np.isfinite(rms)
+    assert sp.isspmatrix_csr(err)
+    assert err.nnz == int(sp.csr_matrix(X_csc).nnz)
+
+
+def test_compute_rms_sparse_dense_mask_shape_and_structure_validation() -> None:
+    rng = np.random.default_rng(6161)
+    x_dense = np.array(
+        [
+            [1.0, 0.0, 2.0],
+            [0.0, 3.0, 0.0],
+        ],
+        dtype=float,
+    )
+    x = sp.csr_matrix(x_dense)
+    a = rng.standard_normal((2, 2))
+    s = rng.standard_normal((2, 3))
+
+    bad_shape_mask = np.ones((3, 3), dtype=float)
+    with pytest.raises(ValueError, match=r"mask shape must match"):
+        compute_rms(x, a, s, bad_shape_mask, RmsConfig(validate_sparse_mask=True))
+
+    missing_observed = np.array(
+        [
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+        ],
+        dtype=float,
+    )
+    with pytest.raises(ValueError, match=r"must be 1 on all observed"):
+        compute_rms(x, a, s, missing_observed, RmsConfig(validate_sparse_mask=True))
+
+    extra_nonzero = np.array(
+        [
+            [1.0, 1.0, 1.0],
+            [0.0, 1.0, 0.0],
+        ],
+        dtype=float,
+    )
+    with pytest.raises(ValueError, match=r"zero everywhere except stored"):
+        compute_rms(x, a, s, extra_nonzero, RmsConfig(validate_sparse_mask=True))
 
 
 def test_sparse_reconstruction_error_validates_shapes() -> None:

@@ -13,6 +13,8 @@ if TYPE_CHECKING:
 
 import vbpca_py._monitoring as mon
 from vbpca_py._monitoring import (
+    ERR_INIT_TYPE,
+    ERR_MUV_SHAPE,
     ERR_SV_PATTERN_INDEX,
     ERR_SV_SHAPE,
     InitialMonitoringInputs,
@@ -109,6 +111,126 @@ def test_sv_invalid_array_shape_raises() -> None:
         init_params(init_dict, shapes, score_pattern_index=None, rng=_rng())
 
 
+def test_init_sv_list_paths_and_fallback_empty() -> None:
+    """Cover list-based Sv paths: Isv-indexing, direct-per-sample, and fallback."""
+    shapes = InitShapes(n_features=3, n_samples=4, n_components=2, n_obs_patterns=4)
+    rng = _rng()
+    s = rng.standard_normal((2, 4))
+
+    sv_list = [np.eye(2) * (j + 1) for j in range(4)]
+    isv = np.array([0, 1, 0, 1], dtype=int)
+    out_isv = init_params(
+        {"S": s, "Sv": sv_list, "Isv": isv},
+        shapes,
+        score_pattern_index=None,
+        rng=rng,
+    )
+    assert len(out_isv.sv) == 4
+    assert np.allclose(out_isv.sv[2], sv_list[0])
+
+    out_full = init_params(
+        {"S": s, "Sv": sv_list},
+        shapes,
+        score_pattern_index=None,
+        rng=rng,
+    )
+    assert len(out_full.sv) == 4
+    assert np.allclose(out_full.sv[3], sv_list[3])
+
+    out_empty = init_params(
+        {"S": s, "Sv": [np.eye(2)]},
+        shapes,
+        score_pattern_index=None,
+        rng=rng,
+    )
+    assert out_empty.sv == []
+
+
+def test_init_mu_muv_v_shape_and_empty_branches() -> None:
+    """Cover Muv empty, invalid-shape, and Mu/Muv default conversion branches."""
+    mu, muv, v = mon._init_mu_muv_v({"Mu": [1, 2, 3], "Muv": [0.1, 0.2, 0.3], "V": 2.0}, 3)  # noqa: SLF001
+    assert np.array_equal(mu, np.array([1.0, 2.0, 3.0]))
+    assert muv.shape == (3, 1)
+    assert v == pytest.approx(2.0)
+
+    _mu2, muv2, _v2 = mon._init_mu_muv_v({"Muv": np.array([])}, 2)  # noqa: SLF001
+    assert np.array_equal(muv2, np.zeros((2, 1)))
+
+    with pytest.raises(ValueError, match=re.escape(ERR_MUV_SHAPE)):
+        mon._init_mu_muv_v({"Muv": np.zeros((2, 2))}, 2)  # noqa: SLF001
+
+
+def test_normalize_init_mapping_fieldnames_and_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cover _normalize_init branches for random, loadmat, fieldnames, and invalid types."""
+
+    class DummyStruct:
+        _fieldnames = ["A", "V"]
+
+        def __init__(self) -> None:
+            self.A = np.array([[1.0]])
+            self.V = 3.0
+
+    assert mon._normalize_init("random") == {}  # noqa: SLF001
+    assert mon._normalize_init(None) == {}  # noqa: SLF001
+
+    struct_out = mon._normalize_init(DummyStruct())  # noqa: SLF001
+    assert np.array_equal(struct_out["A"], np.array([[1.0]]))
+    assert struct_out["V"] == 3.0
+
+    with pytest.raises(ValueError, match=re.escape(ERR_INIT_TYPE)):
+        mon._normalize_init(123)  # type: ignore[arg-type]  # noqa: SLF001
+
+    def fake_loadmat_no_init(_path: str) -> dict[str, object]:
+        return {"A": np.array([[2.0]]), "V": 4.0}
+
+    monkeypatch.setattr(mon, "loadmat", fake_loadmat_no_init)
+    no_init_out = mon._normalize_init("/tmp/fake.mat")  # noqa: SLF001
+    assert np.array_equal(no_init_out["A"], np.array([[2.0]]))
+
+    cell_av = np.empty((1, 2), dtype=object)
+    cell_av[0, 0] = np.eye(2)
+    cell_av[0, 1] = np.eye(2) * 2
+    cell_sv = np.empty((1, 1), dtype=object)
+    cell_sv[0, 0] = np.eye(2) * 3
+
+    def fake_loadmat_with_init(_path: str) -> dict[str, object]:
+        return {"init": {"Av": cell_av, "Sv": cell_sv, "V": 5.0}}
+
+    monkeypatch.setattr(mon, "loadmat", fake_loadmat_with_init)
+    with_init_out = mon._normalize_init("/tmp/fake2.mat")  # noqa: SLF001
+    coerced = mon._coerce_mat_cells(with_init_out.copy())  # noqa: SLF001
+    assert isinstance(coerced["Av"], list)
+    assert isinstance(coerced["Sv"], list)
+
+
+def test_coerce_int_and_resolve_score_pattern_index_branches() -> None:
+    """Cover _coerce_int fallback and Isv length-mismatch branch."""
+    assert mon._coerce_int(None, default=7) == 7  # noqa: SLF001
+    assert mon._coerce_int("11", default=0) == 11  # noqa: SLF001
+    assert mon._coerce_int("bad", default=9) == 9  # noqa: SLF001
+
+    isv_bad = np.array([0, 1, 0], dtype=int)
+    assert mon._resolve_score_pattern_index(None, isv_bad, n_samples=4) is None  # noqa: SLF001
+
+
+def test_log_helpers_non_verbose_and_empty_lc_noop(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Cover no-op branches in logging helpers."""
+    caplog.set_level("INFO")
+    log_first_step(0, rms=1.0, prms=np.array([]))
+    log_step(1, {"rms": [], "cost": []}, angle_a=None)
+    log_progress(1, current=1, total=2, phase="M-step")
+    assert caplog.text == ""
+
+
+def test_display_progress_early_return_without_handles() -> None:
+    """display_progress should early return when display is disabled."""
+    display_progress({"display": False}, {"rms": [1.0], "prms": [2.0]})
+
+
 # ------------------------------------------------------------------------------
 # Logging tests (these do not require matplotlib)
 # ------------------------------------------------------------------------------
@@ -149,21 +271,14 @@ def test_log_progress(caplog: pytest.LogCaptureFixture) -> None:
 # ------------------------------------------------------------------------------
 
 
-def test_display_init_no_matplotlib(monkeypatch: pytest.MonkeyPatch) -> None:
-    """display_init should degrade gracefully when matplotlib is unavailable."""
-    monkeypatch.setattr(mon, "plt", None, raising=False)
-
-    dsph = display_init(1, {"rms": [1, 2], "prms": [3, 4]})
-    assert dsph == {"display": True}  # only display flag is returned
+def test_display_init_disabled_returns_flag_only() -> None:
+    """display_init should return only the display flag when disabled."""
+    dsph = display_init(0, {"rms": [1, 2], "prms": [3, 4]})
+    assert dsph == {"display": False}
 
 
 def test_display_init_with_matplotlib() -> None:
     """display_init returns figure/lines when matplotlib is available."""
-    try:
-        import matplotlib.pyplot as plt  # noqa: F401, PLC0415
-    except ImportError:
-        pytest.skip("matplotlib not installed")
-
     lc: Mapping[str, Sequence[float]] = {"rms": [1, 2, 3], "prms": [2, 4, 6]}
     dsph = display_init(1, lc)
 
@@ -175,11 +290,6 @@ def test_display_init_with_matplotlib() -> None:
 
 def test_display_progress_smoke() -> None:
     """display_progress should run without errors when matplotlib is available."""
-    try:
-        import matplotlib.pyplot as plt  # noqa: F401, PLC0415
-    except ImportError:
-        pytest.skip("matplotlib not installed")
-
     lc: Mapping[str, Sequence[float]] = {"rms": [1, 2, 3], "prms": [2, 4, 6]}
     dsph = display_init(1, lc)
     display_progress(dsph, lc)

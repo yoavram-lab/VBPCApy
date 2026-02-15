@@ -14,8 +14,6 @@ import logging
 
 import numpy as np
 
-__all__ = ["_missing_patterns"]
-
 logger = logging.getLogger(__name__)
 
 MASK_WRONG_DIM = "mask must be a 2D array."

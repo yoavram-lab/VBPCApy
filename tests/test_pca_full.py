@@ -33,7 +33,7 @@ import scipy.sparse as sp
 from numpy.testing import assert_allclose
 from scipy.io import loadmat
 
-from vbpca_py._pca_full import _explained_variance, pca_full
+from vbpca_py._pca_full import _build_options, _explained_variance, pca_full
 
 # ----------------------------------------------------------------------
 # Helpers
@@ -80,7 +80,11 @@ def _compute_masked_rms_dense_like_impl(
     scores: np.ndarray,
     mean: np.ndarray,
 ) -> float:
-    """Compute RMS error on observed entries to match compute_rms behavior."""
+    """Compute RMS error on observed entries to match compute_rms behavior.
+
+    Returns:
+        RMS over observed entries, or ``nan`` when no entries are observed.
+    """
     x_proc, mask = _dense_preprocess_like_impl(x_original)
     n_obs = int(np.count_nonzero(mask))
     if n_obs == 0:
@@ -94,6 +98,25 @@ def _compute_masked_rms_dense_like_impl(
 
 def _fixture_path(name: str) -> pathlib.Path:
     return pathlib.Path(__file__).resolve().parent.joinpath("data").joinpath(name)
+
+
+def _align_signs_to_reference(
+    loadings: np.ndarray,
+    scores: np.ndarray,
+    loadings_ref: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Align component signs to a reference loading matrix."""
+    a_aligned = np.asarray(loadings, dtype=float).copy()
+    s_aligned = np.asarray(scores, dtype=float).copy()
+    a_ref = np.asarray(loadings_ref, dtype=float)
+
+    n_components = int(a_aligned.shape[1])
+    for comp in range(n_components):
+        if float(np.dot(a_aligned[:, comp], a_ref[:, comp])) < 0.0:
+            a_aligned[:, comp] *= -1.0
+            s_aligned[comp, :] *= -1.0
+
+    return a_aligned, s_aligned
 
 
 # ----------------------------------------------------------------------
@@ -548,6 +571,42 @@ def test_explained_variance_tall_svd_matches_cov_reference() -> None:
     assert_allclose(evr_fast, evr_ref, rtol=1e-10, atol=1e-12)
 
 
+def test_explained_variance_tall_svd_and_gram_match() -> None:
+    rng = np.random.default_rng(914)
+    xrec = rng.standard_normal((120, 30))
+
+    ev_svd, evr_svd = _explained_variance(xrec, n_components=12, solver="svd")
+    ev_gram, evr_gram = _explained_variance(xrec, n_components=12, solver="gram")
+
+    assert_allclose(ev_svd, ev_gram, rtol=1e-10, atol=1e-12)
+    assert_allclose(evr_svd, evr_gram, rtol=1e-10, atol=1e-12)
+
+
+def test_pca_full_invalid_explained_var_solver_raises() -> None:
+    x = _make_toy_dense_with_nans(n_features=4, n_samples=6, seed=22)
+    with pytest.raises(ValueError, match="explained_var_solver"):
+        _ = pca_full(
+            x,
+            n_components=2,
+            maxiters=2,
+            autosave=0,
+            display=0,
+            verbose=0,
+            explained_var_solver="bad_solver",
+        )
+
+
+def test_build_options_explained_var_ratio_parsing_defaults_on_invalid() -> None:
+    opts_bad = _build_options({"explained_var_gram_ratio": b"bad"})
+    assert float(opts_bad["explained_var_gram_ratio"]) == pytest.approx(4.0)
+
+    opts_neg = _build_options({"explained_var_gram_ratio": -3.0})
+    assert float(opts_neg["explained_var_gram_ratio"]) == pytest.approx(4.0)
+
+    opts_bytes = _build_options({"explained_var_gram_ratio": b"7.5"})
+    assert float(opts_bytes["explained_var_gram_ratio"]) == pytest.approx(7.5)
+
+
 def test_pca_full_uniquesv_equivalence_when_fully_observed() -> None:
     rng = np.random.default_rng(808)
     x = rng.standard_normal((5, 7))
@@ -662,6 +721,12 @@ def test_pca_full_matches_matlab_dense_fixture() -> None:
     x_rec_mat = A_mat @ S_mat + Mu_mat
 
     assert_allclose(x_rec_py, x_rec_mat, rtol=1e-5, atol=1e-7)
+
+    # Component signs are not identifiable; compare A/S after sign alignment.
+    A_aligned, S_aligned = _align_signs_to_reference(A_py, S_py, A_mat)
+    assert_allclose(A_aligned, A_mat, rtol=1e-4, atol=1e-6)
+    assert_allclose(S_aligned, S_mat, rtol=1e-4, atol=1e-6)
+
     assert_allclose(V_py, V_mat, rtol=1e-3, atol=1e-6)
 
 
@@ -711,6 +776,12 @@ def test_pca_full_matches_matlab_missing_fixture() -> None:
     rms = float(np.sqrt(mse))
 
     assert rms <= 1e-2
+
+    # A/S parity is only defined up to component sign.
+    A_aligned, S_aligned = _align_signs_to_reference(A_py, S_py, A_mat)
+    assert_allclose(A_aligned, A_mat, rtol=2e-2, atol=2e-4)
+    assert_allclose(S_aligned, S_mat, rtol=2e-2, atol=2e-4)
+
     assert_allclose(V_py, V_mat, rtol=1e-3, atol=1e-6)
 
 

@@ -10,8 +10,6 @@ case-insensitively by lowercasing them.
 from collections.abc import Mapping
 from typing import Any
 
-__all__ = ["_options"]
-
 
 def _normalize_keys_to_lower(opts: Mapping[str, Any]) -> dict[str, Any]:
     """Return a copy of ``opts`` with all keys lowercased.

@@ -19,6 +19,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, SupportsIndex, SupportsInt, cast
 
+import matplotlib.pyplot as plt
 import numpy as np
 from scipy.io import loadmat
 from scipy.linalg import orth
@@ -27,16 +28,10 @@ from ._rms import RmsConfig, compute_rms
 
 logger = logging.getLogger(__name__)
 
-try:
-    import matplotlib.pyplot as plt  # type: ignore[import]
-except ImportError:  # pragma: no cover
-    plt = None  # type: ignore[assignment]
-
 __all__ = [
     "InitResult",
     "InitShapes",
     "InitialMonitoringInputs",
-    "_initial_monitoring",
     "display_init",
     "display_progress",
     "init_params",
@@ -523,7 +518,7 @@ def display_init(display: int, lc: Mapping[str, Sequence[float]]) -> dict[str, A
     """
     dsph: dict[str, Any] = {"display": bool(display)}
 
-    if not dsph["display"] or plt is None:
+    if not dsph["display"]:
         return dsph
 
     rms_values = np.asarray(lc.get("rms", []), dtype=float)
@@ -562,7 +557,7 @@ def display_progress(
     dsph: Mapping[str, Any], lc: Mapping[str, Sequence[float]]
 ) -> None:
     """Update RMS training/test plots if display is enabled."""
-    if not dsph.get("display", False) or plt is None:
+    if not dsph.get("display", False):
         return
 
     line_rms = dsph["rms"]
