@@ -138,6 +138,9 @@ def main() -> None:
         print("No VBPCA selection data found; skipping supplement generation.")
         return
 
+    anchor_trace = trace[trace["replicate_id"] == -1].copy()
+    local_trace = trace[trace["replicate_id"] != -1].copy()
+
     vbpca_reps["selected_k"] = vbpca_reps["vbpca_selected_k"].astype(int)
 
     freq = (
@@ -153,7 +156,7 @@ def main() -> None:
     freq.to_csv(args.out_dir / "tableS1_vbpca_selected_k_frequency.csv", index=False)
 
     trace_stats = (
-        trace.groupby(SETTING_COLS + ["trace_k"], as_index=False)["trace_rms"]
+        local_trace.groupby(SETTING_COLS + ["trace_k"], as_index=False)["trace_rms"]
         .agg(
             rms_mean="mean",
             rms_ci_low=lambda s: np.percentile(np.asarray(s, dtype=float), 2.5),
@@ -164,107 +167,72 @@ def main() -> None:
     )
     trace_stats.to_csv(args.out_dir / "tableS2_vbpca_trace_rms_by_k.csv", index=False)
 
-    reversal = _extract_reversal_points(trace)
+    reversal = _extract_reversal_points(local_trace)
     reversal.to_csv(args.out_dir / "tableS3_vbpca_reversal_points_by_replicate.csv", index=False)
 
     q_summary = _summarize_q_variation(reversal)
     q_summary.to_csv(args.out_dir / "tableS4_vbpca_reversal_summary_by_setting.csv", index=False)
 
-    selected_mode = (
-        vbpca_reps.groupby(SETTING_COLS, as_index=False)["selected_k"]
-        .agg(_mode_selected_k)
-        .rename(columns={"selected_k": "selected_k_mode"})
-    )
-
-    plot_data = trace_stats.merge(selected_mode, on=SETTING_COLS, how="left")
-    plot_data = plot_data.merge(
-        q_summary[
-            [
-                *SETTING_COLS,
-                "q_min",
-                "q_median",
-                "q_max",
-                "q_plus_1_max",
-                "reversal_rate",
-            ]
-        ],
-        on=SETTING_COLS,
-        how="left",
-    )
-    settings = (
-        plot_data[SETTING_COLS]
-        .drop_duplicates()
-        .sort_values(SETTING_COLS)
-        .reset_index(drop=True)
-    )
-
-    n_settings = len(settings)
-    n_cols = min(3, n_settings)
-    n_rows = int(np.ceil(n_settings / n_cols))
-
-    fig, axes = plt.subplots(
-        n_rows,
-        n_cols,
-        figsize=(5.2 * n_cols, 3.6 * n_rows),
-        squeeze=False,
-    )
-
-    for idx, (_, setting) in enumerate(settings.iterrows()):
-        ax = axes[idx // n_cols][idx % n_cols]
-        mask = np.ones(len(plot_data), dtype=bool)
-        for col in SETTING_COLS:
-            mask &= plot_data[col] == setting[col]
-        subset = plot_data.loc[mask].sort_values("trace_k")
-
-        x = subset["trace_k"].to_numpy(dtype=int)
-        y = subset["rms_mean"].to_numpy(dtype=float)
-        low = subset["rms_ci_low"].to_numpy(dtype=float)
-        high = subset["rms_ci_high"].to_numpy(dtype=float)
-        yerr = np.vstack([y - low, high - y])
-
-        ax.errorbar(x, y, yerr=yerr, marker="o", capsize=3)
-
-        q_min = int(subset["q_min"].iloc[0])
-        q_max = int(subset["q_max"].iloc[0])
-        q_median = float(subset["q_median"].iloc[0])
-        q_plus_1_max_val = subset["q_plus_1_max"].iloc[0]
-        reversal_rate = float(subset["reversal_rate"].iloc[0])
-
-        ax.axvspan(q_min - 0.1, q_max + 0.1, color="tab:orange", alpha=0.12)
-        ax.axvline(q_median, color="tab:red", linestyle="--", linewidth=1.2)
-
-        if np.isfinite(q_plus_1_max_val):
-            axis_upper_k = max(int(q_plus_1_max_val), q_max + 1)
-        else:
-            axis_upper_k = q_max + 1
-        axis_upper_k = max(axis_upper_k, int(np.max(x)))
-        ax.set_xlim(0.8, axis_upper_k + 0.2)
-
-        selected_k_mode = int(subset["selected_k_mode"].iloc[0])
-        if selected_k_mode > 0:
-            ax.axvline(
-                selected_k_mode,
-                color="tab:purple",
-                linestyle=":",
-                linewidth=1.0,
-            )
-
-        ax.set_title(
-            f"{_setting_label(setting)}\n"
-            f"q range [{q_min}, {q_max}], reversal rate={reversal_rate:.2f}",
-            fontsize=9,
+    if not anchor_trace.empty:
+        selected_mode_by_dataset = (
+            vbpca_reps.groupby("dataset", as_index=False)["selected_k"]
+            .agg(_mode_selected_k)
+            .rename(columns={"selected_k": "selected_k_mode"})
         )
-        ax.set_xlabel("Candidate k")
-        ax.set_ylabel("Held-out RMS")
-        ax.grid(alpha=0.25)
+        anchor_stats = (
+            anchor_trace.groupby(["dataset", "trace_k"], as_index=False)["trace_rms"]
+            .agg(rms_mean="mean")
+            .sort_values(["dataset", "trace_k"])
+            .reset_index(drop=True)
+        )
+        anchor_plot = anchor_stats.merge(
+            selected_mode_by_dataset,
+            on="dataset",
+            how="left",
+        )
 
-    for idx in range(n_settings, n_rows * n_cols):
-        axes[idx // n_cols][idx % n_cols].axis("off")
+        datasets = sorted(anchor_plot["dataset"].unique().tolist())
+        n_sets = len(datasets)
+        n_cols = min(3, n_sets)
+        n_rows = int(np.ceil(n_sets / n_cols))
+        fig, axes = plt.subplots(
+            n_rows,
+            n_cols,
+            figsize=(5.2 * n_cols, 3.6 * n_rows),
+            squeeze=False,
+        )
 
-    fig.suptitle("Figure S1: VBPCA model-selection trace (RMS vs k)", fontsize=12)
-    fig.tight_layout()
-    fig.savefig(args.out_dir / "figureS1_vbpca_model_selection.png", dpi=180)
-    plt.close(fig)
+        for idx, dataset in enumerate(datasets):
+            ax = axes[idx // n_cols][idx % n_cols]
+            subset = anchor_plot[anchor_plot["dataset"] == dataset].sort_values("trace_k")
+            x = subset["trace_k"].to_numpy(dtype=int)
+            y = subset["rms_mean"].to_numpy(dtype=float)
+            ax.plot(x, y, marker="o")
+
+            selected_k_mode = int(subset["selected_k_mode"].iloc[0])
+            if selected_k_mode > 0:
+                ax.axvline(
+                    selected_k_mode,
+                    color="tab:purple",
+                    linestyle=":",
+                    linewidth=1.0,
+                )
+                axis_upper_k = max(int(np.max(x)), selected_k_mode + 1)
+            else:
+                axis_upper_k = int(np.max(x))
+            ax.set_xlim(0.8, axis_upper_k + 0.2)
+            ax.set_title(f"{dataset} | anchor search", fontsize=10)
+            ax.set_xlabel("Candidate k")
+            ax.set_ylabel("Held-out RMS")
+            ax.grid(alpha=0.25)
+
+        for idx in range(n_sets, n_rows * n_cols):
+            axes[idx // n_cols][idx % n_cols].axis("off")
+
+        fig.suptitle("Figure S1: Dataset-level anchor model-selection trace (RMS vs k)", fontsize=12)
+        fig.tight_layout()
+        fig.savefig(args.out_dir / "figureS1_vbpca_model_selection.png", dpi=180)
+        plt.close(fig)
 
     print("Generated selection supplement in", args.out_dir)
 

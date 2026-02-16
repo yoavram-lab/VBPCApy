@@ -184,6 +184,22 @@ If your changes affect the public API or usage:
 - Add examples if appropriate
 - Update the API reference section
 
+### Benchmark and manuscript reproducibility updates
+
+If your changes affect benchmark methodology, model-selection behavior, runtime
+controls, outputs, or paper figures/tables:
+
+- Update both `README.md` and `scripts/benchmark_study.md` in the same PR.
+- Keep `justfile` benchmark recipes and documentation in sync.
+- Document the exact reproducible command sequence:
+   - `just bench-study-full`
+   - `just bench-study-summary`
+   - `just bench-study-paper`
+- Do not commit generated benchmark artifacts (`results/*.csv`, `results/paper/*.png`, etc.);
+  reproducibility should rely on deterministic commands and seeds.
+- Clearly state whether changes alter locked publication settings or only pilot
+   settings.
+
 ## Reporting Issues
 
 ### Bug Reports

@@ -105,6 +105,7 @@ class ScoreState:
     noise_var: float
     eye_components: np.ndarray
     verbose: int
+    sparse_num_cpu: int = 0
     x_csr: sp.csr_matrix | None = None
     x_csc: sp.csc_matrix | None = None
 
@@ -121,6 +122,7 @@ class NoiseState:
     pattern_index: np.ndarray | None
     n_data: float
     noise_var: float
+    sparse_num_cpu: int = 0
 
 
 @dataclass
@@ -171,6 +173,7 @@ class LoadingsUpdateState:
     va: np.ndarray
     noise_var: float
     verbose: int
+    sparse_num_cpu: int = 0
     x_csr: sp.csr_matrix | None = None
     x_csc: sp.csc_matrix | None = None
 
@@ -1135,7 +1138,7 @@ def _score_update_sparse_ext_apply(state: ScoreState, x_csc: sp.csc_matrix) -> N
         loading_covariances=av_arg,
         noise_var=float(state.noise_var),
         return_covariances=return_score_covariances,
-        num_cpu=0,
+        num_cpu=int(state.sparse_num_cpu),
     )
 
     scores_arr = np.asarray(result["scores"], dtype=float)
@@ -1263,7 +1266,7 @@ def _loadings_update_sparse_ext_apply(
         prior_prec=np.asarray(prior_prec, dtype=np.float64),
         noise_var=float(state.noise_var),
         return_covariances=return_loading_covariances,
-        num_cpu=0,
+        num_cpu=int(state.sparse_num_cpu),
     )
 
     loadings_arr = np.asarray(result["loadings"], dtype=float)
@@ -1428,7 +1431,7 @@ def _update_noise_variance(
             scores=np.asarray(scores, dtype=np.float64),
             sv_by_col=sv_arr,
             loading_covariances=av_arg,
-            num_cpu=0,
+            num_cpu=int(noise_state.sparse_num_cpu),
         )
     )
 
@@ -1492,6 +1495,7 @@ def _finalize_noise_state(
         pattern_index=noise_state.pattern_index,
         n_data=noise_state.n_data,
         noise_var=v_new,
+        sparse_num_cpu=noise_state.sparse_num_cpu,
     )
     return updated_state, float(s_xv)
 

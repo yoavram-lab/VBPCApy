@@ -8,7 +8,7 @@ Variational Bayesian PCA (Illin and Raiko, 2010) with support for missing data, 
 
 ## Statement of need
 
-Missing values are common in scientific and industrial tabular datasets, but many PCA workflows either impute first (which can bias uncertainty estimates) or drop incomplete samples/features. VBPCApy provides a practical Variational Bayesian PCA implementation that models missingness directly, exposes uncertainty-aware outputs, and preserves compatibility with the legacy MATLAB full-rank PCA behavior.
+Missing values are common in scientific and industrial tabular datasets, but many analysis pipelines either impute first (which can mask uncertainty and affect downstream inference) or drop incomplete samples/features. This pattern is widespread across PCA, matrix factorization, and related dimensionality-reduction workflows. VBPCApy provides a practical Variational Bayesian PCA implementation that models missingness directly and exposes posterior uncertainty outputs (for example, marginal variances and covariance-derived diagnostics) alongside reconstructions. Relative to common impute-then-analyze workflows, this enables uncertainty-aware latent-factor analysis in a single reproducible Python API.
 
 This package targets researchers and practitioners who need:
 - robust latent-factor modeling with incomplete observations,
@@ -21,7 +21,7 @@ VBPCApy implements the Illin & Raiko (2010) VB-PCA formulation with modern Pytho
 
 ## Runtime backend selection
 
-The package uses optimized kernels as the default and supported execution path. You do not need to enable a special "fast mode".
+The package uses optimized c++ kernels.
 
 - **Default behavior**: dense/sparse/noise/rotate kernels are selected automatically from data and mask structure.
 - **Build requirement**: extension modules must be available in the installed package (source build or wheel).
@@ -40,6 +40,28 @@ In short: backend selection affects runtime, not model semantics.
 - Missing-aware preprocessing utilities (one-hot encode, standardize, min-max, auto-routing) that preserve NaNs/masks for generative reconstruction.
 - `VBPCA` sklearn-like wrapper (fit/transform/inverse_transform) with mask support.
 - Empirical risk minimization based model selector for number of PCs which best reconstruct the empirical data.
+
+## Public API at a glance
+
+Stable user-facing APIs are imported from `vbpca_py`:
+
+```python
+from vbpca_py import (
+  VBPCA,
+  select_n_components,
+  SelectionConfig,
+  AutoEncoder,
+  MissingAwareOneHotEncoder,
+  MissingAwareStandardScaler,
+  MissingAwareMinMaxScaler,
+)
+```
+
+Preprocessing interfaces are first-class public APIs:
+
+- `MissingAwareOneHotEncoder`: categorical encoding with NaN/mask-aware behavior.
+- `MissingAwareStandardScaler` / `MissingAwareMinMaxScaler`: continuous scaling on observed entries.
+- `AutoEncoder`: mixed-type routing layer with `fit/transform/inverse_transform`.
 
 ## Installation
 
@@ -89,10 +111,12 @@ pip install .
 pip install .[dev]
 # Optional data utilities (pandas)
 pip install .[data]
+# Benchmark + plotting stack (joblib, pandas, scikit-learn, seaborn)
+pip install .[benchmark]
 # Optional Octave bridge (only needed to run MATLAB/Octave helpers/tests)
 pip install .[octave]
 # Install everything
-pip install .[dev,data,octave]
+pip install .[dev,data,benchmark,octave]
 ```
 
 **Using uv (recommended for Python env management):**
@@ -100,8 +124,11 @@ pip install .[dev,data,octave]
 # Sync core developer environment
 uv sync --extra dev --extra data
 
+# Include benchmark + plotting dependencies
+uv sync --extra dev --extra data --extra benchmark
+
 # Include optional Octave Python bridge packages
-uv sync --extra dev --extra data --extra octave
+uv sync --extra dev --extra data --extra benchmark --extra octave
 ```
 
 ## Quick start
@@ -229,6 +256,11 @@ curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh | bash -s -
 cargo install just
 ```
 
+List all available recipes:
+```bash
+just help
+```
+
 Run lint check:
 ```bash
 just lint
@@ -272,7 +304,53 @@ just bench-study-paper
 just bench-study-repro
 ```
 
-The default study wiring uses the core 4-dataset set (`synthetic`, `diabetes`, `wine`, `genomics_like`) with observed-only scaling via `MissingAwareStandardScaler` and controlled VBPCA model-selection caps to limit runtime growth.
+For runtime-policy calibration on core workloads:
+```bash
+# staged runtime profiling baselines
+just core-perf-baseline
+just core-perf-baseline-confirm
+just core-perf-genetics
+
+# generate/update runtime profile JSON
+just runtime-profile-helper
+```
+
+`pca_full(..., runtime_report=1)` can be used to include a `RuntimeReport`
+diagnostic block showing resolved per-kernel thread values and their sources.
+
+### Reproducible benchmark protocol (locked study settings)
+
+The benchmark configuration used for manuscript artifacts is locked to:
+
+- datasets: `synthetic,diabetes,wine,genomics_like`
+- replicates: `400` per setting (`just bench-study-full`)
+- VBPCA iterations: `--vbpca-maxiters 80 --vbpca-maxiters-genomics 80`
+- model-selection behavior:
+  - dataset-level anchor selection: full candidate range (`1..rank`)
+  - selected `k` is fully empirical (no floor from requested `n_components`)
+  - no hard trial cap in full runs (`--vbpca-selection-max-trials 0`)
+  - replicate-level robustness search in local window (`--vbpca-local-window 3`)
+- preprocessing: observed-only `MissingAwareStandardScaler`
+
+To regenerate paper artifacts reproducibly:
+
+```bash
+just bench-study-full
+just bench-study-summary
+just bench-study-paper
+```
+
+Generated outputs (not versioned in git; regenerate via `just` recipes):
+
+- `results/replicates.csv` (per-replicate records; includes `vbpca_mean_variance` and `vbpca_median_variance`)
+- `results/summary.csv`
+- `results/pairwise_summary.csv`
+- `results/paper/figure1_runtime_scaling.png`
+- `results/paper/figure2_vbpca_uncertainty.png` (one panel per dataset; paired box plots of median marginal variance for observed vs held-out entries across missingness settings)
+- `results/paper/tableS0_setting_key.csv` (setting ID legend; `setting_id_dataset` gives A/B/C/... within each dataset)
+- `results/paper/tableS5_vbpca_uncertainty_robust_by_setting.csv`
+- `results/paper/tableS6_vbpca_uncertainty_robust_by_dataset.csv`
+- `results/paper/tableS7_vbpca_uncertainty_replicate_long.csv`
 
 The study writes `results/replicates*.csv`, summary tables, and paper-ready artifacts under `results/paper/`. See `scripts/benchmark_study.md` for details.
 
@@ -326,15 +404,6 @@ We are committed to providing a welcoming and inclusive environment. Please:
 
 ## Citation
 
-If you use VBPCApy in research software or publications, please cite using [CITATION.cff](CITATION.cff).
-- Update documentation as needed
-
-## License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.edge 
-
-## Citation
-
 If you use this package in your research, please cite:
 
 **For the implementation:**
@@ -361,6 +430,10 @@ If you use this package in your research, please cite:
 ```
 
 See [CITATION.cff](CITATION.cff) for machine-readable citation metadata.
+
+## License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 ## Acknowledgments
 

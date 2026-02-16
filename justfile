@@ -52,25 +52,33 @@ bench-save:
 bench-compare:
 	pytest -q -m perf --benchmark-only --benchmark-compare --benchmark-sort=mean
 
-# Run reproducible core VBPCA runtime baseline (dense + sparse cases).
+# Run reproducible core VBPCA runtime baseline (dense + sparse cases, quick stage).
 core-perf-baseline:
-	python scripts/profile_core_vbpca.py --reps 3 --maxiters 40 --out results/perf_baseline/core_vbpca_baseline.csv
+	python scripts/profile_core_vbpca.py --reps 3 --tuning-stage quick --out results/perf_baseline/core_vbpca_baseline.csv
 
-# Run genetics-like large sparse hotspot profiling baseline.
+# Run confirm-stage core runtime baseline (candidate validation).
+core-perf-baseline-confirm:
+	python scripts/profile_core_vbpca.py --reps 3 --tuning-stage confirm --out results/perf_baseline/core_vbpca_baseline_confirm.csv
+
+# Run genetics-like large sparse hotspot profiling baseline (confirm stage).
 core-perf-genetics:
-	python scripts/profile_core_vbpca.py --case-set genetics --reps 2 --maxiters 30 --out results/perf_baseline/core_vbpca_genetics_baseline.csv
+	python scripts/profile_core_vbpca.py --case-set genetics --reps 2 --tuning-stage confirm --out results/perf_baseline/core_vbpca_genetics_baseline.csv
+
+# Build or update a runtime profile from explicit defaults/rules.
+runtime-profile-helper:
+	python scripts/build_runtime_profile.py --out results/perf_baseline/runtime_profile.json --default-num-cpu-rms 2
 
 # Run script-based benchmark pilot (reduced reps for quick validation).
 bench-study-pilot:
-	python scripts/benchmark_missing_pca.py --datasets synthetic,diabetes,wine,genomics_like --n-reps 20 --mice-tol 1e-2 --vbpca-selection-patience 1 --vbpca-selection-max-trials 8 --vbpca-local-window 2 --vbpca-maxiters 60 --vbpca-maxiters-genomics 45 --n-jobs -2 --output results/replicates_pilot.csv --selection-trace-output results/vbpca_selection_trace_pilot.csv
+	python scripts/benchmark_missing_pca.py --datasets synthetic,diabetes,wine,genomics_like --n-reps 20 --mice-tol 1e-2 --vbpca-selection-patience 1 --vbpca-selection-max-trials 8 --vbpca-local-window 3 --vbpca-maxiters 80 --vbpca-maxiters-genomics 80 --n-jobs -2 --output results/replicates_pilot.csv --selection-trace-output results/vbpca_selection_trace_pilot.csv
 
 # Run full script-based benchmark sweep (publication configuration).
 bench-study-full:
-	python scripts/benchmark_missing_pca.py --datasets synthetic,diabetes,wine,genomics_like --n-reps 200 --mice-tol 1e-2 --vbpca-selection-patience 1 --vbpca-selection-max-trials 8 --vbpca-local-window 2 --vbpca-maxiters 60 --vbpca-maxiters-genomics 45 --n-jobs -2 --output results/replicates.csv --selection-trace-output results/vbpca_selection_trace.csv
+	python scripts/benchmark_missing_pca.py --datasets synthetic,diabetes,wine,genomics_like --n-reps 400 --mice-tol 1e-2 --vbpca-selection-patience 1 --vbpca-selection-max-trials 0 --vbpca-local-window 3 --vbpca-maxiters 80 --vbpca-maxiters-genomics 80 --n-jobs -2 --output results/replicates.csv --selection-trace-output results/vbpca_selection_trace.csv
 
 # Run genetics-like large-loci synthetic wall-time comparator sweep (MICE disabled).
 bench-study-genetics-pilot:
-	python scripts/benchmark_missing_pca.py --datasets genomics_like --mechanisms MCAR --patterns random --missing-rates 0.3 --n-reps 6 --n-components 8 --synthetic-shape 1200x5000 --vbpca-maxiters 60 --vbpca-maxiters-genomics 40 --vbpca-selection-patience 1 --vbpca-selection-max-trials 6 --vbpca-local-window 2 --no-include-mice --n-jobs -2 --output results/replicates_genetics_pilot.csv --selection-trace-output results/vbpca_selection_trace_genetics_pilot.csv
+	python scripts/benchmark_missing_pca.py --datasets genomics_like --mechanisms MCAR --patterns random --missing-rates 0.3 --n-reps 6 --n-components 8 --synthetic-shape 1200x5000 --vbpca-maxiters 80 --vbpca-maxiters-genomics 80 --vbpca-selection-patience 1 --vbpca-selection-max-trials 6 --vbpca-local-window 3 --no-include-mice --n-jobs -2 --output results/replicates_genetics_pilot.csv --selection-trace-output results/vbpca_selection_trace_genetics_pilot.csv
 
 # Aggregate benchmark summaries and paired deltas.
 bench-study-summary:

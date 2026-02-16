@@ -86,3 +86,6 @@ htmlcov/
 # Legacy Octave autosave artifacts
 pca_f_autosave
 pca_f_autosave*
+
+# Generated benchmark outputs (reproducible from justfile workflow)
+results/

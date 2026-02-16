@@ -168,16 +168,42 @@ def test_pca_full_dense_vb_basic() -> None:
     assert np.isscalar(noise_var) or np.shape(noise_var) == ()
 
     # Learning curves: keys and consistent lengths
-    for k in ("rms", "prms", "time", "cost"):
+    for k in (
+        "rms",
+        "prms",
+        "time",
+        "cost",
+        "phase_scores_sec",
+        "phase_loadings_sec",
+        "phase_rms_sec",
+        "phase_noise_sec",
+        "phase_converge_sec",
+        "phase_total_sec",
+    ):
         assert k in lc
     n = len(lc["rms"])
     assert n >= 1
     assert len(lc["prms"]) == n
     assert len(lc["time"]) == n
     assert len(lc["cost"]) == n
+    assert len(lc["phase_scores_sec"]) == n
+    assert len(lc["phase_loadings_sec"]) == n
+    assert len(lc["phase_rms_sec"]) == n
+    assert len(lc["phase_noise_sec"]) == n
+    assert len(lc["phase_converge_sec"]) == n
+    assert len(lc["phase_total_sec"]) == n
 
     # RMS should be non-negative (or NaN)
     assert all(r >= 0.0 or np.isnan(r) for r in lc["rms"])
+    for k in (
+        "phase_scores_sec",
+        "phase_loadings_sec",
+        "phase_rms_sec",
+        "phase_noise_sec",
+        "phase_converge_sec",
+        "phase_total_sec",
+    ):
+        assert all(v >= 0.0 for v in lc[k])
 
     # Explicit RMS reconstruction on observed entries should roughly
     # match last lc["rms"].
@@ -244,6 +270,38 @@ def test_pca_full_invalid_compat_mode_raises() -> None:
             verbose=0,
             compat_mode="legacy",
         )
+
+
+def test_pca_full_runtime_report_toggle() -> None:
+    x = _make_toy_dense_with_nans(n_features=5, n_samples=7, seed=19)
+
+    result_default = pca_full(
+        x,
+        n_components=2,
+        maxiters=2,
+        algorithm="vb",
+        autosave=0,
+        display=0,
+        verbose=0,
+    )
+    assert "RuntimeReport" in result_default
+    assert result_default["RuntimeReport"] is None
+
+    result_report = pca_full(
+        x,
+        n_components=2,
+        maxiters=2,
+        algorithm="vb",
+        autosave=0,
+        display=0,
+        verbose=0,
+        runtime_report=1,
+    )
+    report = result_report["RuntimeReport"]
+    assert isinstance(report, dict)
+    assert "runtime_tuning" in report
+    assert "kernel_values" in report
+    assert "kernel_sources" in report
 
 
 # ----------------------------------------------------------------------

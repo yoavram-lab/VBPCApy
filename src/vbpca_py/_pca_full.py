@@ -51,6 +51,12 @@ from ._full_update import (
 from ._mean import ProbeMatrices, subtract_mu
 from ._monitoring import InitialMonitoringInputs, InitShapes, _initial_monitoring
 from ._options import _options
+from ._runtime_policy import (
+    RuntimeThreadConfig,
+    RuntimeWorkloadProfile,
+    apply_runtime_policy_defaults,
+    resolve_runtime_thread_config_with_report,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +64,14 @@ Array = np.ndarray
 Sparse = sp.csr_matrix
 Matrix = Array | Sparse
 _ALLOWED_COMPAT_MODES = {"strict_legacy", "modern"}
+_PHASE_TIMING_KEYS = (
+    "phase_scores_sec",
+    "phase_loadings_sec",
+    "phase_rms_sec",
+    "phase_noise_sec",
+    "phase_converge_sec",
+    "phase_total_sec",
+)
 
 
 def _coerce_int(
@@ -148,6 +162,9 @@ def pca_full(x: Matrix, n_components: int, **kwargs: object) -> dict[str, object
         explained_var_gram_ratio=_float_opt(
             opts.get("explained_var_gram_ratio", 4.0), default=4.0
         ),
+        runtime_report=(
+            final.runtime_report if bool(opts.get("runtime_report", 0)) else None
+        ),
     )
 
 
@@ -210,6 +227,7 @@ class TrainingState:
     err_mx: np.ndarray | sp.spmatrix | None
     a_old: np.ndarray
     time_start: float
+    runtime_report: dict[str, object] | None
 
 
 @dataclass(frozen=True)
@@ -227,6 +245,7 @@ class FinalState:
     va: np.ndarray
     vmu: float
     lc: dict[str, list[float]]
+    runtime_report: dict[str, object] | None
 
 
 @dataclass(frozen=True)
@@ -241,6 +260,7 @@ class IterationConfig:
     rotate_each_iter: bool
     verbose: int
     num_cpu: int
+    runtime_threads: RuntimeThreadConfig
     opts: MutableMapping[str, object]
 
 
@@ -394,6 +414,7 @@ def _initialize_model(
         err_mx=err_mx,
         a_old=init_params[0].copy(),
         time_start=time.time(),
+        runtime_report=None,
     )
 
 
@@ -409,6 +430,22 @@ def _run_training_loop(
     Returns:
         The updated ``TrainingState`` after running iterations or hitting a stop.
     """
+    workload = RuntimeWorkloadProfile(
+        n_features=int(prepared.n_features),
+        n_samples=int(prepared.n_samples),
+        n_components=int(training.model.s.shape[0]),
+        n_observed=max(0, int(prepared.n_data)),
+        is_sparse=bool(sp.issparse(prepared.x_data)),
+    )
+
+    _ensure_phase_timing_keys(training.lc)
+
+    runtime_threads, runtime_report = resolve_runtime_thread_config_with_report(
+        dict(opts),
+        workload=workload,
+    )
+    training.runtime_report = runtime_report
+
     # Hyperparameters for Va, Vmu, V (kept here for compatibility).
     cfg = IterationConfig(
         hp_va=0.001,
@@ -419,6 +456,7 @@ def _run_training_loop(
         rotate_each_iter=bool(opts.get("rotate2pca", 0)),
         verbose=_int_opt(opts.get("verbose", 0)),
         num_cpu=max(0, _int_opt(opts.get("num_cpu", 1), default=1)),
+        runtime_threads=runtime_threads,
         opts=opts,
     )
 
@@ -458,11 +496,25 @@ def _run_training_loop(
     return training
 
 
-def _iteration_step(ctx: IterationContext) -> None:  # noqa: PLR0914
+def _ensure_phase_timing_keys(lc: dict[str, list[float]]) -> None:
+    n_points = max(1, len(lc.get("rms", [])))
+    for key in _PHASE_TIMING_KEYS:
+        values = lc.get(key)
+        if not values:
+            lc[key] = [0.0] * n_points
+            continue
+        if len(values) < n_points:
+            values.extend([0.0] * (n_points - len(values)))
+        elif len(values) > n_points:
+            del values[n_points:]
+
+
+def _iteration_step(ctx: IterationContext) -> None:  # noqa: PLR0914,PLR0915
     """One full iteration of updates; mutates ``ctx.training`` in place."""
     training = ctx.training
     m = training.model
     cfg = ctx.cfg
+    iter_start = time.perf_counter()
 
     # 1) Hyperpriors
     m.va, m.vmu = _update_hyperpriors(
@@ -506,6 +558,7 @@ def _iteration_step(ctx: IterationContext) -> None:  # noqa: PLR0914
     score_x_csr, score_x_csc = _coerce_sparse_views(x_data)
 
     # 3) Scores
+    score_start = time.perf_counter()
     score_state = ScoreState(
         x_data=x_data,
         mask=ctx.prepared.mask,
@@ -520,10 +573,12 @@ def _iteration_step(ctx: IterationContext) -> None:  # noqa: PLR0914
         verbose=cfg.verbose,
         x_csr=score_x_csr,
         x_csc=score_x_csc,
+        sparse_num_cpu=cfg.runtime_threads.score_update_sparse,
     )
     score_state = _update_scores(score_state)
     m.s = score_state.scores
     m.sv = score_state.score_covariances
+    phase_scores_sec = time.perf_counter() - score_start
 
     # 3b) Optional rotate-to-PCA
     if cfg.rotate_each_iter:
@@ -541,6 +596,7 @@ def _iteration_step(ctx: IterationContext) -> None:  # noqa: PLR0914
     # 4) Loadings
     loadings_x_csr, loadings_x_csc = _coerce_sparse_views(x_data)
 
+    loadings_start = time.perf_counter()
     m.a, m.av = _update_loadings(
         LoadingsUpdateState(
             x_data=x_data,
@@ -554,10 +610,13 @@ def _iteration_step(ctx: IterationContext) -> None:  # noqa: PLR0914
             verbose=cfg.verbose,
             x_csr=loadings_x_csr,
             x_csc=loadings_x_csc,
+            sparse_num_cpu=cfg.runtime_threads.loadings_update_sparse,
         )
     )
+    phase_loadings_sec = time.perf_counter() - loadings_start
 
     # 5) RMS (and error matrix)
+    rms_start = time.perf_counter()
     rms, prms, err_mx = _recompute_rms(
         RmsContext(
             x_data=x_data,
@@ -568,12 +627,14 @@ def _iteration_step(ctx: IterationContext) -> None:  # noqa: PLR0914
             n_probe=int(ctx.prepared.n_probe),
             loadings=m.a,
             scores=m.s,
-            num_cpu=cfg.num_cpu,
+            num_cpu=cfg.runtime_threads.rms,
         )
     )
     training.err_mx = err_mx
+    phase_rms_sec = time.perf_counter() - rms_start
 
     # 6) Noise variance
+    noise_start = time.perf_counter()
     noise_state = NoiseState(
         loadings=m.a,
         scores=m.s,
@@ -583,6 +644,7 @@ def _iteration_step(ctx: IterationContext) -> None:  # noqa: PLR0914
         pattern_index=ctx.prepared.pattern_index,
         n_data=float(ctx.prepared.n_data),
         noise_var=float(m.noise_var),
+        sparse_num_cpu=cfg.runtime_threads.noise_sxv_sum,
     )
     noise_state, s_xv = _update_noise_variance(
         noise_state,
@@ -593,8 +655,10 @@ def _iteration_step(ctx: IterationContext) -> None:  # noqa: PLR0914
     )
     m.noise_var = float(noise_state.noise_var)
     ctx.bias_state.noise_var = float(m.noise_var)
+    phase_noise_sec = time.perf_counter() - noise_start
 
     # 7) Logging + convergence
+    converge_start = time.perf_counter()
     training.lc, _, convmsg, training.a_old = _log_and_check_convergence(
         ConvergenceState(
             opts=dict(cfg.opts),
@@ -620,6 +684,20 @@ def _iteration_step(ctx: IterationContext) -> None:  # noqa: PLR0914
         float(rms),
         float(prms),
     )
+    phase_converge_sec = time.perf_counter() - converge_start
+    phase_total_sec = time.perf_counter() - iter_start
+
+    _append_phase_timings(
+        training.lc,
+        {
+            "phase_scores_sec": phase_scores_sec,
+            "phase_loadings_sec": phase_loadings_sec,
+            "phase_rms_sec": phase_rms_sec,
+            "phase_noise_sec": phase_noise_sec,
+            "phase_converge_sec": phase_converge_sec,
+            "phase_total_sec": phase_total_sec,
+        },
+    )
 
     # Store stop message internally to keep loop logic simple without touching
     # the public learning-curve schema.
@@ -635,6 +713,15 @@ def _iteration_step(ctx: IterationContext) -> None:  # noqa: PLR0914
             stop_now = 1.0
 
     training.lc.setdefault("_stop", []).append(float(stop_now))
+
+
+def _append_phase_timings(
+    lc: dict[str, list[float]],
+    timings: dict[str, float],
+) -> None:
+    for key, value in timings.items():
+        lc.setdefault(key, [0.0])
+        lc[key].append(max(0.0, float(value)))
 
 
 def _coerce_sparse_views(
@@ -786,6 +873,7 @@ def _restore_original_shape(
         va=m.va,
         vmu=float(m.vmu),
         lc=training.lc,
+        runtime_report=training.runtime_report,
     )
 
 
@@ -944,6 +1032,7 @@ def _pack_result(
     include_diagnostics: bool = True,
     explained_var_solver: str = "auto",
     explained_var_gram_ratio: float = 4.0,
+    runtime_report: dict[str, object] | None = None,
 ) -> dict[str, object]:
     """Pack final values into the historical PCA_FULL result dictionary.
 
@@ -993,6 +1082,7 @@ def _pack_result(
             "Mu": final.muv,
         },
         "hp": {"Va": final.va, "Vmu": float(final.vmu)},
+        "RuntimeReport": runtime_report,
     }
 
 
@@ -1027,16 +1117,24 @@ def _build_options(kwargs: Mapping[str, object]) -> dict[str, object]:
         "cfstop": np.array([]),
         "verbose": 1,
         "num_cpu": 1,
+        "num_cpu_score_update": None,
+        "num_cpu_loadings_update": None,
+        "num_cpu_noise_update": None,
+        "num_cpu_rms": None,
+        "runtime_tuning": "off",
+        "runtime_profile": None,
         "xprobe": None,
         "rotate2pca": 1,
         "display": 0,
         "compat_mode": "strict_legacy",
         "return_diagnostics": 1,
+        "runtime_report": 0,
         "explained_var_solver": "auto",
         "explained_var_gram_ratio": 4.0,
     }
 
     opts, wrnmsg = _options(opts_default, **kwargs)
+    opts["_num_cpu_user_set"] = any(str(key).lower() == "num_cpu" for key in kwargs)
 
     compat_mode_raw = opts.get("compat_mode", "strict_legacy")
     compat_mode = str(compat_mode_raw).strip().lower()
@@ -1049,6 +1147,7 @@ def _build_options(kwargs: Mapping[str, object]) -> dict[str, object]:
     opts["compat_mode"] = compat_mode
     opts["angle_every"] = max(1, _int_opt(opts.get("angle_every", 1), default=1))
     opts["return_diagnostics"] = int(bool(opts.get("return_diagnostics", 1)))
+    opts = apply_runtime_policy_defaults(opts)
 
     solver_raw = str(opts.get("explained_var_solver", "auto"))
     solver = solver_raw.strip().lower()

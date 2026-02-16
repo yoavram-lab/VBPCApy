@@ -646,6 +646,12 @@ def _initial_monitoring(
         "prms": [float(prms)],
         "time": [0.0],
         "cost": [float("nan")],
+        "phase_scores_sec": [0.0],
+        "phase_loadings_sec": [0.0],
+        "phase_rms_sec": [0.0],
+        "phase_noise_sec": [0.0],
+        "phase_converge_sec": [0.0],
+        "phase_total_sec": [0.0],
     }
 
     display_val = opts.get("display", 0)

@@ -62,12 +62,30 @@ def _aggregate_method_summary(frame: pd.DataFrame) -> pd.DataFrame:
             row["vbpca_mean_variance_std"] = var_stats["std"]
             row["vbpca_mean_variance_ci_low"] = var_stats["ci_low"]
             row["vbpca_mean_variance_ci_high"] = var_stats["ci_high"]
+            if "vbpca_median_variance" in group.columns:
+                med_var_stats = _summary_stats(group["vbpca_median_variance"])
+                row["vbpca_median_variance_mean"] = med_var_stats["mean"]
+                row["vbpca_median_variance_median"] = med_var_stats["median"]
+                row["vbpca_median_variance_std"] = med_var_stats["std"]
+                row["vbpca_median_variance_ci_low"] = med_var_stats["ci_low"]
+                row["vbpca_median_variance_ci_high"] = med_var_stats["ci_high"]
+            else:
+                row["vbpca_median_variance_mean"] = np.nan
+                row["vbpca_median_variance_median"] = np.nan
+                row["vbpca_median_variance_std"] = np.nan
+                row["vbpca_median_variance_ci_low"] = np.nan
+                row["vbpca_median_variance_ci_high"] = np.nan
         else:
             row["vbpca_mean_variance_mean"] = np.nan
             row["vbpca_mean_variance_median"] = np.nan
             row["vbpca_mean_variance_std"] = np.nan
             row["vbpca_mean_variance_ci_low"] = np.nan
             row["vbpca_mean_variance_ci_high"] = np.nan
+            row["vbpca_median_variance_mean"] = np.nan
+            row["vbpca_median_variance_median"] = np.nan
+            row["vbpca_median_variance_std"] = np.nan
+            row["vbpca_median_variance_ci_low"] = np.nan
+            row["vbpca_median_variance_ci_high"] = np.nan
 
         rows.append(row)
 
