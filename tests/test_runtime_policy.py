@@ -3,9 +3,19 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from vbpca_py._runtime_policy import (
     RuntimeWorkloadProfile,
+    _ThreadResolveRequest,
+    _default_profile_path,
+    _is_explicit_thread_source,
+    _load_runtime_profile_data,
+    _match_profile_rule,
+    _normalize_profile_option,
+    _resolve_profile_thread_overrides,
+    _resolve_thread_count,
+    _safe_autotune_rms_threads,
     apply_runtime_policy_defaults,
     resolve_runtime_thread_config,
     resolve_runtime_thread_config_with_report,
@@ -396,3 +406,150 @@ def test_resolve_runtime_thread_config_with_report_includes_sources() -> None:
     assert kernel_sources.get("loadings_update_sparse") == "global_num_cpu"
     assert kernel_sources.get("noise_sxv_sum") == "global_num_cpu"
     assert kernel_sources.get("rms") == "global_num_cpu"
+
+
+def test_normalize_profile_option_auto_blank_and_expanduser(
+    monkeypatch, tmp_path
+) -> None:
+    fake_home = tmp_path / "fake_home"
+    fake_home.mkdir()
+    monkeypatch.setattr("vbpca_py._runtime_policy.Path.home", lambda: fake_home)
+    monkeypatch.setenv("HOME", str(fake_home))
+
+    assert _normalize_profile_option(None) is None
+    assert _normalize_profile_option("   ") is None
+    assert _normalize_profile_option("auto") == _default_profile_path()
+
+    expanded = _normalize_profile_option("~/profile.json")
+    assert expanded == Path(str(fake_home / "profile.json"))
+
+
+def test_load_runtime_profile_data_returns_none_for_non_dict_json(tmp_path) -> None:
+    profile_path = tmp_path / "runtime_profile.json"
+    profile_path.write_text(json.dumps([1, 2, 3]), encoding="utf-8")
+
+    assert _load_runtime_profile_data(str(profile_path)) is None
+
+
+def test_match_profile_rule_rejects_out_of_bounds() -> None:
+    workload = RuntimeWorkloadProfile(
+        n_features=100,
+        n_samples=200,
+        n_components=10,
+        n_observed=10_000,
+        is_sparse=True,
+    )
+
+    assert not _match_profile_rule({"min_features": 101}, workload)
+    assert not _match_profile_rule({"max_features": 99}, workload)
+    assert not _match_profile_rule({"min_observed": 20_000}, workload)
+    assert not _match_profile_rule({"max_observed": 9_000}, workload)
+
+
+def test_resolve_profile_thread_overrides_rejects_invalid_schema() -> None:
+    out = _resolve_profile_thread_overrides(
+        profile_data={
+            "schema_version": 2,
+            "default_threads": {"num_cpu_rms": 4},
+        },
+        workload=None,
+    )
+    assert out == {}
+
+
+def test_resolve_profile_thread_overrides_handles_malformed_rules_and_negatives() -> None:
+    profile_data = {
+        "schema_version": 1,
+        "default_threads": {
+            "num_cpu_rms": -1,
+            "num_cpu_score_update": "3",
+        },
+        "workload_rules": [
+            "not-a-dict",
+            {"match": "not-a-dict", "threads": {"num_cpu_rms": 8}},
+            {
+                "match": {"is_sparse": True, "min_features": 4000},
+                "threads": {"num_cpu_rms": 2},
+            },
+        ],
+    }
+
+    workload = RuntimeWorkloadProfile(
+        n_features=2000,
+        n_samples=500,
+        n_components=20,
+        n_observed=200_000,
+        is_sparse=True,
+    )
+    out = _resolve_profile_thread_overrides(profile_data=profile_data, workload=workload)
+
+    assert out == {"num_cpu_score_update": 3}
+
+
+def test_resolve_thread_count_uses_env_global_then_default() -> None:
+    env_global = _resolve_thread_count(
+        _ThreadResolveRequest(
+            option_value=None,
+            use_global_opt=False,
+            global_opt_value=9,
+            profile_value=None,
+            env_specific_value=None,
+            env_global_value=7,
+            default_value=5,
+        )
+    )
+    assert env_global == 7
+
+    default_only = _resolve_thread_count(
+        _ThreadResolveRequest(
+            option_value=None,
+            use_global_opt=False,
+            global_opt_value=9,
+            profile_value=None,
+            env_specific_value=None,
+            env_global_value=None,
+            default_value=5,
+        )
+    )
+    assert default_only == 5
+
+
+def test_safe_autotune_rms_threads_thresholds_and_caps(monkeypatch) -> None:
+    monkeypatch.setattr("vbpca_py._runtime_policy.os.cpu_count", lambda: 4)
+
+    sparse_60k = RuntimeWorkloadProfile(
+        n_features=200,
+        n_samples=100,
+        n_components=8,
+        n_observed=60_000,
+        is_sparse=True,
+    )
+    assert _safe_autotune_rms_threads(sparse_60k) == 2
+
+    sparse_600k = RuntimeWorkloadProfile(
+        n_features=200,
+        n_samples=100,
+        n_components=8,
+        n_observed=600_000,
+        is_sparse=True,
+    )
+    assert _safe_autotune_rms_threads(sparse_600k) == 4
+
+    sparse_3m = RuntimeWorkloadProfile(
+        n_features=200,
+        n_samples=100,
+        n_components=8,
+        n_observed=3_000_000,
+        is_sparse=True,
+    )
+    assert _safe_autotune_rms_threads(sparse_3m) == 4
+
+
+def test_is_explicit_thread_source_detects_env_global_only() -> None:
+    assert _is_explicit_thread_source(
+        option_value=None,
+        global_opt_set=False,
+        profile_value=None,
+        env_specific=None,
+        env_global=3,
+    )
