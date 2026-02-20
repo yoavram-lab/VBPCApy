@@ -10,7 +10,7 @@ while using the public Python package interfaces:
 
 Notes:
 -----
-- Genetics dataset is omitted (not present in tools/datasets).
+- Genetics dataset uses HGDP_Edge_2017_snp.npz (SNP-only; 0/1/2 genotypes).
 - Outputs are written locally for side-by-side reassurance checks.
 """
 
@@ -19,15 +19,17 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pandas as pd  # type: ignore[import-untyped]
+import scipy.sparse as sp
 
 from vbpca_py import SelectionConfig, VBPCA, select_n_components
-from vbpca_py.preprocessing import MissingAwareOneHotEncoder
+from vbpca_py.preprocessing import MissingAwareOneHotEncoder, MissingAwareStandardScaler
 
 logger = logging.getLogger(__name__)
 
@@ -102,7 +104,20 @@ DATASET_POLICIES: dict[str, DatasetPolicy] = {
         apply_legacy_oh=False,
         scaling="center",
     ),
+    "genetics": DatasetPolicy(
+        name="genetics",
+        file_name="HGDP_Edge_2017_snp.npz",
+        apply_legacy_oh=False,
+        scaling="none",
+    ),
 }
+
+
+def _load_npz_pair(path: Path) -> tuple[sp.csr_matrix, sp.csr_matrix | None]:
+    data = sp.load_npz(path)
+    mask_path = path.with_name(f"{path.stem}_mask.npz")
+    mask = sp.load_npz(mask_path) if mask_path.exists() else None
+    return sp.csr_matrix(data), sp.csr_matrix(mask) if mask is not None else None
 
 
 def _parse_args() -> argparse.Namespace:
@@ -281,7 +296,7 @@ def _scale_by_policy(
 
 
 
-def _run_dataset(  # noqa: PLR0913
+def _run_dataset(  # noqa: PLR0912, PLR0913, PLR0915, C901
     policy: DatasetPolicy,
     data_dir: Path,
     out_dir: Path,
@@ -304,33 +319,149 @@ def _run_dataset(  # noqa: PLR0913
         msg = f"Dataset not found: {data_path}"
         raise FileNotFoundError(msg)
 
-    x_raw, raw_columns = _load_csv_as_float(data_path)
+    is_npz = data_path.suffix.lower() == ".npz"
+    dense_time = 0.0
+    sparse_time = 0.0
+    use_dense = True
+    x_f_by_n: np.ndarray | sp.csr_matrix
+    observed_mask: np.ndarray | sp.csr_matrix | None
 
-    if policy.apply_legacy_oh:
-        encoder = MissingAwareOneHotEncoder(handle_unknown="ignore", mean_center=False)
-        obs_mask = np.isfinite(x_raw)
-        x_model_input = encoder.fit_transform(x_raw, mask=obs_mask)
-        model_columns = encoder.feature_names_out_
+    def _run_probe(
+        x_probe: np.ndarray | sp.csr_matrix,
+        mask_probe: np.ndarray | sp.csr_matrix | None,
+        *,
+        components: list[int],
+    ) -> float:
+        t0 = time.perf_counter()
+        probe_cfg = SelectionConfig(
+            metric=metric,  # type: ignore[arg-type]
+            stop_on_metric_reversal=True,
+            patience=None,
+            max_trials=None,
+            compute_explained_variance=False,
+            return_best_model=False,
+        )
+        select_kwargs_probe: dict[str, object] = {
+            "maxiters": 10,
+            "algorithm": "vb",
+            "uniquesv": False,
+            "rmsstop": [80, np.finfo(float).eps, np.finfo(float).eps],
+            "cfstop": [80, 0, 0],
+            "minangle": 0,
+            "compat_mode": compat_mode,
+            "rotate2pca": True,
+            "runtime_tuning": runtime_tuning,
+            "selection_verbose": 0,
+            "verbose": 0,
+        }
+        if num_cpu is not None:
+            select_kwargs_probe["num_cpu"] = int(num_cpu)
+        select_n_components(
+            x_probe,
+            mask=mask_probe,
+            components=components,
+            config=probe_cfg,
+            **select_kwargs_probe,
+        )  # type: ignore[arg-type]
+        return time.perf_counter() - t0
+
+    if is_npz:
+        data_csr, mask_csr = _load_npz_pair(data_path)
+
+        data_csr = sp.csr_matrix(data_csr)
+        if mask_csr is not None:
+            mask_csr = sp.csr_matrix(mask_csr)
+        else:
+            mask_csr = sp.csr_matrix(data_csr.copy())
+            mask_csr.data = np.ones_like(mask_csr.data, dtype=np.float32)
+
+        # Lightweight sanity: values should lie in [0, 2] for SNP dosages
+        finite_data = data_csr.data[np.isfinite(data_csr.data)]
+        if finite_data.size:
+            if finite_data.min(initial=0.0) < -1e-6 or finite_data.max(initial=0.0) > 2.0 + 1e-6:
+                msg = "Genetics NPZ values outside expected 0/1/2 range"
+                raise ValueError(msg)
+
+        scaler = MissingAwareStandardScaler().fit(data_csr)
+
+        # Dense path: use masked means/vars from scaler; zero-fill missing
+        x_dense_centered = scaler.transform(data_csr)
+        if sp.issparse(x_dense_centered):
+            x_dense_centered = x_dense_centered.toarray()
+        else:
+            x_dense_centered = np.asarray(x_dense_centered)
+        dense_mask_raw = mask_csr.toarray().astype(bool, copy=False)
+        x_dense_centered[~dense_mask_raw] = 0.0
+        dense_time = _run_probe(
+            x_dense_centered.T,
+            dense_mask_raw.T,
+            components=[5],
+        )
+
+        # Sparse path: keep centered CSR with matching mask
+        x_sparse_centered = scaler.transform(data_csr)
+        if not sp.issparse(x_sparse_centered):
+            x_sparse_centered = sp.csr_matrix(np.asarray(x_sparse_centered))
+
+        sparse_mask_aligned = sp.csr_matrix(mask_csr)
+
+        sparse_time = _run_probe(
+            sp.csr_matrix(x_sparse_centered.T),
+            sp.csr_matrix(sparse_mask_aligned.T),
+            components=[5],
+        )
+
+        use_dense = dense_time <= sparse_time
+        logger.info(
+            "[genetics] probe dense=%.2fs sparse=%.2fs -> using %s path",
+            dense_time,
+            sparse_time,
+            "dense" if use_dense else "sparse",
+        )
+
+        if use_dense:
+            x_f_by_n = x_dense_centered.T
+            observed_mask = dense_mask_raw.T
+            del x_sparse_centered, sparse_mask_aligned
+        else:
+            x_f_by_n = sp.csr_matrix(x_sparse_centered.T)
+            observed_mask = sp.csr_matrix(sparse_mask_aligned.T)
+            del x_dense_centered, dense_mask_raw
     else:
-        x_model_input = x_raw
-        model_columns = raw_columns
+        x_raw, raw_columns = _load_csv_as_float(data_path)
 
-    x_filtered, _filtered_columns, keep_mask = _drop_missing_heavy_columns(
-        x_model_input,
-        model_columns,
-        threshold=drop_missing_threshold,
-    )
-    del keep_mask
+        if policy.apply_legacy_oh:
+            encoder = MissingAwareOneHotEncoder(
+                handle_unknown="ignore",
+                mean_center=False,
+            )
+            obs_mask = np.isfinite(x_raw)
+            x_model_input = encoder.fit_transform(x_raw, mask=obs_mask)
+            if sp.issparse(x_model_input):
+                x_model_input = x_model_input.toarray()
+            x_model_input = np.asarray(x_model_input)
+            model_columns = encoder.feature_names_out_
+        else:
+            x_model_input = x_raw
+            model_columns = raw_columns
 
-    z, _means, _scales = _scale_by_policy(x_filtered, policy.scaling)
+        x_filtered, _filtered_columns, keep_mask = _drop_missing_heavy_columns(
+            x_model_input,
+            model_columns,
+            threshold=drop_missing_threshold,
+        )
+        del keep_mask
 
-    x_f_by_n = z.T
-    observed_mask = np.isfinite(x_f_by_n)
+        z, _means, _scales = _scale_by_policy(x_filtered, policy.scaling)
 
-    n_features, n_samples = x_f_by_n.shape
+        x_f_by_n = z.T
+        observed_mask = np.isfinite(x_f_by_n)
+
+    n_features_int = int(x_f_by_n.shape[0])
+    n_samples_int = int(x_f_by_n.shape[1])
     components = _component_grid(
-        n_features,
-        n_samples,
+        n_features_int,
+        n_samples_int,
         max_k_cap,
         fast_mode=fast_mode,
     )
@@ -367,30 +498,25 @@ def _run_dataset(  # noqa: PLR0913
         components=components,
         config=cfg,
         **select_kwargs,
-    )
+    )  # type: ignore[arg-type]
 
     model = best_model
     if model is None:
-        model_kwargs: dict[str, object] = {
-            "maxiters": maxiters,
-            "algorithm": "vb",
-            "uniquesv": False,
-            "rmsstop": [80, np.finfo(float).eps, np.finfo(float).eps],
-            "cfstop": [80, 0, 0],
-            "minangle": 0,
-            "compat_mode": compat_mode,
-            "rotate2pca": True,
-            "runtime_tuning": runtime_tuning,
-            "verbose": verbose,
-        }
-        if num_cpu is not None:
-            model_kwargs["num_cpu"] = int(num_cpu)
-
         model = VBPCA(
             n_components=int(best_k),
-            **model_kwargs,
+            maxiters=maxiters,
+            algorithm="vb",
+            uniquesv=False,
+            rmsstop=[80, np.finfo(float).eps, np.finfo(float).eps],
+            cfstop=[80, 0, 0],
+            minangle=0,
+            compat_mode=compat_mode,
+            rotate2pca=True,
+            runtime_tuning=runtime_tuning,
+            verbose=verbose,
+            num_cpu=int(num_cpu) if num_cpu is not None else None,
         )
-        model.fit(x_f_by_n, mask=observed_mask)
+        model.fit(x_f_by_n, mask=observed_mask)  # type: ignore[arg-type]
 
     evr = (
         np.asarray(model.explained_variance_ratio_, dtype=float)
@@ -400,13 +526,20 @@ def _run_dataset(  # noqa: PLR0913
 
     dataset_out = out_dir / policy.name
     dataset_out.mkdir(parents=True, exist_ok=True)
-    pd.DataFrame(trace).to_csv(dataset_out / "selection_trace.csv", index=False)
+    trace_frame = pd.DataFrame(trace)
+    if is_npz:
+        np.savez_compressed(
+            dataset_out / "selection_trace.npz",
+            trace=trace_frame.to_records(index=False),
+        )
+    else:
+        trace_frame.to_csv(dataset_out / "selection_trace.csv", index=False)
 
     summary: dict[str, Any] = {
         "dataset": policy.name,
         "file": policy.file_name,
-        "n_samples": int(x_filtered.shape[0]),
-        "n_features": int(x_filtered.shape[1]),
+        "n_samples": int(n_samples_int),
+        "n_features": int(n_features_int),
         "selected_k": int(best_k),
         "best_metric": metric,
         "best_metrics": {
@@ -418,6 +551,12 @@ def _run_dataset(  # noqa: PLR0913
         "total_variance_explained": float(np.nansum(evr)),
         "noise_variance": _as_float(getattr(model, "noise_variance_", np.nan)),
     }
+    if is_npz:
+        summary["probe"] = {
+            "dense_seconds": float(dense_time),
+            "sparse_seconds": float(sparse_time),
+            "path": "dense" if use_dense else "sparse",
+        }
     (dataset_out / "summary.json").write_text(json.dumps(summary, indent=2))
     return summary
 
