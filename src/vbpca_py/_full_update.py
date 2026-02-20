@@ -105,6 +105,7 @@ class ScoreState:
     noise_var: float
     eye_components: np.ndarray
     verbose: int
+    pattern_batch_size: int = 0
     sparse_num_cpu: int = 0
     x_csr: sp.csr_matrix | None = None
     x_csc: sp.csc_matrix | None = None
@@ -215,16 +216,21 @@ class RotationContext:
 def _prepare_data(
     x: Matrix,
     opts: MutableMapping[str, object],
-) -> tuple[Matrix, Matrix | None, int, int, np.ndarray, np.ndarray]:
+    *,
+    mask_override: Matrix | None = None,
+) -> tuple[Matrix, Matrix | None, Matrix | None, int, int, np.ndarray, np.ndarray]:
     """Copy input, apply probe handling, and remove empty rows/cols.
 
     Returns:
         Data, probe data, original shapes, and kept row/col indices.
+
+    Raises:
+        ValueError: If ``x_probe`` sparsity does not match ``x``.
     """
     x_probe_opt = opts.get("xprobe", None)
 
-    if isinstance(x, sp.csr_matrix):
-        x_data: Matrix = x.copy()
+    if sp.issparse(x):
+        x_data: Matrix = sp.csr_matrix(cast("Any", x))
     else:
         x_data = np.array(x, dtype=float).copy()
 
@@ -233,22 +239,51 @@ def _prepare_data(
         x_probe_array = np.asarray(x_probe_opt, dtype=float)
         if x_probe_array.size != 0:
             if sp.issparse(x_probe_opt):
+                if not sp.issparse(x_data):
+                    msg = "x_probe must be dense when x is dense"
+                    raise ValueError(msg)
                 x_probe = sp.csr_matrix(cast("Any", x_probe_opt))
             else:
+                if sp.issparse(x_data):
+                    msg = "x_probe must be sparse when x is sparse"
+                    raise ValueError(msg)
                 x_probe = x_probe_array.copy()
 
     n_features_original, n_samples_original = x_data.shape
+
+    mask_clean: Matrix | None = None
+    if mask_override is not None:
+        mask_clean = (
+            mask_override
+            if sp.isspmatrix(mask_override)
+            else np.asarray(mask_override, dtype=bool)
+        )
 
     x_data, x_probe, row_idx, col_idx, init_opt = remove_empty_entries(
         x_data,
         x_probe,
         opts["init"],
         compat_mode=str(opts.get("compat_mode", "strict_legacy")),
+        mask=mask_clean,
     )
     # Carry updated init option forward.
     opts["init"] = init_opt
 
-    return x_data, x_probe, n_features_original, n_samples_original, row_idx, col_idx
+    if mask_clean is not None:
+        if sp.isspmatrix(mask_clean):
+            mask_clean = sp.csr_matrix(mask_clean)[row_idx[:, None], col_idx]
+        else:
+            mask_clean = np.asarray(mask_clean)[np.ix_(row_idx, col_idx)]
+
+    return (
+        x_data,
+        x_probe,
+        mask_clean,
+        n_features_original,
+        n_samples_original,
+        row_idx,
+        col_idx,
+    )
 
 
 # -- mask helpers -------------------------------------------------------------
@@ -319,18 +354,50 @@ def _build_masks_dense(
     return x_data, x_probe, mask, mask_probe
 
 
-def _build_masks_and_counts(
+def _build_masks_and_counts(  # noqa: PLR0912, PLR0915, C901
     x_data: Matrix,
     x_probe: Matrix | None,
     opts: MutableMapping[str, object],
+    *,
+    mask_override: Matrix | None = None,
 ) -> tuple[Matrix, Matrix | None, Matrix, Matrix | None, np.ndarray, float, int]:
     """Build missingness masks, handle NaNs/zeros, and count observations.
 
     Returns:
         Data, probe, masks, per-row counts, total data count, probe count.
+
+    Raises:
+        ValueError: If mask or probe sparsity does not match ``x_data``.
     """
+    mask: Matrix
+    mask_probe: Matrix | None
     if sp.issparse(x_data):
-        x_data, x_probe, mask, mask_probe = _build_masks_sparse(x_data, x_probe)
+        if x_probe is not None and not sp.issparse(x_probe):
+            msg = "x_probe must be sparse when x is sparse"
+            raise ValueError(msg)
+
+        if mask_override is not None:
+            mask_csr = sp.csr_matrix(mask_override)
+            mask = mask_csr
+            if x_probe is not None and sp.issparse(x_probe):
+                x_probe = sp.csr_matrix(x_probe)
+            mask_probe = None
+        else:
+            x_data, x_probe, mask, mask_probe = _build_masks_sparse(x_data, x_probe)
+    elif mask_override is not None:
+        if sp.issparse(mask_override):
+            msg = "mask must be dense when x is dense"
+            raise ValueError(msg)
+        mask_arr = np.asarray(mask_override, dtype=bool)
+        x_arr = np.asarray(x_data, dtype=float)
+        x_arr[np.isnan(x_arr)] = 0.0
+        x_data = x_arr
+        mask = mask_arr
+        if x_probe is not None:
+            x_probe_arr = np.asarray(x_probe, dtype=float)
+            x_probe_arr[np.isnan(x_probe_arr)] = 0.0
+            x_probe = x_probe_arr
+        mask_probe = None
     else:
         x_data, x_probe, mask, mask_probe = _build_masks_dense(
             x_data,
@@ -401,6 +468,30 @@ def _observed_indices_with_mode(
     return _observed_indices(x_data)
 
 
+def _patterns_from_csc(
+    mask_csc: sp.csc_matrix,
+) -> tuple[int, list[list[int]], np.ndarray]:
+    """Build missingness patterns from a CSC mask without densifying.
+
+    Returns:
+        Tuple of pattern count, pattern row lists, and column-to-pattern map.
+    """
+    pattern_to_id: dict[tuple[int, ...], int] = {}
+    pattern_index = np.empty(mask_csc.shape[1], dtype=int)
+
+    for col in range(mask_csc.shape[1]):
+        start, end = mask_csc.indptr[col : col + 2]
+        rows_tuple = tuple(mask_csc.indices[start:end].tolist())
+        pid = pattern_to_id.get(rows_tuple)
+        if pid is None:
+            pid = len(pattern_to_id)
+            pattern_to_id[rows_tuple] = pid
+        pattern_index[col] = pid
+
+    obs_patterns = [list(pattern) for pattern in pattern_to_id]
+    return len(obs_patterns), obs_patterns, pattern_index
+
+
 def _missing_patterns_info(
     mask: Matrix,
     opts: MutableMapping[str, object],
@@ -411,13 +502,22 @@ def _missing_patterns_info(
     Returns:
         Number of patterns, pattern lists, and optional pattern index map.
     """
-    if opts.get("uniquesv"):
-        mask_arr = (
-            mask.toarray() if isinstance(mask, sp.csr_matrix) else np.asarray(mask)
-        )
-        n_patterns, obs_patterns, isv = _missing_patterns(mask_arr)
-        isv_arr = np.array(isv, dtype=int)
-        return int(n_patterns), obs_patterns, isv_arr
+    auto_patterns = bool(opts.get("auto_pattern_masked", 0))
+    if opts.get("uniquesv") or auto_patterns:
+        if isinstance(mask, sp.csr_matrix):
+            n_patterns, obs_patterns, pattern_index = _patterns_from_csc(
+                mask.tocsc()
+            )
+            if not (auto_patterns and n_patterns == 1):
+                return n_patterns, obs_patterns, pattern_index
+            auto_patterns = False
+        else:
+            mask_arr = np.asarray(mask, dtype=bool)
+            if auto_patterns and np.all(mask_arr):
+                auto_patterns = False
+            if opts.get("uniquesv") or auto_patterns:
+                n_patterns, obs_patterns, isv = _missing_patterns(mask_arr)
+                return int(n_patterns), obs_patterns, np.array(isv, dtype=int)
 
     n_patterns_default = n_samples
     obs_patterns_default: list[list[int]] = []
@@ -778,12 +878,14 @@ def _score_cholesky(
     return cho, loadings_masked, sv_pattern
 
 
-def _update_scores_for_columns(
+def _update_scores_for_columns(  # noqa: PLR0913
     state: ScoreState,
     cols: list[int],
     x_col: Callable[[int], np.ndarray],
     mask_col: Callable[[int], np.ndarray],
     cov_index: int,
+    *,
+    batch_size: int = 0,
 ) -> None:
     mask_vec = mask_col(cols[0])
     cho, loadings_masked, sv_pattern = _score_cholesky(
@@ -792,9 +894,18 @@ def _update_scores_for_columns(
     )
     state.score_covariances[cov_index] = sv_pattern
 
-    for j_idx in cols:
-        rhs = loadings_masked.T @ x_col(j_idx)
-        state.scores[:, j_idx] = cho_solve(cho, rhs, check_finite=False)
+    if batch_size <= 1:
+        for j_idx in cols:
+            rhs = loadings_masked.T @ x_col(j_idx)
+            state.scores[:, j_idx] = cho_solve(cho, rhs, check_finite=False)
+        return
+
+    for start in range(0, len(cols), batch_size):
+        block = cols[start : start + batch_size]
+        x_block = np.column_stack([x_col(j_idx) for j_idx in block])
+        rhs_block = loadings_masked.T @ x_block
+        solved = cho_solve(cho, rhs_block, check_finite=False)
+        state.scores[:, block] = solved
 
 
 def _score_update_general_no_patterns(state: ScoreState) -> ScoreState:
@@ -861,6 +972,7 @@ def _score_update_with_patterns(state: ScoreState) -> ScoreState:
             x_col=x_col,
             mask_col=mask_col,
             cov_index=pattern_index,
+            batch_size=int(state.pattern_batch_size),
         )
 
         log_progress(
@@ -890,8 +1002,11 @@ def _update_scores(state: ScoreState) -> ScoreState:
             dense_mask = np.asarray(state.mask, dtype=float)
             fully_observed = bool(np.all(dense_mask > 0))
 
-        if dense_mask is not None and fully_observed and not _has_covariances(
-            state.loading_covariances
+        if (
+            dense_mask is not None
+            and fully_observed
+            and not _has_covariances(state.loading_covariances)
+            and not sp.issparse(state.x_data)
         ):
             return _score_update_fast_dense_no_av(state)
 
@@ -991,11 +1106,15 @@ def _loadings_update_fast_dense_no_sv(
 
     Returns:
         Updated loadings and loading covariances.
+
+    Raises:
+        ValueError: If ``x_data`` is sparse.
     """
     if sp.issparse(state.x_data):
-        x_arr = np.asarray(sp.csr_matrix(state.x_data).toarray(), dtype=float)
-    else:
-        x_arr = np.asarray(state.x_data, dtype=float)
+        msg = "fast dense loadings path requires dense x_data"
+        raise ValueError(msg)
+
+    x_arr = np.asarray(state.x_data, dtype=float)
 
     n_features = x_arr.shape[0]
 
@@ -1307,12 +1426,19 @@ def _update_loadings(
         dense_mask = np.asarray(state.mask, dtype=float)
         fully_observed = bool(np.all(dense_mask > 0))
 
-    if state.pattern_index is None and sp.issparse(state.x_data) and sp.issparse(
-        state.mask
+    if (
+        state.pattern_index is None
+        and sp.issparse(state.x_data)
+        and sp.issparse(state.mask)
     ):
         return _loadings_update_sparse_no_patterns(state)
 
-    if dense_mask is not None and fully_observed and not sv_contrib:
+    if (
+        dense_mask is not None
+        and fully_observed
+        and not sv_contrib
+        and not sp.issparse(state.x_data)
+    ):
         return _loadings_update_fast_dense_no_sv(state)
 
     return _loadings_update_general(state)

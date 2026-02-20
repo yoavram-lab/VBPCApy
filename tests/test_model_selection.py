@@ -182,3 +182,130 @@ def test_select_n_components_stop_on_metric_reversal_uses_previous_k(
     assert best_metrics["k"] == 2
     assert float(best_metrics["rms"]) == pytest.approx(0.60)
     assert best_model is not None
+
+
+def test_select_n_components_logs_k_progress_when_verbose_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    x = np.ones((3, 5), dtype=float)
+
+    class _DummyModel:
+        pass
+
+    def _fake_fit_candidate(
+        k: int,
+        x_arr: np.ndarray,
+        mask: np.ndarray | None,
+        cfg: SelectionConfig,
+        opts: dict[str, object],
+    ) -> tuple[dict[str, object], _DummyModel]:
+        return (
+            {
+                "k": int(k),
+                "rms": float(1.0 / k),
+                "prms": float("nan"),
+                "cost": float(k),
+                "evr": None,
+            },
+            _DummyModel(),
+        )
+
+    monkeypatch.setattr(ms, "_fit_candidate", _fake_fit_candidate)
+    caplog.set_level("INFO", logger=ms.logger.name)
+
+    _best_k, _best_metrics, _trace, _best_model = select_n_components(
+        x,
+        components=[1, 2, 3],
+        config=SelectionConfig(metric="rms", compute_explained_variance=False),
+        verbose=1,
+    )
+
+    assert "Model selection k 1/3: fitting k=1" not in caplog.text
+    assert "Model selection k=1 done" in caplog.text
+    assert "Model selection k=3 done" in caplog.text
+    assert "Model selection complete: best_k=" in caplog.text
+
+
+def test_select_n_components_no_k_progress_logs_when_verbose_zero(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    x = np.ones((3, 5), dtype=float)
+
+    class _DummyModel:
+        pass
+
+    def _fake_fit_candidate(
+        k: int,
+        x_arr: np.ndarray,
+        mask: np.ndarray | None,
+        cfg: SelectionConfig,
+        opts: dict[str, object],
+    ) -> tuple[dict[str, object], _DummyModel]:
+        return (
+            {
+                "k": int(k),
+                "rms": float(1.0 / k),
+                "prms": float("nan"),
+                "cost": float(k),
+                "evr": None,
+            },
+            _DummyModel(),
+        )
+
+    monkeypatch.setattr(ms, "_fit_candidate", _fake_fit_candidate)
+    caplog.set_level("INFO", logger=ms.logger.name)
+
+    _best_k, _best_metrics, _trace, _best_model = select_n_components(
+        x,
+        components=[1, 2],
+        config=SelectionConfig(metric="rms", compute_explained_variance=False),
+        verbose=0,
+    )
+
+    assert "Model selection k " not in caplog.text
+
+
+def test_select_n_components_selection_verbose_decoupled_from_fit_verbose(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    x = np.ones((3, 5), dtype=float)
+    seen_verbose: list[object] = []
+
+    class _DummyModel:
+        pass
+
+    def _fake_fit_candidate(
+        k: int,
+        x_arr: np.ndarray,
+        mask: np.ndarray | None,
+        cfg: SelectionConfig,
+        opts: dict[str, object],
+    ) -> tuple[dict[str, object], _DummyModel]:
+        seen_verbose.append(opts.get("verbose", None))
+        return (
+            {
+                "k": int(k),
+                "rms": float(1.0 / k),
+                "prms": float("nan"),
+                "cost": float(k),
+                "evr": None,
+            },
+            _DummyModel(),
+        )
+
+    monkeypatch.setattr(ms, "_fit_candidate", _fake_fit_candidate)
+    caplog.set_level("INFO", logger=ms.logger.name)
+
+    _best_k, _best_metrics, _trace, _best_model = select_n_components(
+        x,
+        components=[1, 2],
+        config=SelectionConfig(metric="rms", compute_explained_variance=False),
+        selection_verbose=1,
+        verbose=0,
+    )
+
+    assert "Model selection k=1 done" in caplog.text
+    assert seen_verbose == [0, 0]

@@ -828,7 +828,12 @@ def _parse_args() -> argparse.Namespace:
         default="0.1,0.3,0.5",
         help="Comma-separated missingness rates in [0,1].",
     )
-    parser.add_argument("--n-reps", type=int, default=400)
+    parser.add_argument(
+        "--n-reps",
+        type=int,
+        default=40,
+        help="Replicates per setting (lower default for quicker local runs)",
+    )
     parser.add_argument("--n-components", type=int, default=5)
     parser.add_argument("--random-seed", type=int, default=123)
     parser.add_argument(

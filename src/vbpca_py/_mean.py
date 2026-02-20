@@ -20,11 +20,13 @@ Sparse:
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 import numpy as np
 import scipy.sparse as sp
 
+from ._sparsity import validate_mask_compatibility
 from .subtract_mu_from_sparse import subtract_mu_from_sparse
 
 Dense = np.ndarray
@@ -32,6 +34,8 @@ Sparse = sp.csr_matrix
 Matrix = Dense | Sparse
 
 __all__ = ["ProbeMatrices", "subtract_mu"]
+
+logger = logging.getLogger(__name__)
 
 # ============================================================
 # Error messages
@@ -97,10 +101,14 @@ def _ensure_dense_mask(mask: Matrix, shape: tuple[int, int]) -> np.ndarray:
     Raises:
         ValueError: If ``mask`` does not match ``shape``.
     """
-    if sp.isspmatrix(mask):
-        mask_arr = sp.csr_matrix(mask).toarray()
-    else:
-        mask_arr = np.asarray(mask)
+    validate_mask_compatibility(
+        np.empty(shape, dtype=float),
+        mask,
+        allow_sparse_mask_for_dense=False,
+        allow_dense_mask_for_sparse=False,
+        context="subtract_mu",
+    )
+    mask_arr = np.asarray(mask)
 
     if mask_arr.shape != shape:
         raise ValueError(ERR_MASK_SHAPE)

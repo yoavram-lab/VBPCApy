@@ -329,6 +329,42 @@ def _safe_autotune_rms_threads(profile: RuntimeWorkloadProfile) -> int:
     return max(1, int(target))
 
 
+def _safe_autotune_kernel_threads(
+    profile: RuntimeWorkloadProfile,
+    *,
+    kind: str,
+) -> int:
+    hw_threads = os.cpu_count() or 1
+    hw_threads = max(1, int(hw_threads))
+
+    if profile.is_sparse:
+        n_obs = max(1, int(profile.n_observed))
+        if n_obs < 50_000:
+            target = 1
+        elif n_obs < 500_000:
+            target = 2
+        elif n_obs < 2_000_000:
+            target = 4
+        else:
+            target = 8
+    else:
+        total = max(1, profile.n_features * profile.n_samples)
+        if total < 200_000:
+            target = 1
+        elif total < 1_000_000:
+            target = 2
+        elif total < 4_000_000:
+            target = 4
+        else:
+            target = 8
+
+    # Slightly favor more threads for RMS; others stay conservative.
+    if kind == "rms":
+        target = min(target + 1, hw_threads)
+
+    return max(1, min(target, hw_threads))
+
+
 def _is_explicit_thread_source(
     *,
     option_value: object | None,
@@ -482,6 +518,27 @@ def resolve_runtime_thread_config_with_report(  # noqa: PLR0914
 
     tuning_mode = normalize_runtime_tuning_mode(opts.get("runtime_tuning"))
     if tuning_mode == "safe" and workload is not None:
+        score_explicit = _is_explicit_thread_source(
+            option_value=opts.get("num_cpu_score_update"),
+            global_opt_set=num_cpu_user_set,
+            profile_value=profile_overrides.get("num_cpu_score_update"),
+            env_specific=env_overrides.get(env_keys.score_threads),
+            env_global=global_env,
+        )
+        loadings_explicit = _is_explicit_thread_source(
+            option_value=opts.get("num_cpu_loadings_update"),
+            global_opt_set=num_cpu_user_set,
+            profile_value=profile_overrides.get("num_cpu_loadings_update"),
+            env_specific=env_overrides.get(env_keys.loadings_threads),
+            env_global=global_env,
+        )
+        noise_explicit = _is_explicit_thread_source(
+            option_value=opts.get("num_cpu_noise_update"),
+            global_opt_set=num_cpu_user_set,
+            profile_value=profile_overrides.get("num_cpu_noise_update"),
+            env_specific=env_overrides.get(env_keys.noise_threads),
+            env_global=global_env,
+        )
         rms_explicit = _is_explicit_thread_source(
             option_value=opts.get("num_cpu_rms"),
             global_opt_set=num_cpu_user_set,
@@ -489,6 +546,16 @@ def resolve_runtime_thread_config_with_report(  # noqa: PLR0914
             env_specific=env_overrides.get(env_keys.rms_threads),
             env_global=global_env,
         )
+
+        if not score_explicit:
+            score_threads = _safe_autotune_kernel_threads(workload, kind="score")
+            score_source = "autotune_safe"
+        if not loadings_explicit:
+            loadings_threads = _safe_autotune_kernel_threads(workload, kind="loadings")
+            loadings_source = "autotune_safe"
+        if not noise_explicit:
+            noise_threads = _safe_autotune_kernel_threads(workload, kind="noise")
+            noise_source = "autotune_safe"
         if not rms_explicit:
             rms_threads = _safe_autotune_rms_threads(workload)
             rms_source = "autotune_safe"
@@ -499,6 +566,19 @@ def resolve_runtime_thread_config_with_report(  # noqa: PLR0914
         noise_sxv_sum=int(noise_threads),
         rms=max(1, int(rms_threads)),
     )
+    workload_report: dict[str, object] | None = None
+    if workload is not None:
+        total = max(1, workload.n_features * workload.n_samples)
+        density = float(workload.n_observed) / float(total)
+        workload_report = {
+            "n_features": int(workload.n_features),
+            "n_samples": int(workload.n_samples),
+            "n_components": int(workload.n_components),
+            "n_observed": int(workload.n_observed),
+            "is_sparse": bool(workload.is_sparse),
+            "density": float(density),
+        }
+
     report: dict[str, object] = {
         "runtime_tuning": tuning_mode,
         "runtime_profile_path": str(profile_path) if profile_path is not None else None,
@@ -517,4 +597,6 @@ def resolve_runtime_thread_config_with_report(  # noqa: PLR0914
             "rms": rms_source,
         },
     }
+    if workload_report is not None:
+        report["workload"] = workload_report
     return cfg, report

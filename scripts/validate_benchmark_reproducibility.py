@@ -136,6 +136,18 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--n-jobs", type=int, default=1)
     parser.add_argument("--atol", type=float, default=1e-12)
+    parser.add_argument(
+        "--baseline-summary",
+        type=Path,
+        default=None,
+        help="Optional summary CSV to compare against the first run.",
+    )
+    parser.add_argument(
+        "--baseline-pairwise",
+        type=Path,
+        default=None,
+        help="Optional pairwise CSV to compare against the first run.",
+    )
     return parser.parse_args()
 
 
@@ -183,6 +195,20 @@ def main() -> None:
 
     _assert_frame_close(summary_a, summary_b, atol=args.atol)
     _assert_frame_close(pairwise_a, pairwise_b, atol=args.atol)
+
+    if args.baseline_summary is not None:
+        baseline_summary = pd.read_csv(args.baseline_summary)
+        baseline_summary = baseline_summary.sort_values(summary_keys).reset_index(
+            drop=True
+        )
+        _assert_frame_close(summary_a, baseline_summary, atol=args.atol)
+
+    if args.baseline_pairwise is not None:
+        baseline_pairwise = pd.read_csv(args.baseline_pairwise)
+        baseline_pairwise = baseline_pairwise.sort_values(pairwise_keys).reset_index(
+            drop=True
+        )
+        _assert_frame_close(pairwise_a, baseline_pairwise, atol=args.atol)
 
     print("Reproducibility check passed:", f"work_dir={args.work_dir}")
 

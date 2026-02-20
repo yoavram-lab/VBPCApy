@@ -36,6 +36,10 @@ test-cov:
 bench:
 	pytest -q -m perf --benchmark-only --benchmark-sort=mean
 
+# Run a lightweight smoke subset (parity + sparse preprocessing).
+test-smoke:
+	pytest -q tests/test_octave_parity_smoke.py tests/test_preprocessing_sparse.py
+
 # Run only scaling benchmarks across increasing matrix sizes.
 bench-scale:
 	pytest -q -m perf --benchmark-only -k scaling --benchmark-sort=mean
@@ -99,6 +103,10 @@ bench-study-pipeline: bench-study-pilot
 bench-study-repro:
 	python scripts/validate_benchmark_reproducibility.py --work-dir results/repro --n-jobs 1
 
+# Run minimal dense+sparse benchmark regression check against optional baselines.
+bench-regress:
+	python scripts/benchmark_regression_check.py --work-dir results/bench_repro
+
 # Ensure Octave + mkoctfile are installed for full legacy parity tests.
 check-octave:
 	command -v octave >/dev/null || (echo "Missing octave. Install Octave first." && exit 1)
@@ -119,6 +127,9 @@ test-all: check-octave mex-build
 
 # Run lint, typecheck, and tests in sequence.
 ci: lint typecheck test
+
+# Run lint, typecheck, and smoke tests only.
+ci-smoke: lint typecheck test-smoke
 
 # Run full CI including Octave parity coverage.
 ci-all: lint typecheck test-all

@@ -96,7 +96,7 @@ def test_build_masks_dense_basic() -> None:
     }
 
     # _prepare_data: smoke test on shapes; main logic in remove_empty_entries
-    x_data, x_probe, n1x, n2x, row_idx, col_idx = _prepare_data(x, opts)
+    x_data, x_probe, _mask, n1x, n2x, row_idx, col_idx = _prepare_data(x, opts)
     assert x_data.shape == (n1x, n2x)
     assert x_probe is None
     assert row_idx.shape[0] == n1x
@@ -136,7 +136,7 @@ def test_build_masks_sparse_basic() -> None:
         "init": "random",
         "verbose": 0,
     }
-    x_data, x_probe, n1x, n2x, *_ = _prepare_data(x_sparse, opts)
+    x_data, x_probe, _mask, n1x, n2x, *_ = _prepare_data(x_sparse, opts)
     assert sp.isspmatrix_csr(x_data)
     assert x_data.shape == (n1x, n2x)
     assert x_probe is None
@@ -168,7 +168,10 @@ def test_prepare_data_forwards_compat_mode_for_sparse_empty_detection() -> None:
         "verbose": 0,
         "compat_mode": "strict_legacy",
     }
-    x_strict, _, _, _, ir_strict, ic_strict = _prepare_data(x_sparse, opts_strict)
+    x_strict, _, _mask_strict, _, _, ir_strict, ic_strict = _prepare_data(
+        x_sparse,
+        opts_strict,
+    )
 
     opts_modern: dict[str, object] = {
         "xprobe": None,
@@ -177,7 +180,10 @@ def test_prepare_data_forwards_compat_mode_for_sparse_empty_detection() -> None:
         "verbose": 0,
         "compat_mode": "modern",
     }
-    x_modern, _, _, _, ir_modern, ic_modern = _prepare_data(x_sparse, opts_modern)
+    x_modern, _, _mask_modern, _, _, ir_modern, ic_modern = _prepare_data(
+        x_sparse,
+        opts_modern,
+    )
 
     assert x_strict.shape == (0, 2)
     assert np.array_equal(ir_strict, np.array([], dtype=int))
@@ -366,6 +372,83 @@ def test_missing_patterns_info_uniquesv_false() -> None:
     assert pattern_index is None
 
 
+def test_missing_patterns_info_auto_pattern_masked_dense() -> None:
+    """auto_pattern_masked groups dense masked columns when enabled."""
+    mask = np.array(
+        [
+            [True, False, True],
+            [True, False, True],
+            [False, False, False],
+        ],
+        dtype=bool,
+    )
+
+    opts = {"uniquesv": 0, "auto_pattern_masked": 1}
+    n_patterns, obs_patterns, pattern_index = _missing_patterns_info(
+        mask,
+        opts,
+        n_samples=mask.shape[1],
+    )
+
+    assert n_patterns == 2
+    assert len(obs_patterns) == 2
+    assert pattern_index is not None
+    assert pattern_index.shape == (3,)
+    assert pattern_index[0] == pattern_index[2]
+    assert pattern_index[0] != pattern_index[1]
+
+
+def test_score_update_patterns_batched_matches_serial() -> None:
+    """Batched pattern solve should match serial per-column solve."""
+
+    rng = np.random.default_rng(123)
+    n_features, n_samples, n_components = 6, 8, 3
+
+    x = rng.standard_normal((n_features, n_samples))
+    mask = np.array(
+        [
+            [1, 1, 0, 0, 1, 1, 0, 0],
+            [1, 1, 0, 0, 1, 1, 0, 0],
+            [1, 1, 0, 0, 1, 1, 0, 0],
+            [0, 0, 1, 1, 0, 0, 1, 1],
+            [0, 0, 1, 1, 0, 0, 1, 1],
+            [0, 0, 1, 1, 0, 0, 1, 1],
+        ],
+        dtype=float,
+    )
+
+    obs_patterns = [[0, 1, 4, 5], [2, 3, 6, 7]]
+    pattern_index = np.array([0, 0, 1, 1, 0, 0, 1, 1], dtype=int)
+
+    loadings = rng.standard_normal((n_features, n_components))
+    scores = rng.standard_normal((n_components, n_samples))
+
+    common_kwargs = dict(
+        x_data=x,
+        mask=mask,
+        loadings=loadings.copy(),
+        scores=scores.copy(),
+        loading_covariances=[],
+        score_covariances=[np.eye(n_components) for _ in range(len(obs_patterns))],
+        pattern_index=pattern_index,
+        obs_patterns=obs_patterns,
+        noise_var=0.5,
+        eye_components=np.eye(n_components),
+        verbose=0,
+        x_csr=None,
+        x_csc=None,
+        sparse_num_cpu=0,
+    )
+
+    state_serial = _update_scores(ScoreState(**common_kwargs, pattern_batch_size=0))
+    state_batched = _update_scores(ScoreState(**common_kwargs, pattern_batch_size=3))
+
+    np.testing.assert_allclose(state_batched.scores, state_serial.scores, atol=1e-10)
+    assert len(state_batched.score_covariances) == len(state_serial.score_covariances)
+    for cov_b, cov_s in zip(state_batched.score_covariances, state_serial.score_covariances):
+        np.testing.assert_allclose(cov_b, cov_s, atol=1e-10)
+
+
 def test_missing_patterns_info_uniquesv_true() -> None:
     """_missing_patterns_info with uniquesv == 1 uses _missing_patterns."""
     x = np.ones((3, 4), dtype=float)
@@ -526,7 +609,7 @@ def test_dense_mask_and_observed_indices_agree_after_normalization() -> None:
 
     # Note: remove_empty_entries may drop rows/cols with no observations.
     # Our construction ensures every row/col has at least one observed entry.
-    x_data, x_probe, _n1x, _n2x, row_idx, col_idx = _prepare_data(x, opts)
+    x_data, x_probe, _mask, _n1x, _n2x, row_idx, col_idx = _prepare_data(x, opts)
     assert x_probe is None
 
     x_norm, _x_probe2, mask, _mask_probe, _n_obs_row, _n_data, _n_probe = (

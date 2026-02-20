@@ -166,6 +166,7 @@ def remove_empty_entries(
     init: InitType,
     *,
     compat_mode: str = "strict_legacy",
+    mask: Matrix | None = None,
 ) -> tuple[Matrix, Matrix | None, np.ndarray, np.ndarray, InitType]:
     """Remove rows and columns that are entirely empty and update ``init``.
 
@@ -183,6 +184,9 @@ def remove_empty_entries(
             Compatibility mode for sparse empty-row/column handling.
             ``"strict_legacy"`` preserves sum-based legacy behavior;
             ``"modern"`` uses absolute sums.
+        mask:
+            Optional boolean mask to drive emptiness detection; when provided
+            it must match the shape of ``x``.
 
     Returns:
         A tuple ``(x_out, x_probe_out, ir, ic, init_out)`` where matrices
@@ -192,6 +196,7 @@ def remove_empty_entries(
     Raises:
         ValueError: If ``compat_mode`` is not one of
             ``{"strict_legacy", "modern"}``.
+        ValueError: If ``mask`` shape does not match ``x``.
         RuntimeError: If slicing yields ``None`` for non-null input.
     """
     mode = compat_mode.strip().lower()
@@ -202,7 +207,8 @@ def remove_empty_entries(
     n_rows_orig, n_cols_orig = x.shape
 
     # Identify kept rows/columns
-    ir, ic = _nonempty_indices(x, mode)
+    basis = mask if mask is not None else x
+    ir, ic = _nonempty_indices(basis, mode)
 
     # Fast path: nothing to remove
     if ir.size == n_rows_orig and ic.size == n_cols_orig:

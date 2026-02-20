@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, SupportsIndex, SupportsInt, cast
 
@@ -9,15 +10,19 @@ if TYPE_CHECKING:
 import time
 
 import numpy as np
+import scipy.sparse as sp
 from scipy.linalg import subspace_angles
-from scipy.sparse import issparse, spmatrix
+from scipy.sparse import spmatrix
 
 from ._cost import CostParams, compute_full_cost
 from ._monitoring import display_progress, log_step
+from ._sparsity import validate_mask_compatibility
 
 Array = np.ndarray
 Sparse = spmatrix
 Matrix = Array | Sparse
+
+logger = logging.getLogger(__name__)
 
 
 def _coerce_int(
@@ -247,6 +252,8 @@ def _log_and_check_convergence(
         Updated learning-curve dict, latest subspace angle, convergence
         message, and a copy of ``state.loadings`` for the next iteration.
     """
+    _runtime_state_guard(state)
+
     verbose_val = state.opts.get("verbose", 0)
     verbose = _coerce_int(
         verbose_val
@@ -273,17 +280,58 @@ def _log_and_check_convergence(
     return state.lc, angle_a, convmsg, loadings_old_new
 
 
+def _runtime_state_guard(state: ConvergenceState) -> None:
+    """Fail fast when runtime state violates dense/sparse contract.
+
+    Raises:
+        ValueError: When factors are sparse, mask/data shapes differ, or
+            mask compatibility fails the legacy dense/sparse rules.
+    """
+    preflight_obj = state.opts.setdefault("_runtime_preflight", [])
+    preflight = cast("list[dict[str, object]]", preflight_obj)
+
+    if sp.issparse(state.loadings) or sp.issparse(state.scores):
+        msg = "loadings and scores must be dense; sparse factors are unsupported"
+        raise ValueError(msg)
+
+    if state.x_data.shape != state.mask.shape:
+        msg = "mask shape must match data shape in convergence state"
+        raise ValueError(msg)
+
+    validate_mask_compatibility(
+        state.x_data,
+        state.mask,
+        allow_sparse_mask_for_dense=False,
+        allow_dense_mask_for_sparse=False,
+        context="convergence_check",
+        preflight=preflight,
+    )
+
+
 def _append_cost_value(state: ConvergenceState) -> None:
     cfstop_opt = state.opts.get("cfstop", [])
     if np.size(np.asarray(cfstop_opt)) <= 0:
         state.lc["cost"].append(float("nan"))
         return
 
-    mask_arr = (
-        state.mask.toarray().astype(bool)  # type: ignore[union-attr]
-        if issparse(state.mask)
-        else np.asarray(state.mask, dtype=bool)
+    preflight_obj = state.opts.setdefault("_runtime_preflight", [])
+    preflight = cast("list[dict[str, object]]", preflight_obj)
+
+    validate_mask_compatibility(
+        state.x_data,
+        state.mask,
+        allow_sparse_mask_for_dense=False,
+        allow_dense_mask_for_sparse=False,
+        context="compute_full_cost",
+        preflight=preflight,
     )
+
+    if sp.issparse(state.mask):
+        mask_csr = sp.csr_matrix(cast("Any", state.mask))
+        mask_csr.data = np.asarray(mask_csr.data, dtype=bool)
+        mask_arg: Matrix = mask_csr
+    else:
+        mask_arg = np.asarray(state.mask, dtype=bool)
 
     params = CostParams(
         mu=state.mu.ravel(),
@@ -296,7 +344,7 @@ def _append_cost_value(state: ConvergenceState) -> None:
         ),
         score_covariances=state.score_covariances,
         score_pattern_index=state.pattern_index,
-        mask=mask_arr,
+        mask=mask_arg,
         s_xv=float(state.s_xv),
         n_data=_coerce_int(state.n_data),
     )

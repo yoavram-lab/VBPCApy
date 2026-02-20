@@ -49,6 +49,7 @@ from ._full_update import (
     _update_scores,
 )
 from ._mean import ProbeMatrices, subtract_mu
+from ._memory import exceeds_budget, format_bytes, resolve_max_dense_bytes
 from ._monitoring import InitialMonitoringInputs, InitShapes, _initial_monitoring
 from ._options import _options
 from ._runtime_policy import (
@@ -120,7 +121,13 @@ def _float_opt(val: object, default: float = 0.0) -> float:
 # ---------------------------------------------------------------------------
 
 
-def pca_full(x: Matrix, n_components: int, **kwargs: object) -> dict[str, object]:
+def pca_full(
+    x: Matrix,
+    n_components: int,
+    *,
+    mask: Matrix | None = None,
+    **kwargs: object,
+) -> dict[str, object]:
     """Run VBPCA with full posterior covariances.
 
     Parameters
@@ -142,7 +149,7 @@ def pca_full(x: Matrix, n_components: int, **kwargs: object) -> dict[str, object
     opts: MutableMapping[str, object] = _build_options(kwargs)
     use_prior, use_postvar = _select_algorithm(opts)
 
-    prepared = _prepare_problem(x, opts)
+    prepared = _prepare_problem(x, opts, mask_override=mask)
     training = _initialize_model(
         prepared=prepared,
         n_components=int(n_components),
@@ -281,10 +288,61 @@ class IterationContext:
 # ---------------------------------------------------------------------------
 
 
-def _prepare_problem(x: Matrix, opts: MutableMapping[str, object]) -> PreparedProblem:
-    x_data, x_probe, n1x, n2x, row_idx, col_idx = _prepare_data(x, opts)
+def _validate_dense_mask_budget(
+    x: Matrix, mask_override: Matrix | None, opts: MutableMapping[str, object]
+) -> None:
+    """Guard against densifying masks beyond the configured budget.
+
+    Raises:
+        ValueError: If the dense mask would exceed ``max_dense_bytes``.
+    """
+    if not sp.issparse(x) or mask_override is None or sp.issparse(mask_override):
+        return
+
+    max_dense_bytes = resolve_max_dense_bytes(opts.get("max_dense_bytes"))
+    over, est_bytes = exceeds_budget(
+        np.shape(mask_override), np.bool_, max_dense_bytes
+    )
+    preflight_obj = opts.setdefault("_runtime_preflight", [])
+    preflight = cast("list[dict[str, object]]", preflight_obj)
+    preflight.append(
+        {
+            "check": "dense_mask_budget",
+            "is_sparse_input": True,
+            "mask_sparse": False,
+            "estimate_bytes": int(est_bytes),
+            "max_dense_bytes": max_dense_bytes,
+            "over_budget": bool(over),
+        }
+    )
+    if not over:
+        return
+
+    budget = 0 if max_dense_bytes is None else max_dense_bytes
+    msg = (
+        "Dense mask would exceed max_dense_bytes: "
+        f"{format_bytes(est_bytes)} > {format_bytes(int(budget))}"
+    )
+    raise ValueError(msg)
+
+
+def _prepare_problem(
+    x: Matrix,
+    opts: MutableMapping[str, object],
+    *,
+    mask_override: Matrix | None = None,
+) -> PreparedProblem:
+    _validate_dense_mask_budget(x, mask_override, opts)
+    x_data, x_probe, mask_prepared, n1x, n2x, row_idx, col_idx = _prepare_data(
+        x, opts, mask_override=mask_override
+    )
     x_data, x_probe, mask, mask_probe, n_obs_row, n_data, n_probe = (
-        _build_masks_and_counts(x_data, x_probe, opts)
+        _build_masks_and_counts(
+            x_data,
+            x_probe,
+            opts,
+            mask_override=mask_prepared,
+        )
     )
     ix_obs, jx_obs = _observed_indices_with_mode(
         x_data,
@@ -314,6 +372,35 @@ def _prepare_problem(x: Matrix, opts: MutableMapping[str, object]) -> PreparedPr
         obs_patterns=pattern_info[1],
         pattern_index=pattern_info[2],
     )
+
+
+def _auto_masked_batch_size(
+    prepared: PreparedProblem, opts: MutableMapping[str, object]
+) -> int:
+    """Choose a masked_batch_size when user did not override it.
+
+    Heuristic: enable batching only when pattern count is moderately large to
+    reduce Python overhead while keeping per-batch work sizable.
+
+    Returns:
+        Auto-chosen batch size; ``0`` leaves batching disabled.
+    """
+    user_val = _int_opt(opts.get("masked_batch_size", 0))
+    if user_val > 0:
+        return user_val
+
+    n_patterns = prepared.n_patterns
+    if n_patterns <= 64:
+        return 0
+
+    # Use pattern count as the primary signal; cap to keep batches balanced.
+    if n_patterns >= 512:
+        return 512
+    if n_patterns >= 256:
+        return 256
+    if prepared.n_data > 200_000 or n_patterns >= 128:
+        return min(192, n_patterns)
+    return 0
 
 
 def _adjust_opts_for_explicit_init(opts: MutableMapping[str, object]) -> None:
@@ -430,6 +517,10 @@ def _run_training_loop(
     Returns:
         The updated ``TrainingState`` after running iterations or hitting a stop.
     """
+    auto_batch = _auto_masked_batch_size(prepared, opts)
+    if auto_batch > 0:
+        opts["masked_batch_size"] = auto_batch
+
     workload = RuntimeWorkloadProfile(
         n_features=int(prepared.n_features),
         n_samples=int(prepared.n_samples),
@@ -444,6 +535,9 @@ def _run_training_loop(
         dict(opts),
         workload=workload,
     )
+    preflight = opts.pop("_runtime_preflight", None)
+    if preflight:
+        runtime_report["preflight"] = preflight
     training.runtime_report = runtime_report
 
     # Hyperparameters for Va, Vmu, V (kept here for compatibility).
@@ -559,6 +653,8 @@ def _iteration_step(ctx: IterationContext) -> None:  # noqa: PLR0914,PLR0915
 
     # 3) Scores
     score_start = time.perf_counter()
+    masked_batch_size = max(0, _int_opt(cfg.opts.get("masked_batch_size", 0)))
+
     score_state = ScoreState(
         x_data=x_data,
         mask=ctx.prepared.mask,
@@ -571,6 +667,7 @@ def _iteration_step(ctx: IterationContext) -> None:  # noqa: PLR0914,PLR0915
         noise_var=float(m.noise_var),
         eye_components=cfg.eye_components,
         verbose=cfg.verbose,
+        pattern_batch_size=masked_batch_size,
         x_csr=score_x_csr,
         x_csc=score_x_csc,
         sparse_num_cpu=cfg.runtime_threads.score_update_sparse,
@@ -1104,15 +1201,17 @@ def _build_options(kwargs: Mapping[str, object]) -> dict[str, object]:
     opts_default: dict[str, object] = {
         "init": "random",
         "maxiters": 1000,
-        "bias": 1,
-        "uniquesv": 0,
+        "bias": True,
+        "max_dense_bytes": 2_000_000_000,
+        "uniquesv": False,
+        "auto_pattern_masked": False,
         "angle_every": 1,
         "autosave": 600,
         "filename": "pca_f_autosave",
         "minangle": 1e-8,
         "algorithm": "vb",
         "niter_broadprior": 100,
-        "earlystop": 0,
+        "earlystop": False,
         "rmsstop": np.array([100, 1e-4, 1e-3]),
         "cfstop": np.array([]),
         "verbose": 1,
@@ -1123,12 +1222,13 @@ def _build_options(kwargs: Mapping[str, object]) -> dict[str, object]:
         "num_cpu_rms": None,
         "runtime_tuning": "off",
         "runtime_profile": None,
+        "masked_batch_size": 0,
         "xprobe": None,
-        "rotate2pca": 1,
-        "display": 0,
+        "rotate2pca": True,
+        "display": False,
         "compat_mode": "strict_legacy",
-        "return_diagnostics": 1,
-        "runtime_report": 0,
+        "return_diagnostics": True,
+        "runtime_report": False,
         "explained_var_solver": "auto",
         "explained_var_gram_ratio": 4.0,
     }

@@ -57,7 +57,9 @@ def test_compute_rms_sparse_mask_structure_mismatch_dense_mask_raises() -> None:
     loadings = np.eye(2, dtype=float)
     scores = np.eye(2, dtype=float)
 
-    with pytest.raises(ValueError, match="sparsity pattern"):
+    with pytest.raises(
+        ValueError, match=r"mask must be sparse when data is sparse"
+    ):
         compute_rms(
             data,
             loadings,

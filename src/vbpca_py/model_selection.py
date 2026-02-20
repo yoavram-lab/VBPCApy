@@ -7,11 +7,15 @@ optionally retains the best-fit model.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, SupportsFloat, SupportsIndex, cast
 
 import numpy as np
 import scipy.sparse as sp
+
+from ._memory import exceeds_budget, format_bytes, resolve_max_dense_bytes
+from ._pca_full import _explained_variance, _reconstruct_data
 
 if TYPE_CHECKING:  # pragma: no cover
     from collections.abc import Iterable, Mapping
@@ -20,6 +24,8 @@ if TYPE_CHECKING:  # pragma: no cover
     from .estimators import VBPCA
 
 __all__ = ["SelectionConfig", "select_n_components"]
+
+logger = logging.getLogger(__name__)
 
 _Metric = Literal["prms", "rms", "cost"]
 _AllowedFloat = (
@@ -98,6 +104,13 @@ def _metric_value_from_entry(metric: _Metric, entry: dict[str, object]) -> float
     )
 
 
+def _verbose_enabled(val: object) -> bool:
+    try:
+        return int(cast("SupportsIndex | str | bytes | bytearray", val)) > 0
+    except (TypeError, ValueError):
+        return bool(val)
+
+
 def _is_metric_reversal(previous: float, current: float) -> bool:
     return (np.isfinite(previous) and not np.isfinite(current)) or (
         np.isfinite(previous)
@@ -110,11 +123,13 @@ def _is_metric_reversal(previous: float, current: float) -> bool:
 def _fit_candidate(
     k: int,
     x_arr: np.ndarray | sp.csr_matrix,
-    mask: np.ndarray | None,
+    mask: Matrix | None,
     cfg: SelectionConfig,
     opts: Mapping[str, object],
 ) -> tuple[dict[str, object], VBPCA]:
     from .estimators import VBPCA  # noqa: PLC0415 # Avoid circular dependency
+
+    _ = cfg  # keep signature compatibility for injected stubs during tests
 
     est = VBPCA(k, **cast("dict[str, object]", dict(opts)))  # type: ignore[arg-type]
     est.fit(x_arr, mask=mask)
@@ -123,24 +138,41 @@ def _fit_candidate(
     prms = _to_float(est.prms_)
     cost = _to_float(est.cost_)
 
-    evr: np.ndarray | None = None
-    if cfg.compute_explained_variance and est.explained_variance_ratio_ is not None:
-        evr = np.asarray(est.explained_variance_ratio_, dtype=float)
-
     entry: dict[str, object] = {
         "k": int(k),
         "rms": rms,
         "prms": prms,
         "cost": cost,
-        "evr": evr,
+        "evr": None,
     }
     return entry, est
 
 
-def select_n_components(
+def _compute_evr_for_best(
+    est: VBPCA,
+    *,
+    solver: str = "auto",
+    gram_ratio: float = 4.0,
+) -> np.ndarray | None:
+    if est.components_ is None or est.scores_ is None or est.mean_ is None:
+        return None
+    xrec = _reconstruct_data(est.components_, est.scores_, est.mean_)
+    ev, evr = _explained_variance(
+        xrec,
+        est.components_.shape[1],
+        solver=solver,
+        gram_ratio=gram_ratio,
+    )
+    est.variance_ = ev
+    est.explained_variance_ = ev
+    est.explained_variance_ratio_ = evr
+    return evr
+
+
+def select_n_components(  # noqa: C901, PLR0912, PLR0914, PLR0915
     x: Matrix,
     *,
-    mask: np.ndarray | None = None,
+    mask: Matrix | None = None,
     components: Iterable[int] | None = None,
     config: SelectionConfig | None = None,
     **opts: object,
@@ -172,7 +204,44 @@ def select_n_components(
         msg = f"metric must be one of prms, rms, cost (got {cfg.metric!r})"
         raise ValueError(msg)
 
-    x_arr = sp.csr_matrix(x) if sp.issparse(x) else np.asarray(x)
+    is_sparse = sp.issparse(x)
+    if not is_sparse and mask is not None and sp.issparse(mask):
+        msg = "mask must be dense when x is dense"
+        raise ValueError(msg)
+
+    max_dense_bytes = resolve_max_dense_bytes(
+        opts.get("max_dense_bytes", 2_000_000_000)
+    )
+    if is_sparse and mask is not None and not sp.issparse(mask):
+        over, est_bytes = exceeds_budget(mask.shape, np.bool_, max_dense_bytes)
+        if over:
+            budget = 0 if max_dense_bytes is None else max_dense_bytes
+            msg = (
+                "Dense mask would exceed max_dense_bytes: "
+                f"{format_bytes(est_bytes)} > {format_bytes(int(budget))}"
+            )
+            raise ValueError(msg)
+
+        preflight_obj = opts.setdefault("_runtime_preflight", [])
+        preflight = cast("list[dict[str, object]]", preflight_obj)
+        preflight.append(
+            {
+                "check": "dense_mask_budget",
+                "is_sparse_input": True,
+                "mask_sparse": False,
+                "estimate_bytes": int(est_bytes),
+                "max_dense_bytes": max_dense_bytes,
+                "over_budget": bool(over),
+                "context": "model_selection",
+            }
+        )
+
+    x_arr = sp.csr_matrix(x) if is_sparse else np.asarray(x)
+    mask_arg: Matrix | None = None
+    if mask is not None:
+        mask_arg = (
+            sp.csr_matrix(mask) if sp.issparse(mask) else np.asarray(mask, dtype=bool)
+        )
     k_values = _normalize_components(components, x_arr.shape[0], x_arr.shape[1])
 
     trace: list[dict[str, object]] = []
@@ -190,18 +259,41 @@ def select_n_components(
     )
 
     fit_opts: dict[str, object] = dict(opts)
+    selection_verbose_val = fit_opts.pop(
+        "selection_verbose",
+        fit_opts.get("verbose", 0),
+    )
+    verbose_enabled = _verbose_enabled(selection_verbose_val)
+    # Avoid heavy diagnostics during sweeps; compute EVR once on the best.
+    fit_opts.setdefault("return_diagnostics", False)
     prev_metric_val: float | None = None
     prev_entry: dict[str, object] | None = None
-    prev_model: VBPCA | None = None
+    best_est: VBPCA | None = None
 
     for idx, k in enumerate(k_values):
         if cfg.max_trials is not None and idx >= int(cfg.max_trials):
             break
 
-        entry, est = _fit_candidate(k, x_arr, mask, cfg, fit_opts)
+        entry: dict[str, object]
+        est: VBPCA
+        entry, est = _fit_candidate(k, x_arr, mask_arg, cfg, fit_opts)
         trace.append(entry)
 
         metric_val = _metric_value_from_entry(cfg.metric, entry)
+
+        if verbose_enabled:
+            logger.info(
+                (
+                    "Model selection k=%d done: rms=%.6g prms=%.6g "
+                    "cost=%.6g metric(=%s)=%.6g"
+                ),
+                k,
+                cast("float", entry["rms"]),
+                cast("float", entry["prms"]),
+                cast("float", entry["cost"]),
+                cfg.metric,
+                metric_val,
+            )
 
         # Optional local stopping rule: as soon as metric worsens at k compared
         # with k-1, select k-1 and stop.
@@ -215,7 +307,16 @@ def select_n_components(
             state.best_val = prev_metric_val
             state.best_metrics = prev_entry
             if cfg.return_best_model:
-                state.best_model = prev_model
+                state.best_model = best_est
+            if verbose_enabled:
+                logger.info(
+                    (
+                        "Model selection stopping on metric reversal at k=%d; "
+                        "selecting previous k=%d"
+                    ),
+                    k,
+                    state.best_k,
+                )
             break
 
         if metric_val < state.best_val or (
@@ -225,16 +326,46 @@ def select_n_components(
             state.best_val = metric_val
             state.best_metrics = entry
             state.no_improve = 0
+            best_est = est
             if cfg.return_best_model:
                 state.best_model = est
         else:
             state.no_improve += 1
 
         if cfg.patience is not None and state.no_improve > int(cfg.patience):
+            if verbose_enabled:
+                logger.info(
+                    "Model selection stopping on patience at k=%d (best_k=%d)",
+                    k,
+                    state.best_k,
+                )
             break
 
         prev_metric_val = metric_val
         prev_entry = entry
-        prev_model = est if cfg.return_best_model else None
+        # Keep reference to current best estimator for post-pass EVR computation.
+        if best_est is None or state.best_k == int(k):
+            best_est = est
+
+    if verbose_enabled:
+        logger.info("Model selection complete: best_k=%d", state.best_k)
+
+    # Compute EV/EVR once on the best model if requested.
+    if cfg.compute_explained_variance and best_est is not None:
+        solver = str(fit_opts.get("explained_var_solver", "auto"))
+        gram_ratio_val = fit_opts.get("explained_var_gram_ratio", 4.0)
+        gram_ratio = float(cast("_AllowedFloat", gram_ratio_val))
+        evr = _compute_evr_for_best(
+            best_est,
+            solver=solver,
+            gram_ratio=gram_ratio,
+        )
+        state.best_metrics["evr"] = evr
+        for entry in trace:
+            if int(cast("int", entry.get("k", -1))) == state.best_k:
+                entry["evr"] = evr
+                break
+        if cfg.return_best_model:
+            state.best_model = best_est
 
     return state.best_k, state.best_metrics, trace, state.best_model

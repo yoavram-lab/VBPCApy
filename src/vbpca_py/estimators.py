@@ -3,7 +3,13 @@
 from __future__ import annotations
 
 import numpy as np
+import scipy.sparse as sp
 
+from vbpca_py._memory import (
+    exceeds_budget,
+    format_bytes,
+    resolve_max_dense_bytes,
+)
 from vbpca_py._pca_full import Matrix, _build_options, pca_full
 from vbpca_py.model_selection import SelectionConfig, select_n_components
 
@@ -53,7 +59,9 @@ class VBPCA:
         self.explained_variance_ratio_: np.ndarray | None = None
         self.n_features_in_: int | None = None
 
-    def fit(self, x: Matrix, mask: np.ndarray | None = None) -> VBPCA:
+    def fit(  # noqa: C901, PLR0912, PLR0914, PLR0915
+        self, x: Matrix, mask: Matrix | None = None
+    ) -> VBPCA:
         """
         Fit the model to data, optionally supplying a mask.
 
@@ -64,6 +72,9 @@ class VBPCA:
 
         Returns:
             The fitted estimator instance.
+
+        Raises:
+            ValueError: If ``mask`` shape does not match ``x``.
         """
         opts: dict[str, object] = {
             "bias": self.bias,
@@ -72,12 +83,64 @@ class VBPCA:
         if self.maxiters is not None:
             opts["maxiters"] = self.maxiters
         opts.update(self.opts)
-        x_arr = np.array(x, copy=True)
+
+        max_dense_bytes = resolve_max_dense_bytes(
+            opts.get("max_dense_bytes", 2_000_000_000)
+        )
+        if not sp.issparse(x) and mask is not None and sp.issparse(mask):
+            msg = "mask must be dense when x is dense"
+            raise ValueError(msg)
+
+        if sp.issparse(x) and mask is not None and not sp.issparse(mask):
+            over, est = exceeds_budget(mask.shape, np.bool_, max_dense_bytes)
+            if over:
+                budget = 0 if max_dense_bytes is None else max_dense_bytes
+                msg = (
+                    "Dense mask would exceed max_dense_bytes: "
+                    f"{format_bytes(est)} > {format_bytes(int(budget))}"
+                )
+                raise ValueError(msg)
+
+        mask_clean: Matrix | None = None
         if mask is not None:
-            x_arr = np.asarray(x_arr, dtype=float)
-            mask_arr = np.asarray(mask, dtype=bool)
-            x_arr = np.where(mask_arr, x_arr, np.nan)
-        result = pca_full(x_arr, self.n_components, **opts)
+            if sp.issparse(mask):
+                mask_clean = sp.csr_matrix(mask)
+            else:
+                mask_clean = np.asarray(mask, dtype=bool)
+
+        mask_param: Matrix | None = None
+        data_for_fit: Matrix
+        if sp.issparse(x):
+            x_sparse = sp.csr_matrix(x)
+            if mask_clean is not None:
+                mask_csr = (
+                    sp.csr_matrix(mask_clean)
+                    if not sp.issparse(mask_clean)
+                    else mask_clean
+                )
+                if mask_csr.shape != x_sparse.shape:
+                    msg = "mask must have the same shape as x"
+                    raise ValueError(msg)
+                x_pattern = x_sparse.copy()
+                x_pattern.data = np.ones_like(x_pattern.data)
+                missing_pattern = mask_csr - mask_csr.multiply(x_pattern)
+                if missing_pattern.nnz:
+                    eps = np.finfo(float).eps
+                    x_sparse += missing_pattern.multiply(eps)
+                mask_param = mask_csr
+            data_for_fit = x_sparse
+        else:
+            x_dense = np.array(x, copy=True)
+            if mask_clean is not None:
+                mask_bool = np.asarray(mask_clean, dtype=bool)
+                if mask_bool.shape != x_dense.shape:
+                    msg = "mask must have the same shape as x"
+                    raise ValueError(msg)
+                x_dense = np.where(mask_bool, x_dense, np.nan)
+                mask_param = mask_bool
+            data_for_fit = x_dense
+
+        result = pca_full(data_for_fit, self.n_components, mask=mask_param, **opts)
         self.components_ = np.asarray(result["A"], dtype=float)
         self.scores_ = np.asarray(result["S"], dtype=float)
         self.mean_ = np.asarray(result["Mu"], dtype=float)
@@ -178,7 +241,7 @@ class VBPCA:
         self,
         x: Matrix,
         *,
-        mask: np.ndarray | None = None,
+        mask: Matrix | None = None,
         components: list[int] | range | None = None,
         config: SelectionConfig | None = None,
         **opts: object,

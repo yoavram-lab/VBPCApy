@@ -60,6 +60,7 @@ from vbpca_py import (
 Preprocessing interfaces are first-class public APIs:
 
 - `MissingAwareOneHotEncoder`: categorical encoding with NaN/mask-aware behavior.
+- `MissingAwareSparseOneHotEncoder`: sparse categorical encoder (CSR input, numeric categories) that preserves sparsity end-to-end and round-trips via sparse inverse transform.
 - `MissingAwareStandardScaler` / `MissingAwareMinMaxScaler`: continuous scaling on observed entries.
 - `AutoEncoder`: mixed-type routing layer with `fit/transform/inverse_transform`.
 
@@ -167,6 +168,29 @@ z_recon = model.inverse_transform()
 x_recon = auto.inverse_transform(z_recon)
 ```
 
+### Sparse data quick start
+```python
+import scipy.sparse as sp
+from vbpca_py import VBPCA
+
+# CSR input with explicit stored zeros where observed
+x_sparse = sp.csr_matrix([[1.0, 0.0], [0.0, 2.0]])
+
+# Mask for sparse must match the sparsity pattern (spones(X)); omit to infer from X
+mask = x_sparse.copy()
+mask.data[:] = 1.0
+
+model = VBPCA(n_components=2, maxiters=100)
+model.fit(x_sparse, mask=mask)
+scores = model.transform(x_sparse)
+```
+
+- Sparse inputs must be CSR/CSC; they remain sparse throughout computation.
+- For sparse data, the observation set is the stored entries of `X` (including stored zeros); if you pass a mask it must match `spones(X)` exactly.
+- For dense data, pass a dense mask of 0/1 with the same shape; a mask is required for dense inputs when any missingness exists.
+- To encode wide numeric categorical columns sparsely, use `MissingAwareSparseOneHotEncoder` (one column at a time, CSR input) and keep the mask `None`.
+
+
 ### Options highlights
 - `mask` / `pattern_index`: handle missing entries and reuse observation patterns.
 - `bias`: toggle mean estimation; `init`: control initial factors.
@@ -174,6 +198,12 @@ x_recon = auto.inverse_transform(z_recon)
 - `maxiters`, `tol`, `verbose`: convergence control and logging.
 - `rotation`: final orthogonal rotation to a PCA-aligned solution.
 - `compat_mode`: compatibility policy for sparse empty-row/column handling (`strict_legacy` default, `modern` available).
+- `runtime_tuning` / `num_cpu`: runtime policy and threading controls. `runtime_tuning="safe"` enables conservative RMS thread autotuning; per-kernel env vars include `VBPCA_NUM_THREADS`, `VBPCA_SCORE_THREADS`, `VBPCA_LOADINGS_THREADS`, `VBPCA_NOISE_THREADS`, `VBPCA_RMS_THREADS`.
+- `auto_pattern_masked`: when true, reuse dense mask patterns even with `uniquesv=0` to reduce repeated per-column score covariance work (default off for parity).
+
+### Runtime tuning and fast-mode sweep suggestions
+- Fast sweep preset: use `runtime_tuning="safe"`, `SelectionConfig(compute_explained_variance=False, patience=2, max_trials=5)`, and cap the k sweep to a modest window (e.g., 25–45 for tall/wide matrices).
+- The cultural replay script exposes `--fast-mode`, `--runtime-tuning`, and `--num-cpu` to apply these defaults without code changes.
 
 Legacy option note:
 - The project still accepts several MATLAB-compatibility-era option names.

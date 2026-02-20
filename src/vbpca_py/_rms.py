@@ -9,6 +9,7 @@ import numpy as np
 import scipy.sparse as sp
 
 from ._sparse_error import sparse_reconstruction_error
+from ._sparsity import validate_mask_compatibility
 
 
 @dataclass(frozen=True)
@@ -47,7 +48,8 @@ def compute_rms(
         err: Residual matrix (sparse for sparse input, dense otherwise).
     """
     # MATLAB: if isempty(X), errMx=[]; rms=NaN
-    if sp.issparse(data):
+    data_is_sparse = sp.issparse(data)
+    if data_is_sparse:
         if isinstance(data, sp.csr_matrix):
             data_csr = data
         else:
@@ -55,6 +57,14 @@ def compute_rms(
         if data_csr.size == 0:
             return float("nan"), np.array([])
         _validate_shapes(data_csr, loadings, scores)
+        if mask is not None:
+            validate_mask_compatibility(
+                data_csr,
+                mask,
+                allow_dense_mask_for_sparse=False,
+                allow_sparse_mask_for_dense=True,
+                context="compute_rms",
+            )
         return _compute_rms_sparse(
             data_csr=data_csr,
             loadings=loadings,
@@ -67,6 +77,14 @@ def compute_rms(
     if data_arr.size == 0:
         return float("nan"), np.array([])
     _validate_shapes(data_arr, loadings, scores)
+    if mask is not None:
+        validate_mask_compatibility(
+            data_arr,
+            mask,
+            allow_sparse_mask_for_dense=False,
+            allow_dense_mask_for_sparse=False,
+            context="compute_rms",
+        )
     return _compute_rms_dense(
         data_arr=data_arr,
         loadings=loadings,
@@ -132,15 +150,7 @@ def _compute_rms_dense(
         msg = "mask must be provided for dense data."
         raise ValueError(msg)
 
-    if sp.issparse(mask):
-        mask_sparse = (
-            mask
-            if isinstance(mask, sp.csr_matrix)
-            else sp.csr_matrix(cast("Any", mask))
-        )
-        mask_arr = mask_sparse.toarray()
-    else:
-        mask_arr = np.asarray(mask, dtype=float)
+    mask_arr = np.asarray(mask, dtype=float)
 
     if mask_arr.shape != data_arr.shape:
         msg = "mask shape must match data shape."

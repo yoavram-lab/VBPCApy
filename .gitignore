@@ -79,6 +79,10 @@ tests/Full_Tests/OHspecial_transformed_iso_data1.parquet
 
 .prof/
 .cache/
+/.pytest_cache/
+/.mypy_cache/
+/.ruff_cache/
+.benchmarks/
 pytest_cache/
 .coverage
 htmlcov/

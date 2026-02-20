@@ -27,6 +27,7 @@ from ._mean import (
     subtract_mu as _subtract_mu_mean,  # sparse path uses stored-entry subtraction
 )
 from ._rms import RmsConfig, compute_rms
+from ._sparsity import validate_mask_compatibility
 
 # ============================================================
 # Common validation error messages
@@ -864,6 +865,15 @@ def compute_full_cost(
         params.score_covariances, n_components, n_samples, params.score_pattern_index
     )
     _validate_loading_covariances(params.loading_covariances, n_features, n_components)
+
+    if params.mask is not None:
+        validate_mask_compatibility(
+            x,
+            params.mask,
+            allow_sparse_mask_for_dense=False,
+            allow_dense_mask_for_sparse=False,
+            context="compute_full_cost",
+        )
 
     mask_data = _build_mask_and_clean_x(x, params.mask)
 
