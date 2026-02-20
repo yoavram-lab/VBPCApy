@@ -50,6 +50,9 @@ env/
 .vscode/
 .idea/
 
+# macOS metadata
+.DS_Store
+
 ########################################
 # Eigen / third-party source bundles
 ########################################
@@ -67,6 +70,9 @@ tests/**/eigen/
 
 # Remove stray notebook
 src/Untitled.ipynb
+
+# Local dataset sources
+tools/datasets/*.parquet
 
 # Heavy full tests
 tests/Full_Tests/OHT.py
