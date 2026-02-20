@@ -205,10 +205,6 @@ scores = model.transform(x_sparse)
 - Fast sweep preset: use `runtime_tuning="safe"`, `SelectionConfig(compute_explained_variance=False, patience=2, max_trials=5)`, and cap the k sweep to a modest window (e.g., 25–45 for tall/wide matrices).
 - The cultural replay script exposes `--fast-mode`, `--runtime-tuning`, and `--num-cpu` to apply these defaults without code changes.
 
-Legacy option note:
-- The project still accepts several MATLAB-compatibility-era option names.
-- `autosave` and `filename` are currently accepted for compatibility but have no effect in the Python package.
-
 ### Public API policy
 - Stable public imports are those re-exported from `vbpca_py` in [src/vbpca_py/__init__.py](src/vbpca_py/__init__.py).
 - Modules and symbols prefixed with `_` are internal implementation details and may change without deprecation.

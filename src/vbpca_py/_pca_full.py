@@ -1206,8 +1206,6 @@ def _build_options(kwargs: Mapping[str, object]) -> dict[str, object]:
         "uniquesv": False,
         "auto_pattern_masked": False,
         "angle_every": 1,
-        "autosave": 600,
-        "filename": "pca_f_autosave",
         "minangle": 1e-8,
         "algorithm": "vb",
         "niter_broadprior": 100,
