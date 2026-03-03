@@ -34,9 +34,9 @@ def _shape(obj: object) -> tuple[int, int] | None:
     shape_attr = getattr(obj, "shape", None)
     if shape_attr is not None:
         try:
-            dims = tuple(int(v) for v in shape_attr)  # type: ignore[arg-type]
+            dims = tuple(int(v) for v in shape_attr)
             if len(dims) == 2:
-                return dims  # type: ignore[return-value]
+                return dims
         except (TypeError, ValueError):  # pragma: no cover - defensive
             return None
 

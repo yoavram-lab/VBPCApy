@@ -5,6 +5,13 @@ close all
 clc;
 set(0,'defaultTextInterpreter','latex')
 
+if exist('nanmean','file') ~= 2 || exist('nanstd','file') ~= 2
+    try
+        pkg load statistics;
+    catch
+    end
+end
+
 % read in data and remove non-cultural features + features missing > 50% of
 % possible values
 
@@ -53,7 +60,7 @@ for w = 2:2
         dim = size(X);
         X = X(:,1:dim(2));
         cols = X.Properties.VariableNames;
-        X = table2array(X);
+        X = table2array_compat(X);
         for j = 1:dim(2)-1
             temp = double(isnan(X(:,j)));
             idx = find(temp == 1);
@@ -165,9 +172,9 @@ end
             end
         end
         VrKin = Vr;
-         T = array2table(Xrec');
-        T.Properties.VariableNames = cols;
-        writetable(T,'EA_VBPCA_Recon_Kinship_Org.csv')
+         T = array2table_compat(Xrec');
+        T = set_var_names_compat(T, cols);
+        writetable_compat(T,'EA_VBPCA_Recon_Kinship_Org.csv')
         XrecKin = Xrec;
         rmsKin = rms;
         rmsAKin = rmsA;
@@ -185,9 +192,9 @@ end
                 end
             end
         end
-         TT = array2table(X_uncent_kin);
-        TT.Properties.VariableNames = cols;
-        writetable(TT,'EA_VBPCA_Kin_binary.csv')
+         TT = array2table_compat(X_uncent_kin);
+        TT = set_var_names_compat(TT, cols);
+        writetable_compat(TT,'EA_VBPCA_Kin_binary.csv')
         
         figure
         hold on
@@ -214,6 +221,10 @@ end
         elseif w ==2
         [ ASub, SSub, MuSub, VSub, cvSub, hpSub, lcSub ] = pca_full( X_, zz(y-1), opts );
          Xrec = repmat(MuSub,1,dim(1)) + ASub*SSub;
+
+        if isstruct(X) && isfield(X,'data')
+            X = X.data;
+        end
          for i = 1:size(X_,1)
             for j = 1:size(X_,2)
                     Vr(i,j) = ASub(i,:) * cvSub.S{j} * ASub(i,:)' + ...
@@ -223,10 +234,10 @@ end
          end
 
 
-         T = array2table(Xrec');
-        T.Properties.VariableNames = cols;
+         T = array2table_compat(Xrec');
+        T = set_var_names_compat(T, cols);
         VrSub = Vr;
-        writetable(T,'EA_VBPCA_Recon_Subsist.csv')
+        writetable_compat(T,'EA_VBPCA_Recon_Subsist.csv')
         XrecSub = Xrec;
         rmsSub = rms;
         rmsASub = rmsA;
@@ -244,9 +255,9 @@ end
                 end
             end
         end
-                 TT = array2table(X_uncent_sub);
-        TT.Properties.VariableNames = cols;
-        writetable(TT,'EA_VBPCA_Sub_binary.csv')
+                 TT = array2table_compat(X_uncent_sub);
+        TT = set_var_names_compat(TT, cols);
+        writetable_compat(TT,'EA_VBPCA_Sub_binary.csv')
 
         figure
         hold on
@@ -282,9 +293,9 @@ end
             end
         end
         VrRel = Vr;
-        T = array2table(Xrec');
-        T.Properties.VariableNames = cols;
-        writetable(T,'PUL_VBPCA_Recon_Rel.csv')
+        T = array2table_compat(Xrec');
+        T = set_var_names_compat(T, cols);
+        writetable_compat(T,'PUL_VBPCA_Recon_Rel.csv')
         XrecRel = Xrec;
         rmsRel = rms;
         rmsARel = rmsA;
@@ -302,9 +313,9 @@ end
                 end
             end
         end
-             TT = array2table(X_uncent_rel);
-        TT.Properties.VariableNames = cols;
-        writetable(TT,'EA_VBPCA_Rel_binary.csv')
+             TT = array2table_compat(X_uncent_rel);
+        TT = set_var_names_compat(TT, cols);
+        writetable_compat(TT,'EA_VBPCA_Rel_binary.csv')
 
         figure
         hold on
@@ -339,9 +350,9 @@ end
             end
         end
         VrIso = Vr;
-        T = array2table(Xrec');
-        T.Properties.VariableNames = cols;
-        writetable(T,'PUL_VBPCA_Recon_Iso.csv')
+        T = array2table_compat(Xrec');
+        T = set_var_names_compat(T, cols);
+        writetable_compat(T,'PUL_VBPCA_Recon_Iso.csv')
         XrecIso = Xrec;
         rmsIso = rms;
         rmsAIso = rmsA;
@@ -359,9 +370,9 @@ end
                 end
             end
         end
-                 TT = array2table(X_uncent_iso);
-        TT.Properties.VariableNames = cols;
-        writetable(TT,'EA_VBPCA_Iso_binary.csv')
+                 TT = array2table_compat(X_uncent_iso);
+        TT = set_var_names_compat(TT, cols);
+        writetable_compat(TT,'EA_VBPCA_Iso_binary.csv')
 
         figure
         hold on
@@ -397,9 +408,9 @@ end
             end
         end
         VrEA = Vr;
-        T = array2table(Xrec');
-        T.Properties.VariableNames = cols;
-        writetable(T,'EA_VBPCA_Recon_All.csv')
+        T = array2table_compat(Xrec');
+        T = set_var_names_compat(T, cols);
+        writetable_compat(T,'EA_VBPCA_Recon_All.csv')
         XrecEA = Xrec;
         rmsEA = rms;
         rmsAEA = rmsA;
@@ -417,9 +428,9 @@ end
                 end
             end
         end
-                 TT = array2table(X_uncent_EA);
-        TT.Properties.VariableNames = cols;
-        writetable(TT,'EA_VBPCA_All_binary.csv')
+                 TT = array2table_compat(X_uncent_EA);
+        TT = set_var_names_compat(TT, cols);
+        writetable_compat(TT,'EA_VBPCA_All_binary.csv')
 
         figure
         hold on
@@ -455,9 +466,9 @@ end
             end
         end
         VrSes = Vr;
-        T = array2table(Xrec');
-        T.Properties.VariableNames = cols;
-        writetable(T,'Seshat_VBPCA_Recon_All.csv')
+        T = array2table_compat(Xrec');
+        T = set_var_names_compat(T, cols);
+        writetable_compat(T,'Seshat_VBPCA_Recon_All.csv')
         XrecSes = Xrec;
         rmsSes = rms;
         rmsASes = rmsA;
@@ -487,9 +498,9 @@ end
             end
         end
         VrFin = Vr;
-        T = array2table(Xrec');
-        T.Properties.VariableNames = cols;
-        writetable(T,'Finch_VBPCA_Recon_All.csv')
+        T = array2table_compat(Xrec');
+        T = set_var_names_compat(T, cols);
+        writetable_compat(T,'Finch_VBPCA_Recon_All.csv')
         XrecFin = Xrec;
         rmsFin = rms;
         rmsAFin = rmsA;
@@ -538,6 +549,78 @@ end
         clear accu
 
         end
+
+function tf = istable_compat(x)
+    if exist('istable','file') == 2
+        tf = istable(x);
+        return
+    end
+    tf = isa(x,'table') || (isstruct(x) && isfield(x,'Properties') && isfield(x.Properties,'VariableNames'));
+end
+
+function arr = table2array_compat(t)
+    if exist('table2array','file') == 2
+        arr = table2array(t);
+    elseif isa(t,'table')
+        arr = t{:,:};
+    elseif isstruct(t) && isfield(t,'data')
+        arr = t.data;
+    else
+        arr = t;
+    end
+end
+
+function T = set_var_names_compat(T, cols)
+    if ischar(cols)
+        cols = {cols};
+    elseif exist('isstring','file') == 2 && isstring(cols)
+        cols = cellstr(cols);
+    end
+    if isstruct(T)
+        T.names = cols;
+        return
+    end
+    if exist('istable','file') == 2
+        try
+            T.Properties.VariableNames = cols;
+        catch
+        end
+    end
+end
+
+function T = array2table_compat(A, varargin)
+    if exist('array2table','file') == 2
+        if isempty(varargin)
+            T = array2table(A);
+        else
+            T = array2table(A, varargin{:});
+        end
+        return
+    end
+
+    T = struct('data', A);
+    if ~isempty(varargin)
+        for idx = 1:2:numel(varargin)
+            if ischar(varargin{idx}) && strcmp(varargin{idx}, 'VariableNames')
+                names = varargin{idx+1};
+                if isstring(names)
+                    names = cellstr(names);
+                end
+                T.names = names;
+            end
+        end
+    end
+end
+
+function writetable_compat(T, path)
+    if exist('writetable','file') == 2
+        writetable(T, path);
+        return
+    end
+    if isstruct(T) && isfield(T,'data')
+        dlmwrite(path, T.data, ',');
+    end
+end
 
 
 

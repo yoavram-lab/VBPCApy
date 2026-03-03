@@ -37,7 +37,7 @@ def _coerce_int(
     if val is None:
         return default
     try:
-        return int(cast("SupportsInt | SupportsIndex | str | bytes | bytearray", val))
+        return int(val)
     except (TypeError, ValueError):
         return default
 

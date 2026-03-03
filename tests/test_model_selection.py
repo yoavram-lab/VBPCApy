@@ -1,5 +1,6 @@
 import numpy as np
 import pytest
+from numpy.testing import assert_allclose
 
 import vbpca_py.model_selection as ms
 from vbpca_py.model_selection import SelectionConfig, select_n_components
@@ -284,7 +285,7 @@ def test_select_n_components_selection_verbose_decoupled_from_fit_verbose(
         cfg: SelectionConfig,
         opts: dict[str, object],
     ) -> tuple[dict[str, object], _DummyModel]:
-        seen_verbose.append(opts.get("verbose", None))
+        seen_verbose.append(opts.get("verbose"))
         return (
             {
                 "k": int(k),
@@ -309,3 +310,256 @@ def test_select_n_components_selection_verbose_decoupled_from_fit_verbose(
 
     assert "Model selection k=1 done" in caplog.text
     assert seen_verbose == [0, 0]
+
+
+def test_select_n_components_mask_argument_matches_nan_mask() -> None:
+    rng = np.random.default_rng(123)
+    x = rng.standard_normal((5, 8))
+    x[rng.random(x.shape) < 0.2] = np.nan
+    mask = ~np.isnan(x)
+
+    cfg = SelectionConfig(metric="rms", compute_explained_variance=False)
+    components = [1, 2, 3]
+
+    best_k_implicit, _, trace_implicit, _ = select_n_components(
+        x,
+        components=components,
+        config=cfg,
+        maxiters=12,
+        verbose=0,
+        compat_mode="strict_legacy",
+        rotate2pca=0,
+    )
+
+    best_k_explicit, _, trace_explicit, _ = select_n_components(
+        x,
+        mask=mask,
+        components=components,
+        config=cfg,
+        maxiters=12,
+        verbose=0,
+        compat_mode="strict_legacy",
+        rotate2pca=0,
+    )
+
+    assert best_k_implicit == best_k_explicit
+    assert len(trace_implicit) == len(trace_explicit) == len(components)
+
+    rms_imp = [float(entry["rms"]) for entry in trace_implicit]
+    rms_exp = [float(entry["rms"]) for entry in trace_explicit]
+    assert_allclose(rms_imp, rms_exp, rtol=1e-10, atol=1e-12)
+
+
+def test_select_n_components_stop_on_metric_reversal_with_real_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rng = np.random.default_rng(77)
+    x = rng.standard_normal((4, 7))
+    components = [1, 2, 3]
+
+    orig_fit = ms._fit_candidate
+
+    base_opts = {
+        "compat_mode": "strict_legacy",
+        "rotate2pca": 0,
+        "maxiters": 10,
+        "verbose": 0,
+    }
+    base_metrics, base_model = orig_fit(
+        1, x, None, SelectionConfig(metric="rms"), base_opts
+    )
+    base_rms = float(base_metrics["rms"])
+
+    # Monkeypatch to return the real metrics for k=1,2, then an induced reversal for k=3.
+    def _fake_fit_candidate(
+        k: int,
+        x_arr: np.ndarray,
+        mask: np.ndarray | None,
+        cfg: SelectionConfig,
+        opts: dict[str, object],
+    ) -> tuple[dict[str, object], object]:
+        metrics: dict[str, object]
+        model: object
+        if k == 1:
+            metrics = {
+                "k": 1,
+                "rms": base_rms + 0.2,
+                "prms": float("nan"),
+                "cost": float("nan"),
+                "evr": None,
+            }
+            model = base_model
+        elif k == 2:
+            metrics = {
+                "k": 2,
+                "rms": base_rms - 0.1,  # improvement
+                "prms": float("nan"),
+                "cost": float("nan"),
+                "evr": None,
+            }
+            model = base_model
+        else:
+            metrics = {
+                "k": 3,
+                "rms": base_rms + 0.4,  # induce reversal
+                "prms": float("nan"),
+                "cost": float("nan"),
+                "evr": None,
+            }
+            model = base_model
+        return metrics, model
+
+    monkeypatch.setattr(ms, "_fit_candidate", _fake_fit_candidate)
+
+    cfg_rev = SelectionConfig(
+        metric="rms",
+        stop_on_metric_reversal=True,
+        compute_explained_variance=False,
+        return_best_model=True,
+    )
+
+    best_k, best_metrics, trace, _ = select_n_components(
+        x,
+        components=components,
+        config=cfg_rev,
+        maxiters=10,
+        verbose=0,
+        compat_mode="strict_legacy",
+        rotate2pca=0,
+    )
+
+    assert [entry["k"] for entry in trace] == [1, 2, 3]
+    assert best_k == 2
+    assert best_metrics["k"] == 2
+
+
+def test_select_n_components_stop_on_metric_reversal_tolerance() -> None:
+    # A tiny uptick should not trigger reversal because of isclose guard.
+    rms_seq = {1: 0.5000000000000000, 2: 0.500000000001, 3: 0.60}
+
+    class _DummyModel:
+        pass
+
+    def _fake_fit_candidate(
+        k: int,
+        x_arr: np.ndarray,
+        mask: np.ndarray | None,
+        cfg: SelectionConfig,
+        opts: dict[str, object],
+    ) -> tuple[dict[str, object], _DummyModel]:
+        return (
+            {
+                "k": int(k),
+                "rms": float(rms_seq[k]),
+                "prms": float("nan"),
+                "cost": float("nan"),
+                "evr": None,
+            },
+            _DummyModel(),
+        )
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(ms, "_fit_candidate", _fake_fit_candidate)
+
+    cfg = SelectionConfig(
+        metric="rms",
+        stop_on_metric_reversal=True,
+        compute_explained_variance=False,
+        return_best_model=True,
+    )
+
+    x = np.ones((2, 4), dtype=float)
+    best_k, best_metrics, trace, _ = select_n_components(
+        x,
+        components=[1, 2, 3],
+        config=cfg,
+        maxiters=5,
+        verbose=0,
+        compat_mode="strict_legacy",
+        rotate2pca=0,
+    )
+
+    # No reversal at k=2 (tiny uptick), so we still evaluate k=3.
+    assert [entry["k"] for entry in trace] == [1, 2, 3]
+    assert best_k == 2
+    assert best_metrics["k"] == 2
+
+
+def test_select_n_components_stop_on_metric_reversal_strict_increase() -> None:
+    # A clear increase should trigger reversal and stop before evaluating further ks.
+    rms_seq = {1: 0.5, 2: 0.4, 3: 0.6}
+
+    class _DummyModel:
+        pass
+
+    def _fake_fit_candidate(
+        k: int,
+        x_arr: np.ndarray,
+        mask: np.ndarray | None,
+        cfg: SelectionConfig,
+        opts: dict[str, object],
+    ) -> tuple[dict[str, object], _DummyModel]:
+        return (
+            {
+                "k": int(k),
+                "rms": float(rms_seq[k]),
+                "prms": float("nan"),
+                "cost": float("nan"),
+                "evr": None,
+            },
+            _DummyModel(),
+        )
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(ms, "_fit_candidate", _fake_fit_candidate)
+
+    cfg = SelectionConfig(
+        metric="rms",
+        stop_on_metric_reversal=True,
+        compute_explained_variance=False,
+        return_best_model=True,
+    )
+
+    x = np.ones((2, 4), dtype=float)
+    best_k, best_metrics, trace, _ = select_n_components(
+        x,
+        components=[1, 2, 3],
+        config=cfg,
+        maxiters=5,
+        verbose=0,
+        compat_mode="strict_legacy",
+        rotate2pca=0,
+    )
+
+    # Should stop when k=3 worsens relative to k=2 and pick k=2.
+    assert [entry["k"] for entry in trace] == [1, 2, 3]
+    assert best_k == 2
+    assert best_metrics["k"] == 2
+
+
+def test_select_n_components_deterministic_across_num_cpu() -> None:
+    rng = np.random.default_rng(12345)
+    x = rng.standard_normal((6, 10))
+    x[rng.random(x.shape) < 0.15] = np.nan
+
+    cfg = SelectionConfig(metric="rms", compute_explained_variance=False)
+    components = [1, 2, 3]
+
+    res = []
+    for num_cpu in (1, 2):
+        best_k, _best_metrics, trace, _ = select_n_components(
+            x,
+            components=components,
+            config=cfg,
+            maxiters=12,
+            verbose=0,
+            compat_mode="strict_legacy",
+            rotate2pca=0,
+            num_cpu=num_cpu,
+            runtime_tuning="off",
+        )
+        rms_trace = [float(entry["rms"]) for entry in trace]
+        res.append((best_k, rms_trace))
+
+    assert res[0][0] == res[1][0]
+    assert_allclose(res[0][1], res[1][1], rtol=0.0, atol=0.0)

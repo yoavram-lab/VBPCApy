@@ -1,6 +1,6 @@
 function OH = OHspecial_transform(df)
-    names = string(df.Properties.VariableNames);
-    data = table2array(df);
+    % Be tolerant of missing table helpers (Octave) without changing math.
+    [names, data] = get_names_and_data(df);
     size(data)
     for j = 1:length(names)
         temp = unique(data(:,j));
@@ -22,7 +22,7 @@ function OH = OHspecial_transform(df)
             clear label
         end
         for l = 1:length(temp)
-            label(l) = string(strcat(names(j),'_',num2str(temp(l))));
+            label{l} = sprintf('%s_%s', names{j}, num2str(temp(l)));
         end
 
         if j == 1
@@ -41,8 +41,64 @@ function OH = OHspecial_transform(df)
             OH = [OH,var];
         end
     end
-    OH = array2table(OH);
-    OH.Properties.VariableNames = labels;
+    OH = wrap_table_like(OH, labels);
+end
+
+function [names, data] = get_names_and_data(df)
+    % Prefer table APIs when present; otherwise fall back to struct/numeric inputs.
+    if exist('istable', 'file') == 2 && istable(df)
+        names = df.Properties.VariableNames;
+        data = table2array(df);
+        return
+    end
+
+    % Handle MATLAB table objects even if istable is missing (Octave).
+    if isstruct(df) && isfield(df, 'Properties') && isfield(df.Properties, 'VariableNames')
+        names = df.Properties.VariableNames;
+        if exist('table2array', 'file') == 2
+            data = table2array(df);
+        else
+            data = df{:,:};
+        end
+        return
+    end
+
+    % Compat path: struct produced by readtable_compat.
+    if isstruct(df) && isfield(df, 'data')
+        data = df.data;
+        if isfield(df, 'names')
+            names = df.names;
+        else
+            names = default_names(size(data, 2));
+        end
+        return
+    end
+
+    % Plain numeric matrix.
+    if isnumeric(df)
+        data = df;
+        names = default_names(size(data, 2));
+        return
+    end
+
+    error('Unsupported input type for OHspecial_transform');
+end
+
+function names = default_names(ncols)
+    names = cell(1, ncols);
+    for c = 1:ncols
+        names{c} = sprintf('col%d', c);
+    end
+end
+
+function T = wrap_table_like(OH, labels)
+    if exist('array2table', 'file') == 2
+        T = array2table(OH);
+        T.Properties.VariableNames = labels;
+    else
+        % Return a struct with data and names when tables are unavailable.
+        T = struct('data', OH, 'names', labels);
+    end
 end
 
 

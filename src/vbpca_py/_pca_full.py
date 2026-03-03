@@ -87,9 +87,7 @@ def _coerce_int(
     if val is None:
         return default
     try:
-        return int(
-            cast("SupportsInt | SupportsIndex | str | bytes | bytearray", val)
-        )
+        return int(val)
     except (TypeError, ValueError):
         return default
 
@@ -300,9 +298,7 @@ def _validate_dense_mask_budget(
         return
 
     max_dense_bytes = resolve_max_dense_bytes(opts.get("max_dense_bytes"))
-    over, est_bytes = exceeds_budget(
-        np.shape(mask_override), np.bool_, max_dense_bytes
-    )
+    over, est_bytes = exceeds_budget(np.shape(mask_override), np.bool_, max_dense_bytes)
     preflight_obj = opts.setdefault("_runtime_preflight", [])
     preflight = cast("list[dict[str, object]]", preflight_obj)
     preflight.append(
@@ -603,14 +599,9 @@ def _ensure_phase_timing_keys(lc: dict[str, list[float]]) -> None:
             del values[n_points:]
 
 
-def _iteration_step(ctx: IterationContext) -> None:  # noqa: PLR0914,PLR0915
-    """One full iteration of updates; mutates ``ctx.training`` in place."""
-    training = ctx.training
-    m = training.model
+def _update_hyperpriors_phase(ctx: IterationContext) -> None:
+    m = ctx.training.model
     cfg = ctx.cfg
-    iter_start = time.perf_counter()
-
-    # 1) Hyperpriors
     m.va, m.vmu = _update_hyperpriors(
         HyperpriorContext(
             iteration=ctx.iteration,
@@ -629,7 +620,12 @@ def _iteration_step(ctx: IterationContext) -> None:  # noqa: PLR0914,PLR0915
         )
     )
 
-    # 2) Bias / mean update + recenter.
+
+def _bias_and_center(ctx: IterationContext) -> tuple[Matrix, Matrix | None]:
+    training = ctx.training
+    m = training.model
+    cfg = ctx.cfg
+
     ctx.bias_state.noise_var = float(m.noise_var)
     ctx.bias_state.vmu = float(m.vmu)
 
@@ -646,12 +642,16 @@ def _iteration_step(ctx: IterationContext) -> None:  # noqa: PLR0914,PLR0915
     m.mu = ctx.bias_state.mu
     m.muv = ctx.bias_state.muv
 
-    x_data = ctx.centering_state.x_data
-    x_probe = ctx.centering_state.x_probe
+    return ctx.centering_state.x_data, ctx.centering_state.x_probe
 
+
+def _score_and_rotate(
+    ctx: IterationContext, x_data: Matrix, x_probe: Matrix | None
+) -> tuple[Matrix, Matrix | None, float]:
+    m = ctx.training.model
+    cfg = ctx.cfg
     score_x_csr, score_x_csc = _coerce_sparse_views(x_data)
 
-    # 3) Scores
     score_start = time.perf_counter()
     masked_batch_size = max(0, _int_opt(cfg.opts.get("masked_batch_size", 0)))
 
@@ -677,11 +677,10 @@ def _iteration_step(ctx: IterationContext) -> None:  # noqa: PLR0914,PLR0915
     m.sv = score_state.score_covariances
     phase_scores_sec = time.perf_counter() - score_start
 
-    # 3b) Optional rotate-to-PCA
     if cfg.rotate_each_iter:
         x_data, x_probe = _rotate_towards_pca(
             prepared=ctx.prepared,
-            training=training,
+            training=ctx.training,
             bias_state=ctx.bias_state,
             x_data=x_data,
             x_probe=x_probe,
@@ -690,7 +689,12 @@ def _iteration_step(ctx: IterationContext) -> None:  # noqa: PLR0914,PLR0915
         ctx.centering_state.x_data = x_data
         ctx.centering_state.x_probe = x_probe
 
-    # 4) Loadings
+    return x_data, x_probe, phase_scores_sec
+
+
+def _update_loadings_phase(ctx: IterationContext, x_data: Matrix) -> float:
+    m = ctx.training.model
+    cfg = ctx.cfg
     loadings_x_csr, loadings_x_csc = _coerce_sparse_views(x_data)
 
     loadings_start = time.perf_counter()
@@ -710,9 +714,13 @@ def _iteration_step(ctx: IterationContext) -> None:  # noqa: PLR0914,PLR0915
             sparse_num_cpu=cfg.runtime_threads.loadings_update_sparse,
         )
     )
-    phase_loadings_sec = time.perf_counter() - loadings_start
+    return time.perf_counter() - loadings_start
 
-    # 5) RMS (and error matrix)
+
+def _rms_phase(
+    ctx: IterationContext, x_data: Matrix, x_probe: Matrix | None
+) -> tuple[float, float, float]:
+    cfg = ctx.cfg
     rms_start = time.perf_counter()
     rms, prms, err_mx = _recompute_rms(
         RmsContext(
@@ -722,15 +730,18 @@ def _iteration_step(ctx: IterationContext) -> None:  # noqa: PLR0914,PLR0915
             mask_probe=ctx.prepared.mask_probe,
             n_data=float(ctx.prepared.n_data),
             n_probe=int(ctx.prepared.n_probe),
-            loadings=m.a,
-            scores=m.s,
+            loadings=ctx.training.model.a,
+            scores=ctx.training.model.s,
             num_cpu=cfg.runtime_threads.rms,
         )
     )
-    training.err_mx = err_mx
-    phase_rms_sec = time.perf_counter() - rms_start
+    ctx.training.err_mx = err_mx
+    return float(rms), float(prms), time.perf_counter() - rms_start
 
-    # 6) Noise variance
+
+def _noise_phase(ctx: IterationContext, rms: float) -> tuple[float, float]:
+    m = ctx.training.model
+    cfg = ctx.cfg
     noise_start = time.perf_counter()
     noise_state = NoiseState(
         loadings=m.a,
@@ -752,11 +763,20 @@ def _iteration_step(ctx: IterationContext) -> None:  # noqa: PLR0914,PLR0915
     )
     m.noise_var = float(noise_state.noise_var)
     ctx.bias_state.noise_var = float(m.noise_var)
-    phase_noise_sec = time.perf_counter() - noise_start
+    return float(s_xv), time.perf_counter() - noise_start
 
-    # 7) Logging + convergence
+
+def _convergence_phase(
+    ctx: IterationContext,
+    x_data: Matrix,
+    rms: float,
+    prms: float,
+    s_xv: float,
+) -> tuple[str | None, float]:
+    m = ctx.training.model
+    cfg = ctx.cfg
     converge_start = time.perf_counter()
-    training.lc, _, convmsg, training.a_old = _log_and_check_convergence(
+    lc, _, convmsg, a_old = _log_and_check_convergence(
         ConvergenceState(
             opts=dict(cfg.opts),
             x_data=x_data,
@@ -773,19 +793,42 @@ def _iteration_step(ctx: IterationContext) -> None:  # noqa: PLR0914,PLR0915
             mask=ctx.prepared.mask,
             s_xv=float(s_xv),
             n_data=float(ctx.prepared.n_data),
-            time_start=float(training.time_start),
-            lc=training.lc,
-            loadings_old=training.a_old,
-            dsph=training.dsph,
+            time_start=float(ctx.training.time_start),
+            lc=ctx.training.lc,
+            loadings_old=ctx.training.a_old,
+            dsph=ctx.training.dsph,
         ),
         float(rms),
         float(prms),
     )
-    phase_converge_sec = time.perf_counter() - converge_start
+    ctx.training.lc = lc
+    ctx.training.a_old = a_old
+    return convmsg, time.perf_counter() - converge_start
+
+
+def _iteration_step(ctx: IterationContext) -> None:
+    """One full iteration of updates; mutates ``ctx.training`` in place."""
+    cfg = ctx.cfg
+    iter_start = time.perf_counter()
+
+    _update_hyperpriors_phase(ctx)
+
+    x_data, x_probe = _bias_and_center(ctx)
+    x_data, x_probe, phase_scores_sec = _score_and_rotate(ctx, x_data, x_probe)
+    phase_loadings_sec = _update_loadings_phase(ctx, x_data)
+    rms, prms, phase_rms_sec = _rms_phase(ctx, x_data, x_probe)
+    s_xv, phase_noise_sec = _noise_phase(ctx, rms)
+    convmsg, phase_converge_sec = _convergence_phase(
+        ctx,
+        x_data,
+        rms,
+        prms,
+        s_xv,
+    )
     phase_total_sec = time.perf_counter() - iter_start
 
     _append_phase_timings(
-        training.lc,
+        ctx.training.lc,
         {
             "phase_scores_sec": phase_scores_sec,
             "phase_loadings_sec": phase_loadings_sec,
@@ -809,7 +852,7 @@ def _iteration_step(ctx: IterationContext) -> None:  # noqa: PLR0914,PLR0915
                 logger.info("%s", convmsg)
             stop_now = 1.0
 
-    training.lc.setdefault("_stop", []).append(float(stop_now))
+    ctx.training.lc.setdefault("_stop", []).append(float(stop_now))
 
 
 def _append_phase_timings(

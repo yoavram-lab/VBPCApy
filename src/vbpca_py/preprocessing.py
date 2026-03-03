@@ -302,7 +302,7 @@ class MissingAwareSparseOneHotEncoder:
         if mask is not None:
             msg = "mask must be None for sparse one-hot encoder"
             raise ValueError(msg)
-        x_csr = _to_csr(cast("ArrayLike", x))
+        x_csr = _to_csr(x)
         if x_csr.shape[1] != 1:
             msg = "sparse one-hot encoder expects a single column"
             raise ValueError(msg)
@@ -335,7 +335,7 @@ class MissingAwareSparseOneHotEncoder:
         if mask is not None:
             msg = "mask must be None for sparse one-hot encoder"
             raise ValueError(msg)
-        x_csr = _to_csr(cast("ArrayLike", x))
+        x_csr = _to_csr(x)
         if x_csr.shape[1] != 1:
             msg = "sparse one-hot encoder expects a single column"
             raise ValueError(msg)
@@ -377,7 +377,7 @@ class MissingAwareSparseOneHotEncoder:
         if mask is not None:
             msg = "mask must be None for sparse one-hot encoder"
             raise ValueError(msg)
-        z_csr = _to_csr(cast("ArrayLike", z))
+        z_csr = _to_csr(z)
         n_rows, n_cols = z_csr.shape
         if n_cols != len(self.categories_):
             msg = "Input width must match fitted categories"
@@ -423,7 +423,7 @@ class MissingAwareStandardScaler(_BaseScaler):
         self, x: np.ndarray | sp.spmatrix, mask: Mask | None = None
     ) -> MissingAwareStandardScaler:
         if _is_sparse(x):
-            x_csc = _to_csc(cast("ArrayLike", x))
+            x_csc = _to_csc(x)
             self.n_features_in_ = x_csc.shape[1]
             means, vars_ = _sparse_mean_var(x_csc)
         else:
@@ -444,7 +444,8 @@ class MissingAwareStandardScaler(_BaseScaler):
                 vars_[j] = float(np.var(col_vals))
         scales = np.sqrt(vars_)
         scales[~np.isfinite(scales)] = 1.0
-        scales[scales == 0.0] = 1.0
+        zero_mask = np.isclose(scales, 0.0)
+        scales[zero_mask] = 1.0
         self.mean_ = means
         self.var_ = vars_
         self.scale_ = scales
@@ -456,7 +457,7 @@ class MissingAwareStandardScaler(_BaseScaler):
         if self.mean_ is None or self.scale_ is None:
             raise RuntimeError("Scaler not fitted")
         if _is_sparse(x):
-            x_csr = _to_csr(cast("ArrayLike", x), copy=True)
+            x_csr = _to_csr(x, copy=True)
             if x_csr.shape[1] != len(self.mean_):
                 raise ValueError("Input feature count mismatch")
             data = x_csr.data
@@ -476,7 +477,7 @@ class MissingAwareStandardScaler(_BaseScaler):
         if self.mean_ is None or self.scale_ is None:
             raise RuntimeError("Scaler not fitted")
         if _is_sparse(z):
-            z_csr = _to_csr(cast("ArrayLike", z), copy=True)
+            z_csr = _to_csr(z, copy=True)
             data = z_csr.data
             cols = z_csr.indices
             data = data * self.scale_[cols] + self.mean_[cols]
@@ -502,7 +503,7 @@ class MissingAwareMinMaxScaler(_BaseScaler):
         self, x: np.ndarray | sp.spmatrix, mask: Mask | None = None
     ) -> MissingAwareMinMaxScaler:
         if _is_sparse(x):
-            x_csc = _to_csc(cast("ArrayLike", x))
+            x_csc = _to_csc(x)
             self.n_features_in_ = x_csc.shape[1]
             counts = _sparse_col_counts(x_csc)
             data_min = _sparse_safe_min(x_csc, counts)
@@ -523,7 +524,8 @@ class MissingAwareMinMaxScaler(_BaseScaler):
 
         data_range = data_max - data_min
         data_range[~np.isfinite(data_range)] = 1.0
-        data_range[data_range == 0.0] = 1.0
+        zero_mask = np.isclose(data_range, 0.0)
+        data_range[zero_mask] = 1.0
         self.data_min_ = data_min
         self.data_max_ = data_max
         self.data_range_ = data_range
@@ -535,7 +537,7 @@ class MissingAwareMinMaxScaler(_BaseScaler):
         if self.data_min_ is None or self.data_range_ is None:
             raise RuntimeError("Scaler not fitted")
         if _is_sparse(x):
-            x_csr = _to_csr(cast("ArrayLike", x), copy=True)
+            x_csr = _to_csr(x, copy=True)
             if x_csr.shape[1] != len(self.data_min_):
                 raise ValueError("Input feature count mismatch")
             data = x_csr.data
@@ -555,7 +557,7 @@ class MissingAwareMinMaxScaler(_BaseScaler):
         if self.data_min_ is None or self.data_range_ is None:
             raise RuntimeError("Scaler not fitted")
         if _is_sparse(z):
-            z_csr = _to_csr(cast("ArrayLike", z), copy=True)
+            z_csr = _to_csr(z, copy=True)
             data = z_csr.data
             cols = z_csr.indices
             data = data * self.data_range_[cols] + self.data_min_[cols]
@@ -639,7 +641,7 @@ class AutoEncoder:
         if is_sparse and mask is not None:
             raise ValueError("mask must be None when fitting sparse data")
         if is_sparse:
-            x_csr = _to_csr(cast("ArrayLike", x))
+            x_csr = _to_csr(x)
             self.n_features_in_ = x_csr.shape[1]
 
             self._plan = []
@@ -729,7 +731,7 @@ class AutoEncoder:
         if is_sparse:
             if mask is not None:
                 raise ValueError("mask must be None when transforming sparse data")
-            x_csr = _to_csr(cast("ArrayLike", x))
+            x_csr = _to_csr(x)
             parts_sparse: list[sp.csr_matrix] = []
             for col_idx, plan in enumerate(self._plan):
                 z_part = plan.encoder.transform(x_csr.getcol(col_idx), mask=None)
@@ -764,7 +766,7 @@ class AutoEncoder:
             if mask is not None:
                 msg = "mask must be None when inverse_transform on sparse data"
                 raise ValueError(msg)
-            z_csr = _to_csr(cast("ArrayLike", z))
+            z_csr = _to_csr(z)
             col_blocks: list[sp.csr_matrix] = []
             for plan in self._plan:
                 col_idx = np.arange(plan.slice_start, plan.slice_end, dtype=int)
@@ -779,8 +781,7 @@ class AutoEncoder:
                 inv_csr = sp.csr_matrix(cast("Any", inv))
                 if inv_csr.shape[1] != 1:
                     msg = (
-                        "encoder inverse must output a single column for "
-                        "sparse decode"
+                        "encoder inverse must output a single column for sparse decode"
                     )
                     raise ValueError(msg)
                 col_blocks.append(inv_csr)

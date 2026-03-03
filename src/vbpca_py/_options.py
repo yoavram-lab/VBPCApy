@@ -58,7 +58,7 @@ def _options(
 
     unknown_params: list[str] = []
     for key, value in user_opts.items():
-        if key not in defopts:
+        if key not in defopts and not str(key).startswith("_debug_"):
             unknown_params.append(key)
         opts[key] = value
 

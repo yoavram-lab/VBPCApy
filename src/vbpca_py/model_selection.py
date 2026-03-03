@@ -18,7 +18,7 @@ from ._memory import exceeds_budget, format_bytes, resolve_max_dense_bytes
 from ._pca_full import _explained_variance, _reconstruct_data
 
 if TYPE_CHECKING:  # pragma: no cover
-    from collections.abc import Iterable, Mapping
+    from collections.abc import Iterable, Mapping, Sequence
 
     from ._pca_full import Matrix
     from .estimators import VBPCA
@@ -163,13 +163,205 @@ def _compute_evr_for_best(
         solver=solver,
         gram_ratio=gram_ratio,
     )
-    est.variance_ = ev
+    # Retain reconstruction for downstream consumers (e.g., posterior tests).
+    est.reconstruction_ = xrec
     est.explained_variance_ = ev
     est.explained_variance_ratio_ = evr
     return evr
 
 
-def select_n_components(  # noqa: C901, PLR0912, PLR0914, PLR0915
+def _normalize_mask_for_selection(
+    x: Matrix, mask: Matrix | None, max_dense_bytes: int | None, opts: dict[str, object]
+) -> Matrix | None:
+    """Normalize mask to dense bool or CSR, enforcing budget for sparse inputs.
+
+    Returns:
+        Normalized mask (dense bool or CSR) or ``None`` when absent.
+
+    Raises:
+        ValueError: If mask sparsity is incompatible or exceeds the dense budget.
+    """
+    if not sp.issparse(x):
+        if mask is not None and sp.issparse(mask):
+            msg = "mask must be dense when x is dense"
+            raise ValueError(msg)
+        return None if mask is None else np.asarray(mask, dtype=bool)
+
+    if mask is None:
+        return None
+    if sp.issparse(mask):
+        return sp.csr_matrix(mask)
+
+    over, est_bytes = exceeds_budget(mask.shape, np.bool_, max_dense_bytes)
+    if over:
+        budget = 0 if max_dense_bytes is None else max_dense_bytes
+        msg = (
+            "Dense mask would exceed max_dense_bytes: "
+            f"{format_bytes(est_bytes)} > {format_bytes(int(budget))}"
+        )
+        raise ValueError(msg)
+
+    preflight = cast(
+        "list[dict[str, object]]", opts.setdefault("_runtime_preflight", [])
+    )
+    preflight.append(
+        {
+            "check": "dense_mask_budget",
+            "is_sparse_input": True,
+            "mask_sparse": False,
+            "estimate_bytes": int(est_bytes),
+            "max_dense_bytes": max_dense_bytes,
+            "over_budget": bool(over),
+            "context": "model_selection",
+        }
+    )
+    return np.asarray(mask, dtype=bool)
+
+
+@dataclass(frozen=True)
+class SweepInputs:
+    cfg: SelectionConfig
+    fit_opts: dict[str, object]
+    verbose_enabled: bool
+
+
+def _handle_metric_reversal(  # noqa: PLR0913
+    *,
+    state: _SweepState,
+    cfg: SelectionConfig,
+    prev_metric_val: float | None,
+    metric_val: float,
+    prev_entry: dict[str, object] | None,
+    best_est: VBPCA | None,
+    verbose_enabled: bool,
+    k: int,
+) -> bool:
+    if not (
+        cfg.stop_on_metric_reversal
+        and prev_metric_val is not None
+        and prev_entry is not None
+        and _is_metric_reversal(prev_metric_val, metric_val)
+    ):
+        return False
+
+    state.best_k = int(cast("int", prev_entry["k"]))
+    state.best_val = prev_metric_val
+    state.best_metrics = prev_entry
+    if cfg.return_best_model:
+        state.best_model = best_est
+    if verbose_enabled:
+        logger.info(
+            (
+                "Model selection stopping on metric reversal at k=%d; "
+                "selecting previous k=%d"
+            ),
+            k,
+            state.best_k,
+        )
+    return True
+
+
+def _handle_patience(
+    *, state: _SweepState, cfg: SelectionConfig, k: int, verbose_enabled: bool
+) -> bool:
+    if cfg.patience is None or state.no_improve <= int(cfg.patience):
+        return False
+    if verbose_enabled:
+        logger.info(
+            "Model selection stopping on patience at k=%d (best_k=%d)",
+            k,
+            state.best_k,
+        )
+    return True
+
+
+def _sweep_components(
+    k_values: Sequence[int],
+    x_arr: Matrix,
+    mask_arg: Matrix | None,
+    inputs: SweepInputs,
+) -> tuple[int, dict[str, object], list[dict[str, object]], VBPCA | None, VBPCA | None]:
+    trace: list[dict[str, object]] = []
+    cfg = inputs.cfg
+    state = _SweepState(
+        best_k=k_values[0],
+        best_val=float("inf"),
+        best_metrics={
+            "rms": float("inf"),
+            "prms": float("inf"),
+            "cost": float("inf"),
+            "evr": None,
+        },
+        best_model=None,
+        no_improve=0,
+    )
+    prev_metric_val: float | None = None
+    prev_entry: dict[str, object] | None = None
+    best_est: VBPCA | None = None
+
+    for idx, k in enumerate(k_values):
+        if cfg.max_trials is not None and idx >= int(cfg.max_trials):
+            break
+
+        entry, est = _fit_candidate(k, x_arr, mask_arg, cfg, inputs.fit_opts)
+        trace.append(entry)
+
+        metric_val = _metric_value_from_entry(cfg.metric, entry)
+
+        if inputs.verbose_enabled:
+            logger.info(
+                (
+                    "Model selection k=%d done: rms=%.6g prms=%.6g "
+                    "cost=%.6g metric(=%s)=%.6g"
+                ),
+                k,
+                cast("float", entry["rms"]),
+                cast("float", entry["prms"]),
+                cast("float", entry["cost"]),
+                cfg.metric,
+                metric_val,
+            )
+
+        if _handle_metric_reversal(
+            state=state,
+            cfg=cfg,
+            prev_metric_val=prev_metric_val,
+            metric_val=metric_val,
+            prev_entry=prev_entry,
+            best_est=best_est,
+            verbose_enabled=inputs.verbose_enabled,
+            k=int(k),
+        ):
+            break
+
+        better_metric = metric_val < state.best_val or (
+            np.isclose(metric_val, state.best_val, equal_nan=False) and k < state.best_k
+        )
+        if better_metric:
+            state.best_k = int(k)
+            state.best_val = metric_val
+            state.best_metrics = entry
+            state.no_improve = 0
+            best_est = est
+            if cfg.return_best_model:
+                state.best_model = est
+        else:
+            state.no_improve += 1
+
+        if _handle_patience(
+            state=state, cfg=cfg, k=int(k), verbose_enabled=inputs.verbose_enabled
+        ):
+            break
+
+        prev_metric_val = metric_val
+        prev_entry = entry
+        if best_est is None or state.best_k == int(k):
+            best_est = est
+
+    return state.best_k, state.best_metrics, trace, state.best_model, best_est
+
+
+def select_n_components(
     x: Matrix,
     *,
     mask: Matrix | None = None,
@@ -203,169 +395,56 @@ def select_n_components(  # noqa: C901, PLR0912, PLR0914, PLR0915
     if cfg.metric not in {"prms", "rms", "cost"}:
         msg = f"metric must be one of prms, rms, cost (got {cfg.metric!r})"
         raise ValueError(msg)
-
-    is_sparse = sp.issparse(x)
-    if not is_sparse and mask is not None and sp.issparse(mask):
-        msg = "mask must be dense when x is dense"
-        raise ValueError(msg)
-
-    max_dense_bytes = resolve_max_dense_bytes(
-        opts.get("max_dense_bytes", 2_000_000_000)
+    x_arr = sp.csr_matrix(x) if sp.issparse(x) else np.asarray(x)
+    mask_arg = _normalize_mask_for_selection(
+        x,
+        mask,
+        resolve_max_dense_bytes(opts.get("max_dense_bytes", 2_000_000_000)),
+        opts,
     )
-    if is_sparse and mask is not None and not sp.issparse(mask):
-        over, est_bytes = exceeds_budget(mask.shape, np.bool_, max_dense_bytes)
-        if over:
-            budget = 0 if max_dense_bytes is None else max_dense_bytes
-            msg = (
-                "Dense mask would exceed max_dense_bytes: "
-                f"{format_bytes(est_bytes)} > {format_bytes(int(budget))}"
-            )
-            raise ValueError(msg)
-
-        preflight_obj = opts.setdefault("_runtime_preflight", [])
-        preflight = cast("list[dict[str, object]]", preflight_obj)
-        preflight.append(
-            {
-                "check": "dense_mask_budget",
-                "is_sparse_input": True,
-                "mask_sparse": False,
-                "estimate_bytes": int(est_bytes),
-                "max_dense_bytes": max_dense_bytes,
-                "over_budget": bool(over),
-                "context": "model_selection",
-            }
-        )
-
-    x_arr = sp.csr_matrix(x) if is_sparse else np.asarray(x)
-    mask_arg: Matrix | None = None
-    if mask is not None:
-        mask_arg = (
-            sp.csr_matrix(mask) if sp.issparse(mask) else np.asarray(mask, dtype=bool)
-        )
     k_values = _normalize_components(components, x_arr.shape[0], x_arr.shape[1])
 
-    trace: list[dict[str, object]] = []
-    state = _SweepState(
-        best_k=k_values[0],
-        best_val=float("inf"),
-        best_metrics={
-            "rms": float("inf"),
-            "prms": float("inf"),
-            "cost": float("inf"),
-            "evr": None,
-        },
-        best_model=None,
-        no_improve=0,
-    )
-
     fit_opts: dict[str, object] = dict(opts)
-    selection_verbose_val = fit_opts.pop(
-        "selection_verbose",
-        fit_opts.get("verbose", 0),
+    verbose_enabled = _verbose_enabled(
+        fit_opts.pop("selection_verbose", fit_opts.get("verbose", 0))
     )
-    verbose_enabled = _verbose_enabled(selection_verbose_val)
-    # Avoid heavy diagnostics during sweeps; compute EVR once on the best.
     fit_opts.setdefault("return_diagnostics", False)
-    prev_metric_val: float | None = None
-    prev_entry: dict[str, object] | None = None
-    best_est: VBPCA | None = None
+    sweep_inputs = SweepInputs(
+        cfg=cfg,
+        fit_opts=fit_opts,
+        verbose_enabled=verbose_enabled,
+    )
 
-    for idx, k in enumerate(k_values):
-        if cfg.max_trials is not None and idx >= int(cfg.max_trials):
-            break
-
-        entry: dict[str, object]
-        est: VBPCA
-        entry, est = _fit_candidate(k, x_arr, mask_arg, cfg, fit_opts)
-        trace.append(entry)
-
-        metric_val = _metric_value_from_entry(cfg.metric, entry)
-
-        if verbose_enabled:
-            logger.info(
-                (
-                    "Model selection k=%d done: rms=%.6g prms=%.6g "
-                    "cost=%.6g metric(=%s)=%.6g"
-                ),
-                k,
-                cast("float", entry["rms"]),
-                cast("float", entry["prms"]),
-                cast("float", entry["cost"]),
-                cfg.metric,
-                metric_val,
-            )
-
-        # Optional local stopping rule: as soon as metric worsens at k compared
-        # with k-1, select k-1 and stop.
-        if (
-            cfg.stop_on_metric_reversal
-            and prev_metric_val is not None
-            and _is_metric_reversal(prev_metric_val, metric_val)
-            and prev_entry is not None
-        ):
-            state.best_k = int(cast("int", prev_entry["k"]))
-            state.best_val = prev_metric_val
-            state.best_metrics = prev_entry
-            if cfg.return_best_model:
-                state.best_model = best_est
-            if verbose_enabled:
-                logger.info(
-                    (
-                        "Model selection stopping on metric reversal at k=%d; "
-                        "selecting previous k=%d"
-                    ),
-                    k,
-                    state.best_k,
-                )
-            break
-
-        if metric_val < state.best_val or (
-            np.isclose(metric_val, state.best_val, equal_nan=False) and k < state.best_k
-        ):
-            state.best_k = int(k)
-            state.best_val = metric_val
-            state.best_metrics = entry
-            state.no_improve = 0
-            best_est = est
-            if cfg.return_best_model:
-                state.best_model = est
-        else:
-            state.no_improve += 1
-
-        if cfg.patience is not None and state.no_improve > int(cfg.patience):
-            if verbose_enabled:
-                logger.info(
-                    "Model selection stopping on patience at k=%d (best_k=%d)",
-                    k,
-                    state.best_k,
-                )
-            break
-
-        prev_metric_val = metric_val
-        prev_entry = entry
-        # Keep reference to current best estimator for post-pass EVR computation.
-        if best_est is None or state.best_k == int(k):
-            best_est = est
+    (
+        best_k,
+        best_metrics,
+        trace,
+        best_model,
+        best_est,
+    ) = _sweep_components(
+        k_values,
+        x_arr,
+        mask_arg,
+        sweep_inputs,
+    )
 
     if verbose_enabled:
-        logger.info("Model selection complete: best_k=%d", state.best_k)
+        logger.info("Model selection complete: best_k=%d", best_k)
 
-    # Compute EV/EVR once on the best model if requested.
     if cfg.compute_explained_variance and best_est is not None:
-        solver = str(fit_opts.get("explained_var_solver", "auto"))
-        gram_ratio_val = fit_opts.get("explained_var_gram_ratio", 4.0)
-        gram_ratio = float(cast("_AllowedFloat", gram_ratio_val))
         evr = _compute_evr_for_best(
             best_est,
-            solver=solver,
-            gram_ratio=gram_ratio,
+            solver=str(fit_opts.get("explained_var_solver", "auto")),
+            gram_ratio=float(
+                cast("_AllowedFloat", fit_opts.get("explained_var_gram_ratio", 4.0))
+            ),
         )
-        state.best_metrics["evr"] = evr
+        best_metrics["evr"] = evr
         for entry in trace:
-            if int(cast("int", entry.get("k", -1))) == state.best_k:
+            if int(cast("int", entry.get("k", -1))) == best_k:
                 entry["evr"] = evr
                 break
-        if cfg.return_best_model:
-            state.best_model = best_est
+        if cfg.return_best_model and best_model is None:
+            best_model = best_est
 
-    return state.best_k, state.best_metrics, trace, state.best_model
+    return best_k, best_metrics, trace, best_model

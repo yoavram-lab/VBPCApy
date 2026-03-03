@@ -17,7 +17,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, SupportsIndex, SupportsInt, cast
+from typing import Any, SupportsIndex, SupportsInt
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -400,7 +400,7 @@ def _coerce_int(
     if val is None:
         return default
     try:
-        return int(cast("SupportsInt | SupportsIndex | str | bytes | bytearray", val))
+        return int(val)
     except (TypeError, ValueError):
         return default
 

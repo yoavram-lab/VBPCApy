@@ -96,11 +96,11 @@ def _slice_matrix_like(
         # - using ir[:, None] & ic for row+col selection
         #   keeps CSR instead of densifying.
         if slice_rows and slice_cols:
-            result = mat[ir[:, None], ic]  # type: ignore[index]
+            result = mat[ir[:, None], ic]
         elif slice_rows:
-            result = mat[ir, :]  # type: ignore[index]
+            result = mat[ir, :]
         else:
-            result = mat[:, ic]  # type: ignore[index]
+            result = mat[:, ic]
     # Dense ndarray
     elif slice_rows and slice_cols:
         result = mat[np.ix_(ir, ic)]

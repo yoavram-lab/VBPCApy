@@ -109,6 +109,7 @@ class ScoreState:
     sparse_num_cpu: int = 0
     x_csr: sp.csr_matrix | None = None
     x_csc: sp.csc_matrix | None = None
+    use_python_scores: bool = False
 
 
 @dataclass
@@ -289,23 +290,46 @@ def _prepare_data(
 # -- mask helpers -------------------------------------------------------------
 
 
+def _normalize_sparse_data(x_csr: sp.csr_matrix, compat_mode: str) -> sp.csr_matrix:
+    """Apply strict_legacy normalization in-place on sparse data without densifying.
+
+    Returns:
+        Normalized CSR matrix with stored zeros mapped to ``eps`` (strict_legacy)
+        and stored NaNs removed.
+    """
+    x_csr = sp.csr_matrix(x_csr, copy=True)
+
+    data = x_csr.data
+    use_eps_for_zeros = compat_mode.strip().lower() == "strict_legacy"
+    if use_eps_for_zeros:
+        zero_mask = np.isclose(data, 0.0)
+        data[zero_mask] = np.finfo(float).eps
+
+    nan_mask = np.isnan(data)
+    if nan_mask.any():
+        data[nan_mask] = 0.0
+        x_csr.eliminate_zeros()
+    return x_csr
+
+
 def _build_masks_sparse(
     x_data: Matrix,
     x_probe: Matrix | None,
+    compat_mode: str,
 ) -> tuple[Matrix, Matrix | None, Matrix, Matrix | None]:
     """Build masks and normalized data for sparse inputs.
 
     Returns:
         Tuple of data, probe, mask, and probe mask.
     """
-    x_csr = sp.csr_matrix(x_data)
+    x_csr = _normalize_sparse_data(sp.csr_matrix(x_data), compat_mode)
     mask_csr = x_csr.copy()
     mask_csr.data[:] = 1.0
     mask: Matrix = mask_csr
 
     if x_probe is not None:
         if sp.issparse(x_probe):
-            x_probe_csr = sp.csr_matrix(x_probe)
+            x_probe_csr = _normalize_sparse_data(sp.csr_matrix(x_probe), compat_mode)
             mask_probe_csr = x_probe_csr.copy()
             mask_probe_csr.data[:] = 1.0
             mask_probe = mask_probe_csr
@@ -337,7 +361,8 @@ def _build_masks_dense(
     use_eps_for_zeros = mode == "strict_legacy"
     eps = np.finfo(float).eps
     if use_eps_for_zeros:
-        x_arr[x_arr == 0.0] = eps
+        zero_mask = np.isclose(x_arr, 0.0)
+        x_arr[zero_mask] = eps
     x_arr[np.isnan(x_arr)] = 0.0
     x_data = x_arr
 
@@ -346,7 +371,8 @@ def _build_masks_dense(
         x_probe = x_probe_arr
         mask_probe = ~np.isnan(x_probe_arr)
         if use_eps_for_zeros:
-            x_probe_arr[x_probe_arr == 0.0] = eps
+            zero_mask_probe = np.isclose(x_probe_arr, 0.0)
+            x_probe_arr[zero_mask_probe] = eps
         x_probe_arr[np.isnan(x_probe_arr)] = 0.0
     else:
         mask_probe = None
@@ -354,7 +380,59 @@ def _build_masks_dense(
     return x_data, x_probe, mask, mask_probe
 
 
-def _build_masks_and_counts(  # noqa: PLR0912, PLR0915, C901
+def _prepare_sparse_with_optional_mask(
+    x_data: Matrix,
+    x_probe: Matrix | None,
+    mask_override: Matrix | None,
+    compat_mode: str,
+) -> tuple[Matrix, Matrix | None, Matrix, Matrix | None]:
+    if x_probe is not None and not sp.issparse(x_probe):
+        msg = "x_probe must be sparse when x is sparse"
+        raise ValueError(msg)
+
+    if mask_override is not None:
+        mask = sp.csr_matrix(mask_override)
+        x_data_out = _normalize_sparse_data(sp.csr_matrix(x_data), compat_mode)
+        x_probe_out = (
+            _normalize_sparse_data(sp.csr_matrix(x_probe), compat_mode)
+            if x_probe is not None and sp.issparse(x_probe)
+            else x_probe
+        )
+        return x_data_out, x_probe_out, mask, None
+
+    return _build_masks_sparse(x_data, x_probe, compat_mode)
+
+
+def _prepare_dense_with_mask_override(
+    x_data: Matrix,
+    x_probe: Matrix | None,
+    mask_override: Matrix,
+    compat_mode: str,
+) -> tuple[Matrix, Matrix | None, Matrix, Matrix | None]:
+    if sp.issparse(mask_override):
+        msg = "mask must be dense when x is dense"
+        raise ValueError(msg)
+
+    mask_arr = np.asarray(mask_override, dtype=bool)
+    x_arr = np.asarray(x_data, dtype=float)
+    eps = np.finfo(float).eps if compat_mode == "strict_legacy" else 0.0
+    zero_mask = np.isclose(x_arr, 0.0)
+    x_arr[zero_mask] = eps
+    x_arr[np.isnan(x_arr)] = 0.0
+
+    x_probe_out: Matrix | None = None
+    mask_probe: Matrix | None = None
+    if x_probe is not None:
+        x_probe_arr = np.asarray(x_probe, dtype=float)
+        zero_mask_probe = np.isclose(x_probe_arr, 0.0)
+        x_probe_arr[zero_mask_probe] = eps
+        x_probe_arr[np.isnan(x_probe_arr)] = 0.0
+        x_probe_out = x_probe_arr
+
+    return x_arr, x_probe_out, mask_arr, mask_probe
+
+
+def _build_masks_and_counts(
     x_data: Matrix,
     x_probe: Matrix | None,
     opts: MutableMapping[str, object],
@@ -365,39 +443,19 @@ def _build_masks_and_counts(  # noqa: PLR0912, PLR0915, C901
 
     Returns:
         Data, probe, masks, per-row counts, total data count, probe count.
-
-    Raises:
-        ValueError: If mask or probe sparsity does not match ``x_data``.
     """
     mask: Matrix
     mask_probe: Matrix | None
-    if sp.issparse(x_data):
-        if x_probe is not None and not sp.issparse(x_probe):
-            msg = "x_probe must be sparse when x is sparse"
-            raise ValueError(msg)
+    compat_mode = str(opts.get("compat_mode", "strict_legacy")).strip().lower()
 
-        if mask_override is not None:
-            mask_csr = sp.csr_matrix(mask_override)
-            mask = mask_csr
-            if x_probe is not None and sp.issparse(x_probe):
-                x_probe = sp.csr_matrix(x_probe)
-            mask_probe = None
-        else:
-            x_data, x_probe, mask, mask_probe = _build_masks_sparse(x_data, x_probe)
+    if sp.issparse(x_data):
+        x_data, x_probe, mask, mask_probe = _prepare_sparse_with_optional_mask(
+            x_data, x_probe, mask_override, compat_mode
+        )
     elif mask_override is not None:
-        if sp.issparse(mask_override):
-            msg = "mask must be dense when x is dense"
-            raise ValueError(msg)
-        mask_arr = np.asarray(mask_override, dtype=bool)
-        x_arr = np.asarray(x_data, dtype=float)
-        x_arr[np.isnan(x_arr)] = 0.0
-        x_data = x_arr
-        mask = mask_arr
-        if x_probe is not None:
-            x_probe_arr = np.asarray(x_probe, dtype=float)
-            x_probe_arr[np.isnan(x_probe_arr)] = 0.0
-            x_probe = x_probe_arr
-        mask_probe = None
+        x_data, x_probe, mask, mask_probe = _prepare_dense_with_mask_override(
+            x_data, x_probe, mask_override, compat_mode
+        )
     else:
         x_data, x_probe, mask, mask_probe = _build_masks_dense(
             x_data,
@@ -505,9 +563,7 @@ def _missing_patterns_info(
     auto_patterns = bool(opts.get("auto_pattern_masked", 0))
     if opts.get("uniquesv") or auto_patterns:
         if isinstance(mask, sp.csr_matrix):
-            n_patterns, obs_patterns, pattern_index = _patterns_from_csc(
-                mask.tocsc()
-            )
+            n_patterns, obs_patterns, pattern_index = _patterns_from_csc(mask.tocsc())
             if not (auto_patterns and n_patterns == 1):
                 return n_patterns, obs_patterns, pattern_index
             auto_patterns = False
@@ -993,6 +1049,9 @@ def _update_scores(state: ScoreState) -> ScoreState:
     """
     # Pattern-free branch
     if state.pattern_index is None:
+        if state.use_python_scores:
+            return _score_update_general_no_patterns(state)
+
         if sp.issparse(state.x_data) and sp.issparse(state.mask):
             return _score_update_sparse_no_patterns(state)
 
@@ -1503,40 +1562,34 @@ def _update_noise_variance(
     """Update noise variance using current posterior covariances.
 
     Returns:
-        Updated noise state and accumulated ``s_xv``.
+        ``(noise_state, s_xv)`` after updating noise variance.
     """
     loadings = noise_state.loadings
     scores = noise_state.scores
     loading_covariances = noise_state.loading_covariances
     score_covariances = noise_state.score_covariances
-    pattern_index = noise_state.pattern_index
 
-    n_features = int(loadings.shape[0])
     n_samples = int(scores.shape[1])
-    fully_observed = int(ix.size) == (n_features * n_samples)
+    fully_observed = int(ix.size) == (int(loadings.shape[0]) * n_samples)
 
     if fully_observed and _has_covariances(score_covariances):
         sv_by_col = _score_covariances_by_column(
             score_covariances,
-            pattern_index,
+            noise_state.pattern_index,
             n_samples,
         )
         s_xv = _fully_observed_s_xv(
-            loadings=loadings,
-            scores=scores,
-            loading_covariances=loading_covariances,
+            noise_state=noise_state,
             sv_by_col=sv_by_col,
-            mu_variances=noise_state.mu_variances,
             n_samples=n_samples,
         )
         s_xv += (rms**2) * noise_state.n_data
-        return _finalize_noise_state(noise_state, s_xv, hp_v)
-
-    s_xv = 0.0
+        updated_state, _ = _finalize_noise_state(noise_state, s_xv, hp_v)
+        return updated_state, s_xv
 
     sv_by_col = _score_covariances_by_column(
         score_covariances,
-        pattern_index,
+        noise_state.pattern_index,
         n_samples,
     )
 
@@ -1562,10 +1615,12 @@ def _update_noise_variance(
     )
 
     if noise_state.mu_variances.size > 0:
-        s_xv += float(np.sum(noise_state.mu_variances[ix, 0]).item())
+        muv_term = float(np.sum(noise_state.mu_variances[ix, 0]).item())
+        s_xv += muv_term
 
     s_xv += (rms**2) * noise_state.n_data
-    return _finalize_noise_state(noise_state, s_xv, hp_v)
+    updated_state, _ = _finalize_noise_state(noise_state, s_xv, hp_v)
+    return updated_state, s_xv
 
 
 def _score_covariances_by_column(
@@ -1581,25 +1636,32 @@ def _score_covariances_by_column(
     ]
 
 
-def _fully_observed_s_xv(  # noqa: PLR0913
+def _fully_observed_s_xv(
     *,
-    loadings: np.ndarray,
-    scores: np.ndarray,
-    loading_covariances: list[np.ndarray],
+    noise_state: NoiseState,
     sv_by_col: list[np.ndarray],
-    mu_variances: np.ndarray,
     n_samples: int,
 ) -> float:
+    loadings = noise_state.loadings
+    scores = noise_state.scores
+    loading_covariances = noise_state.loading_covariances
+    mu_variances = noise_state.mu_variances
+
     gram = loadings.T @ loadings
-    s_xv = float(sum(np.trace(sv_j @ gram) for sv_j in sv_by_col))
+    sv_term = float(sum(np.trace(sv_j @ gram) for sv_j in sv_by_col))
+    s_xv = sv_term
 
     if _has_covariances(loading_covariances):
         av_sum = np.sum(_covariances_stack(loading_covariances), axis=0)
-        s_xv += float(np.sum(scores * (av_sum @ scores)))
-        s_xv += float(sum(np.sum(sv_j * av_sum) for sv_j in sv_by_col))
+        av_cov_term = float(np.sum(scores * (av_sum @ scores)))
+        av_trace_term = float(sum(np.sum(sv_j * av_sum) for sv_j in sv_by_col))
+        s_xv += av_cov_term
+        s_xv += av_trace_term
 
+    muv_term = 0.0
     if mu_variances.size > 0:
-        s_xv += float(np.sum(mu_variances[:, 0]) * n_samples)
+        muv_term = float(np.sum(mu_variances[:, 0]) * n_samples)
+        s_xv += muv_term
 
     return s_xv
 

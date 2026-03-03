@@ -160,7 +160,7 @@ end
 [rms,errMx] = compute_rms( X, A, S, M, ndata );
 prms = compute_rms( Xprobe, A, S, Mprobe, nprobe );
 
-lc.rms = rms; lc.prms = prms; lc.time = 0; lc.cost = NaN;
+lc.rms = rms; lc.prms = prms; lc.time = 0; lc.cost = NaN; lc.V = V; lc.sXv = NaN; lc.sXv_sv = NaN; lc.sXv_avcov = NaN; lc.sXv_avtrace = NaN; lc.sXv_muv = NaN; lc.sXv_rms = NaN; lc.av_sum_trace = NaN; lc.sv_sum_trace = NaN;
 
 dsph = DisplayInit( opts.display, lc );
 PrintFirstStep( opts.verbose, rms, prms );
@@ -287,37 +287,76 @@ for iter = 1:opts.maxiters
     prms = compute_rms( Xprobe, A, S, Mprobe, nprobe );
     
     % Update V
-    sXv = 0;
+    sXv = 0; sXv_sv = 0; sXv_avcov = 0; sXv_avtrace = 0; sXv_muv = 0; sXv_rms = 0;
     if isempty(Isv)
         for r = 1:ndata
-            sXv = sXv + A(IX(r),:) * Sv{JX(r)} * A(IX(r),:)';
+            term_sv = A(IX(r),:) * Sv{JX(r)} * A(IX(r),:)';
+            sXv = sXv + term_sv; sXv_sv = sXv_sv + term_sv;
             if ~isempty(Av)
-                sXv = sXv + S(:,JX(r))' * Av{IX(r)} * S(:,JX(r)) + ...
-                    sum( sum( Sv{JX(r)} .* Av{IX(r)} ) );
+                term_cov = S(:,JX(r))' * Av{IX(r)} * S(:,JX(r));
+                term_trace = sum( sum( Sv{JX(r)} .* Av{IX(r)} ) );
+                sXv = sXv + term_cov + term_trace;
+                sXv_avcov = sXv_avcov + term_cov;
+                sXv_avtrace = sXv_avtrace + term_trace;
             end
         end
     else
         for r = 1:ndata
-            sXv = sXv + A(IX(r),:) * Sv{Isv(JX(r))} * A(IX(r),:)';
+            term_sv = A(IX(r),:) * Sv{Isv(JX(r))} * A(IX(r),:)';
+            sXv = sXv + term_sv; sXv_sv = sXv_sv + term_sv;
             if ~isempty(Av)
-                sXv = sXv + ...
-                    S(:,JX(r))' * Av{IX(r)} * S(:,JX(r)) + ...
-                    sum( sum( Sv{Isv(JX(r))} .* Av{IX(r)} ) );
+                term_cov = S(:,JX(r))' * Av{IX(r)} * S(:,JX(r));
+                term_trace = sum( sum( Sv{Isv(JX(r))} .* Av{IX(r)} ) );
+                sXv = sXv + term_cov + term_trace;
+                sXv_avcov = sXv_avcov + term_cov;
+                sXv_avtrace = sXv_avtrace + term_trace;
             end
         end
     end
 
     if ~isempty(Muv)
-        sXv = sXv + sum(Muv(IX));
+        sXv_muv = sum(Muv(IX));
+        sXv = sXv + sXv_muv;
     end
     
-    sXv = sXv + (rms^2)*ndata;
+    sXv_rms = (rms^2)*ndata;
+    sXv = sXv + sXv_rms;
     
     %V = rms^2 + V/ndata;
     V = ( sXv + 2*hpV ) / (ndata + 2*hpV);
+
+    % Debug export: save covariance aggregates for early iterations
+    if iter <= 2
+        av_sum = zeros(size(Av{1}));
+        for ai = 1:numel(Av), av_sum = av_sum + Av{ai}; end
+        sv_traces_now = cellfun(@trace, Sv);
+        av_traces_now = cellfun(@trace, Av);
+        outfile = '/tmp/oct_cov_debug.mat';
+        if exist(outfile, 'file')
+            save(outfile, 'iter', 'av_sum', 'Av', 'Sv', 'av_traces_now', 'sv_traces_now', '-append');
+        else
+            save(outfile, 'iter', 'av_sum', 'Av', 'Sv', 'av_traces_now', 'sv_traces_now');
+        end
+    end
     
     t = toc;
-    lc.rms = [ lc.rms rms ]; lc.prms = [ lc.prms prms ];
+    lc.rms = [ lc.rms rms ]; lc.prms = [ lc.prms prms ]; lc.V = [ lc.V V ]; lc.sXv = [ lc.sXv sXv ];
+    lc.sXv_sv = [ lc.sXv_sv sXv_sv ]; lc.sXv_avcov = [ lc.sXv_avcov sXv_avcov ]; lc.sXv_avtrace = [ lc.sXv_avtrace sXv_avtrace ];
+    lc.sXv_muv = [ lc.sXv_muv sXv_muv ]; lc.sXv_rms = [ lc.sXv_rms sXv_rms ];
+
+    if ~isempty(Av)
+        av_sum = zeros(size(Av{1}));
+        for ai = 1:numel(Av), av_sum = av_sum + Av{ai}; end
+        lc.av_sum_trace = [ lc.av_sum_trace trace(av_sum) ];
+    else
+        lc.av_sum_trace = [ lc.av_sum_trace NaN ];
+    end
+    if ~isempty(Sv)
+        sv_sum_trace = sum(cellfun(@trace, Sv));
+        lc.sv_sum_trace = [ lc.sv_sum_trace sv_sum_trace ];
+    else
+        lc.sv_sum_trace = [ lc.sv_sum_trace NaN ];
+    end
     lc.time = [ lc.time t ];
     
     if ~isempty(opts.cfstop)

@@ -92,60 +92,28 @@ py::array_t<double> congruence_transform_stack(
     auto *out_ptr = out.mutable_data();
 
     const std::size_t mat_elems = static_cast<std::size_t>(k) * static_cast<std::size_t>(k);
-    const int threads = resolve_num_threads(num_cpu, n_items);
+    // Respect the incoming numpy strides so we handle both C- and F-contiguous
+    // cov_stack inputs without copying or misinterpreting memory layout.
+    const std::size_t stride_item = static_cast<std::size_t>(cov_buf.strides[0]) / sizeof(double);
+    const std::ptrdiff_t stride_row = cov_buf.strides[1] / static_cast<std::ptrdiff_t>(sizeof(double));
+    const std::ptrdiff_t stride_col = cov_buf.strides[2] / static_cast<std::ptrdiff_t>(sizeof(double));
+    const Eigen::Stride<Eigen::Dynamic, Eigen::Dynamic> eigen_stride(stride_row, stride_col);
 
-    std::exception_ptr worker_error;
-    std::mutex error_mutex;
+    // Use a simple single-threaded loop for correctness and determinism; the
+    // matrices are small (k is component count), so threading adds overhead and
+    // risks subtle aliasing issues.
+    for (int i = 0; i < n_items; ++i) {
+        const auto *cov_base = in_ptr + static_cast<std::size_t>(i) * stride_item;
 
-    auto worker = [&](int start_item, int end_item) {
-        try {
-            for (int i = start_item; i < end_item; ++i) {
-                const std::size_t base = static_cast<std::size_t>(i) * mat_elems;
+        Eigen::Map<const Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>, 0, Eigen::Stride<Eigen::Dynamic, Eigen::Dynamic>> cov_i(
+            cov_base, k, k, eigen_stride);
 
-                Eigen::Map<const Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>>
-                    cov_i(in_ptr + base, k, k);
+        Eigen::MatrixXd transformed = left * cov_i * right;
 
-                const Eigen::MatrixXd transformed = left * cov_i * right;
-
-                Eigen::Map<Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>>
-                    out_i(out_ptr + base, k, k);
-                out_i = transformed;
-            }
-        } catch (...) {
-            std::lock_guard<std::mutex> lock(error_mutex);
-            if (!worker_error) {
-                worker_error = std::current_exception();
-            }
-        }
-    };
-
-    py::gil_scoped_release release;
-
-    if (threads == 1) {
-        worker(0, n_items);
-    } else {
-        std::vector<std::thread> pool;
-        pool.reserve(static_cast<std::size_t>(threads));
-
-        const int items_per_thread = n_items / threads;
-        const int remainder = n_items % threads;
-
-        int current = 0;
-        for (int t = 0; t < threads; ++t) {
-            const int start = current;
-            const int extra = (t < remainder) ? 1 : 0;
-            const int end = start + items_per_thread + extra;
-            current = end;
-            pool.emplace_back(worker, start, end);
-        }
-
-        for (auto &th : pool) {
-            th.join();
-        }
-    }
-
-    if (worker_error) {
-        std::rethrow_exception(worker_error);
+        const std::size_t base_out = static_cast<std::size_t>(i) * mat_elems;
+        Eigen::Map<Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>> out_i(
+            out_ptr + base_out, k, k);
+        out_i = transformed;
     }
 
     return out;

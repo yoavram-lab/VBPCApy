@@ -4,10 +4,6 @@ set shell := ["bash", "-lc"]
 help:
 	just --list
 
-# Install package + core dev tooling with pip.
-dev-install:
-	pip install -e . pytest-cov
-
 # Sync a uv-managed environment (Python deps only).
 uv-sync:
 	uv sync --extra dev --extra data --extra plot
@@ -18,19 +14,19 @@ uv-sync-octave:
 
 # Lint Python sources (excluding tests) using Ruff preview rules.
 lint:
-	ruff check --preview --fix src
+	uv run --with scipy-stubs ruff check --preview --fix src
 
 # Type-check library code.
 typecheck:
-	mypy src
+	uv run --with scipy-stubs mypy src
 
 # Run the test suite quietly.
 test:
-	pytest -q
+	uv run pytest -q
 
 # Run tests with coverage report.
 test-cov:
-	pytest -q --cov=src/vbpca_py --cov-report=term-missing
+	uv run pytest -q --cov=src/vbpca_py --cov-report=term-missing
 
 # Run pytest perf benchmarks (excluded from default test/ci runs).
 bench:

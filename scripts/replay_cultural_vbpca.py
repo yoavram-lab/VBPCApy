@@ -145,9 +145,7 @@ def _parse_args() -> argparse.Namespace:
         "--max-k-cap",
         type=int,
         default=0,
-        help=(
-            "Optional extra cap on k; 0 or less uses min(n_features, n_samples)."
-        ),
+        help=("Optional extra cap on k; 0 or less uses min(n_features, n_samples)."),
     )
     parser.add_argument(
         "--compat-mode",
@@ -203,8 +201,7 @@ def _parse_args() -> argparse.Namespace:
         type=int,
         default=1,
         help=(
-            "Verbosity passed to select_n_components "
-            "(k-sweep progress logs when > 0)."
+            "Verbosity passed to select_n_components (k-sweep progress logs when > 0)."
         ),
     )
     parser.add_argument(
@@ -294,8 +291,6 @@ def _scale_by_policy(
     raise ValueError(msg)
 
 
-
-
 def _run_dataset(  # noqa: PLR0912, PLR0913, PLR0915, C901
     policy: DatasetPolicy,
     data_dir: Path,
@@ -378,7 +373,10 @@ def _run_dataset(  # noqa: PLR0912, PLR0913, PLR0915, C901
         # Lightweight sanity: values should lie in [0, 2] for SNP dosages
         finite_data = data_csr.data[np.isfinite(data_csr.data)]
         if finite_data.size:
-            if finite_data.min(initial=0.0) < -1e-6 or finite_data.max(initial=0.0) > 2.0 + 1e-6:
+            if (
+                finite_data.min(initial=0.0) < -1e-6
+                or finite_data.max(initial=0.0) > 2.0 + 1e-6
+            ):
                 msg = "Genetics NPZ values outside expected 0/1/2 range"
                 raise ValueError(msg)
 
@@ -501,7 +499,20 @@ def _run_dataset(  # noqa: PLR0912, PLR0913, PLR0915, C901
     )  # type: ignore[arg-type]
 
     model = best_model
-    if model is None:
+
+    # Ensure we have full diagnostics (reconstruction and marginal variance) for exports.
+    expected_shape = (n_features_int, n_samples_int)
+
+    def _shape_ok(arr: np.ndarray | None) -> bool:
+        return arr is not None and arr.shape == expected_shape
+
+    need_refit = (
+        model is None
+        or not _shape_ok(getattr(model, "reconstruction_", None))
+        or not _shape_ok(getattr(model, "variance_", None))
+    )
+
+    if need_refit:
         model = VBPCA(
             n_components=int(best_k),
             maxiters=maxiters,
@@ -515,6 +526,7 @@ def _run_dataset(  # noqa: PLR0912, PLR0913, PLR0915, C901
             runtime_tuning=runtime_tuning,
             verbose=verbose,
             num_cpu=int(num_cpu) if num_cpu is not None else None,
+            return_diagnostics=True,
         )
         model.fit(x_f_by_n, mask=observed_mask)  # type: ignore[arg-type]
 
@@ -523,7 +535,6 @@ def _run_dataset(  # noqa: PLR0912, PLR0913, PLR0915, C901
         if model.explained_variance_ratio_ is not None
         else np.full(int(best_k), np.nan, dtype=float)
     )
-
     dataset_out = out_dir / policy.name
     dataset_out.mkdir(parents=True, exist_ok=True)
     trace_frame = pd.DataFrame(trace)
@@ -534,6 +545,16 @@ def _run_dataset(  # noqa: PLR0912, PLR0913, PLR0915, C901
         )
     else:
         trace_frame.to_csv(dataset_out / "selection_trace.csv", index=False)
+
+    # Persist reconstruction (mean per entry) and marginal variance for downstream testing.
+    if model.reconstruction_ is not None and model.variance_ is not None:
+        np.savez_compressed(
+            dataset_out / "posterior_moments.npz",
+            reconstruction=model.reconstruction_,
+            variance=model.variance_,
+            mean=model.mean_,
+            selected_k=int(best_k),
+        )
 
     summary: dict[str, Any] = {
         "dataset": policy.name,

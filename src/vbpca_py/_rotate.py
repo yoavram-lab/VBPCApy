@@ -291,8 +291,7 @@ def _transform_covariances(
     cov_stack = np.asarray(covariances, dtype=float)
     transformed = _congruence_transform_stack_ext(cov_stack, left, right, 0)
     return [
-        np.asarray(transformed[i], dtype=float)
-        for i in range(transformed.shape[0])
+        np.asarray(transformed[i], dtype=float) for i in range(transformed.shape[0])
     ]
 
 
@@ -431,6 +430,9 @@ def rotate_to_pca(
     # 4) Build and apply R to S and Sv
     r = _build_r(eigvals_s, v_s, v_a)
     scores[:] = r @ scores
+
+    # Rotate Sv with the C++ batched congruence transform for consistency with
+    # Av handling and legacy semantics.
     score_covariances[:] = _transform_covariances(score_covariances, r, r.T)
 
     return d_mu, loadings, loading_covariances, scores, score_covariances
