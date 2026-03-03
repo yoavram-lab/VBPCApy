@@ -4,7 +4,9 @@
 
 #include <Eigen/Dense>
 
+#include <algorithm>
 #include <stdexcept>
+#include <thread>
 
 namespace py = pybind11;
 
@@ -110,7 +112,8 @@ py::dict score_update_dense_masked_nopattern(
     const Eigen::MatrixXd &loadings,
     const py::object &loading_covariances_obj,
     double noise_var,
-    bool return_covariances
+    bool return_covariances,
+    int num_cpu
 ) {
     const int n_features = static_cast<int>(x_data.rows());
     const int n_samples = static_cast<int>(x_data.cols());
@@ -151,42 +154,73 @@ py::dict score_update_dense_masked_nopattern(
     }
 
     const Eigen::MatrixXd identity = Eigen::MatrixXd::Identity(n_components, n_components);
-    for (int j = 0; j < n_samples; ++j) {
-        Eigen::MatrixXd psi = noise_var * identity;
-        Eigen::VectorXd rhs = Eigen::VectorXd::Zero(n_components);
 
-        for (int i = 0; i < n_features; ++i) {
-            if (mask(i, j) <= 0.0) {
-                continue;
+    const int threads_requested = num_cpu > 0 ? num_cpu : static_cast<int>(std::thread::hardware_concurrency());
+    const int threads = std::max(1, threads_requested);
+    const int actual_threads = std::max(1, std::min(threads, n_samples));
+
+    auto worker = [&](int start, int end) {
+        for (int j = start; j < end; ++j) {
+            Eigen::MatrixXd psi = noise_var * identity;
+            Eigen::VectorXd rhs = Eigen::VectorXd::Zero(n_components);
+
+            for (int i = 0; i < n_features; ++i) {
+                if (mask(i, j) <= 0.0) {
+                    continue;
+                }
+                const Eigen::VectorXd a = loadings.row(i).transpose();
+                psi.noalias() += a * a.transpose();
+                rhs.noalias() += a * x_data(i, j);
+
+                if (av_ptr != nullptr) {
+                    const std::size_t base =
+                        static_cast<std::size_t>(i) * static_cast<std::size_t>(n_components) *
+                        static_cast<std::size_t>(n_components);
+                    for (int r = 0; r < n_components; ++r) {
+                        for (int c = 0; c < n_components; ++c) {
+                            psi(r, c) += av_ptr[
+                                base + static_cast<std::size_t>(r) * static_cast<std::size_t>(n_components) +
+                                static_cast<std::size_t>(c)
+                            ];
+                        }
+                    }
+                }
             }
-            const Eigen::VectorXd a = loadings.row(i).transpose();
-            psi.noalias() += a * a.transpose();
-            rhs.noalias() += a * x_data(i, j);
 
-            if (av_ptr != nullptr) {
-                const std::size_t base =
-                    static_cast<std::size_t>(i) * static_cast<std::size_t>(n_components) *
-                    static_cast<std::size_t>(n_components);
+            const Eigen::LLT<Eigen::MatrixXd> llt = stable_llt(std::move(psi));
+            scores.col(j) = llt.solve(rhs);
+
+            if (return_covariances) {
+                const Eigen::MatrixXd sv = noise_var * llt.solve(identity);
                 for (int r = 0; r < n_components; ++r) {
                     for (int c = 0; c < n_components; ++c) {
-                        psi(r, c) += av_ptr[
-                            base + static_cast<std::size_t>(r) * static_cast<std::size_t>(n_components) +
-                            static_cast<std::size_t>(c)
-                        ];
+                        score_covariances(j, r * n_components + c) = sv(r, c);
                     }
                 }
             }
         }
+    };
 
-        const Eigen::LLT<Eigen::MatrixXd> llt = stable_llt(std::move(psi));
-        scores.col(j) = llt.solve(rhs);
+    {
+        py::gil_scoped_release release;
 
-        if (return_covariances) {
-            const Eigen::MatrixXd sv = noise_var * llt.solve(identity);
-            for (int r = 0; r < n_components; ++r) {
-                for (int c = 0; c < n_components; ++c) {
-                    score_covariances(j, r * n_components + c) = sv(r, c);
-                }
+        if (actual_threads <= 1) {
+            worker(0, n_samples);
+        } else {
+            std::vector<std::thread> pool;
+            pool.reserve(static_cast<std::size_t>(actual_threads));
+            const int rows_per_thread = n_samples / actual_threads;
+            const int remainder = n_samples % actual_threads;
+            int current = 0;
+            for (int t = 0; t < actual_threads; ++t) {
+                const int extra = (t < remainder) ? 1 : 0;
+                const int start = current;
+                const int end = start + rows_per_thread + extra;
+                current = end;
+                pool.emplace_back(worker, start, end);
+            }
+            for (auto &th : pool) {
+                th.join();
             }
         }
     }
@@ -222,7 +256,8 @@ py::dict loadings_update_dense_masked_nopattern(
     const py::object &score_covariances_obj,
     const Eigen::MatrixXd &prior_prec,
     double noise_var,
-    bool return_covariances
+    bool return_covariances,
+    int num_cpu
 ) {
     const int n_features = static_cast<int>(x_data.rows());
     const int n_samples = static_cast<int>(x_data.cols());
@@ -269,42 +304,73 @@ py::dict loadings_update_dense_masked_nopattern(
     }
 
     const Eigen::MatrixXd identity = Eigen::MatrixXd::Identity(n_components, n_components);
-    for (int i = 0; i < n_features; ++i) {
-        Eigen::MatrixXd phi = prior_prec;
-        Eigen::VectorXd rhs = Eigen::VectorXd::Zero(n_components);
 
-        for (int j = 0; j < n_samples; ++j) {
-            if (mask(i, j) <= 0.0) {
-                continue;
+    const int threads_requested = num_cpu > 0 ? num_cpu : static_cast<int>(std::thread::hardware_concurrency());
+    const int threads = std::max(1, threads_requested);
+    const int actual_threads = std::max(1, std::min(threads, n_features));
+
+    auto worker = [&](int start, int end) {
+        for (int i = start; i < end; ++i) {
+            Eigen::MatrixXd phi = prior_prec;
+            Eigen::VectorXd rhs = Eigen::VectorXd::Zero(n_components);
+
+            for (int j = 0; j < n_samples; ++j) {
+                if (mask(i, j) <= 0.0) {
+                    continue;
+                }
+                const Eigen::VectorXd s = scores.col(j);
+                phi.noalias() += s * s.transpose();
+                rhs.noalias() += s * x_data(i, j);
+
+                if (sv_ptr != nullptr) {
+                    const std::size_t base =
+                        static_cast<std::size_t>(j) * static_cast<std::size_t>(n_components) *
+                        static_cast<std::size_t>(n_components);
+                    for (int r = 0; r < n_components; ++r) {
+                        for (int c = 0; c < n_components; ++c) {
+                            phi(r, c) += sv_ptr[
+                                base + static_cast<std::size_t>(r) * static_cast<std::size_t>(n_components) +
+                                static_cast<std::size_t>(c)
+                            ];
+                        }
+                    }
+                }
             }
-            const Eigen::VectorXd s = scores.col(j);
-            phi.noalias() += s * s.transpose();
-            rhs.noalias() += s * x_data(i, j);
 
-            if (sv_ptr != nullptr) {
-                const std::size_t base =
-                    static_cast<std::size_t>(j) * static_cast<std::size_t>(n_components) *
-                    static_cast<std::size_t>(n_components);
+            const Eigen::LLT<Eigen::MatrixXd> llt = stable_llt(std::move(phi));
+            loadings.row(i) = llt.solve(rhs).transpose();
+
+            if (return_covariances) {
+                const Eigen::MatrixXd av = noise_var * llt.solve(identity);
                 for (int r = 0; r < n_components; ++r) {
                     for (int c = 0; c < n_components; ++c) {
-                        phi(r, c) += sv_ptr[
-                            base + static_cast<std::size_t>(r) * static_cast<std::size_t>(n_components) +
-                            static_cast<std::size_t>(c)
-                        ];
+                        loading_covariances(i, r * n_components + c) = av(r, c);
                     }
                 }
             }
         }
+    };
 
-        const Eigen::LLT<Eigen::MatrixXd> llt = stable_llt(std::move(phi));
-        loadings.row(i) = llt.solve(rhs).transpose();
+    {
+        py::gil_scoped_release release;
 
-        if (return_covariances) {
-            const Eigen::MatrixXd av = noise_var * llt.solve(identity);
-            for (int r = 0; r < n_components; ++r) {
-                for (int c = 0; c < n_components; ++c) {
-                    loading_covariances(i, r * n_components + c) = av(r, c);
-                }
+        if (actual_threads <= 1) {
+            worker(0, n_features);
+        } else {
+            std::vector<std::thread> pool;
+            pool.reserve(static_cast<std::size_t>(actual_threads));
+            const int rows_per_thread = n_features / actual_threads;
+            const int remainder = n_features % actual_threads;
+            int current = 0;
+            for (int t = 0; t < actual_threads; ++t) {
+                const int extra = (t < remainder) ? 1 : 0;
+                const int start = current;
+                const int end = start + rows_per_thread + extra;
+                current = end;
+                pool.emplace_back(worker, start, end);
+            }
+            for (auto &th : pool) {
+                th.join();
             }
         }
     }
@@ -365,7 +431,8 @@ PYBIND11_MODULE(dense_update_kernels, m) {
         py::arg("loadings"),
         py::arg("loading_covariances") = py::none(),
         py::arg("noise_var"),
-        py::arg("return_covariances") = true
+        py::arg("return_covariances") = true,
+        py::arg("num_cpu") = 0
     );
 
     m.def(
@@ -377,6 +444,7 @@ PYBIND11_MODULE(dense_update_kernels, m) {
         py::arg("score_covariances") = py::none(),
         py::arg("prior_prec"),
         py::arg("noise_var"),
-        py::arg("return_covariances") = true
+        py::arg("return_covariances") = true,
+        py::arg("num_cpu") = 0
     );
 }

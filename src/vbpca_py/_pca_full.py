@@ -11,10 +11,11 @@ conflict, the helper modules are authoritative.
 
 from __future__ import annotations
 
+import contextlib
 import logging
+import os
 import time
-from collections.abc import MutableMapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, SupportsFloat, SupportsIndex, SupportsInt, cast
 
 import numpy as np
@@ -22,6 +23,7 @@ import scipy.sparse as sp
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, MutableMapping
+    from pathlib import Path
 
 from ._converge import ConvergenceState, _log_and_check_convergence
 from ._expand import _add_m_cols, _add_m_rows
@@ -41,6 +43,7 @@ from ._full_update import (
     _missing_patterns_info,
     _observed_indices_with_mode,
     _prepare_data,
+    _prior_precision_matrix,
     _recompute_rms,
     _update_bias,
     _update_hyperpriors,
@@ -53,10 +56,17 @@ from ._memory import exceeds_budget, format_bytes, resolve_max_dense_bytes
 from ._monitoring import InitialMonitoringInputs, InitShapes, _initial_monitoring
 from ._options import _options
 from ._runtime_policy import (
+    DenseMaskedAutotuneInputs,
     RuntimeThreadConfig,
     RuntimeWorkloadProfile,
+    SparseAutotuneInputs,
+    _build_dense_autotune_candidates,
     apply_runtime_policy_defaults,
+    autotune_dense_masked_threads,
+    autotune_sparse_nopattern_threads,
+    resolve_profile_path,
     resolve_runtime_thread_config_with_report,
+    save_autotune_profile_rule,
 )
 
 logger = logging.getLogger(__name__)
@@ -281,6 +291,19 @@ class IterationContext:
     cfg: IterationConfig
 
 
+@dataclass
+class _AutotuneContext:
+    prepared: PreparedProblem
+    training: TrainingState
+    opts: MutableMapping[str, object]
+    workload: RuntimeWorkloadProfile
+    runtime_threads: RuntimeThreadConfig
+    runtime_report: dict[str, object]
+    tuning_mode: str
+    hw_threads: int
+    profile_path: Path | None
+
+
 # ---------------------------------------------------------------------------
 # Orchestration helpers
 # ---------------------------------------------------------------------------
@@ -501,22 +524,12 @@ def _initialize_model(
     )
 
 
-def _run_training_loop(
+def _resolve_runtime_threads_for_training(
     *,
     prepared: PreparedProblem,
     training: TrainingState,
-    use_prior: bool,
     opts: MutableMapping[str, object],
-) -> TrainingState:
-    """Run the VB / EM iterations, mutating and returning the training state.
-
-    Returns:
-        The updated ``TrainingState`` after running iterations or hitting a stop.
-    """
-    auto_batch = _auto_masked_batch_size(prepared, opts)
-    if auto_batch > 0:
-        opts["masked_batch_size"] = auto_batch
-
+) -> tuple[RuntimeThreadConfig, dict[str, object]]:
     workload = RuntimeWorkloadProfile(
         n_features=int(prepared.n_features),
         n_samples=int(prepared.n_samples),
@@ -534,6 +547,223 @@ def _run_training_loop(
     preflight = opts.pop("_runtime_preflight", None)
     if preflight:
         runtime_report["preflight"] = preflight
+
+    tuning_mode = str(runtime_report.get("runtime_tuning", "off"))
+    if tuning_mode not in {"safe", "aggressive"}:
+        return runtime_threads, runtime_report
+
+    ctx = _AutotuneContext(
+        prepared=prepared,
+        training=training,
+        opts=opts,
+        workload=workload,
+        runtime_threads=runtime_threads,
+        runtime_report=runtime_report,
+        tuning_mode=tuning_mode,
+        hw_threads=max(1, int(os.cpu_count() or 1)),
+        profile_path=resolve_profile_path(opts.get("runtime_profile")),
+    )
+
+    runtime_threads, runtime_report = _autotune_dense_masked_runtime(ctx)
+    runtime_threads, runtime_report = _autotune_sparse_runtime(ctx)
+    return runtime_threads, runtime_report
+
+
+def _autotune_dense_masked_runtime(
+    ctx: _AutotuneContext,
+) -> tuple[RuntimeThreadConfig, dict[str, object]]:
+    if ctx.workload.is_sparse or ctx.prepared.mask is None:
+        return ctx.runtime_threads, ctx.runtime_report
+
+    cap = _thread_cap(
+        hint_threads=ctx.runtime_threads.score_update_dense
+        or ctx.runtime_threads.loadings_update_dense,
+        global_hint=ctx.opts.get("num_cpu"),
+        hw_threads=ctx.hw_threads,
+    )
+
+    candidates = _dense_autotune_candidates(ctx, cap)
+    if not candidates:
+        return ctx.runtime_threads, ctx.runtime_report
+
+    reps = 1 if ctx.tuning_mode == "safe" else 2
+    max_time = 0.25 if ctx.tuning_mode == "safe" else 0.6
+    prior_prec = _prior_precision_matrix(
+        ctx.training.model.va, ctx.training.model.noise_var
+    )
+    inputs = DenseMaskedAutotuneInputs(
+        x_data=np.asarray(ctx.prepared.x_data, dtype=np.float64),
+        mask=np.asarray(ctx.prepared.mask, dtype=np.float64),
+        loadings=np.asarray(ctx.training.model.a, dtype=np.float64),
+        scores=np.asarray(ctx.training.model.s, dtype=np.float64),
+        noise_var=float(ctx.training.model.noise_var),
+        prior_prec=np.asarray(prior_prec, dtype=np.float64),
+    )
+
+    best_score, best_load, auto_report = autotune_dense_masked_threads(
+        inputs,
+        candidates=candidates,
+        reps=reps,
+        max_total_time=max_time,
+        tuning_mode=ctx.tuning_mode,
+    )
+
+    runtime_threads = replace(
+        ctx.runtime_threads,
+        score_update_dense=int(best_score),
+        loadings_update_dense=int(best_load),
+    )
+    runtime_report: dict[str, object] = ctx.runtime_report
+    kernel_values = cast(
+        "dict[str, object]",
+        runtime_report.setdefault("kernel_values", {}),
+    )
+    kernel_sources = cast(
+        "dict[str, object]",
+        runtime_report.setdefault("kernel_sources", {}),
+    )
+    kernel_values["score_update_dense"] = int(best_score)
+    kernel_values["loadings_update_dense"] = int(best_load)
+    kernel_sources["score_update_dense"] = "autotune_measure"
+    kernel_sources["loadings_update_dense"] = "autotune_measure"
+    runtime_report["autotune_dense_masked"] = auto_report
+
+    with contextlib.suppress(OSError):
+        save_autotune_profile_rule(
+            profile_path=ctx.profile_path,
+            workload=ctx.workload,
+            score_threads=int(best_score),
+            loadings_threads=int(best_load),
+            source=f"autotune_dense_masked_{ctx.tuning_mode}",
+        )
+        if ctx.profile_path is not None:
+            runtime_report["runtime_profile_saved"] = str(ctx.profile_path)
+
+    return runtime_threads, runtime_report
+
+
+def _autotune_sparse_runtime(
+    ctx: _AutotuneContext,
+) -> tuple[RuntimeThreadConfig, dict[str, object]]:
+    if not ctx.workload.is_sparse:
+        return ctx.runtime_threads, ctx.runtime_report
+
+    cap = _thread_cap(
+        hint_threads=ctx.runtime_threads.score_update_sparse
+        or ctx.runtime_threads.loadings_update_sparse,
+        global_hint=ctx.opts.get("num_cpu"),
+        hw_threads=ctx.hw_threads,
+    )
+    candidates = _dense_autotune_candidates(ctx, cap)
+    if not candidates:
+        return ctx.runtime_threads, ctx.runtime_report
+
+    reps = 1 if ctx.tuning_mode == "safe" else 2
+    max_time = 0.35 if ctx.tuning_mode == "safe" else 0.8
+    x_csc = sp.csc_matrix(ctx.prepared.x_data)
+    x_csr = sp.csr_matrix(ctx.prepared.x_data)
+    prior_prec = _prior_precision_matrix(
+        ctx.training.model.va, ctx.training.model.noise_var
+    )
+    inputs = SparseAutotuneInputs(
+        n_features=ctx.prepared.n_features,
+        n_samples=ctx.prepared.n_samples,
+        x_csc_data=np.asarray(x_csc.data, dtype=np.float64),
+        x_csc_indices=np.asarray(x_csc.indices, dtype=np.int32),
+        x_csc_indptr=np.asarray(x_csc.indptr, dtype=np.int32),
+        x_csr_data=np.asarray(x_csr.data, dtype=np.float64),
+        x_csr_indices=np.asarray(x_csr.indices, dtype=np.int32),
+        x_csr_indptr=np.asarray(x_csr.indptr, dtype=np.int32),
+        loadings=np.asarray(ctx.training.model.a, dtype=np.float64),
+        scores=np.asarray(ctx.training.model.s, dtype=np.float64),
+        noise_var=float(ctx.training.model.noise_var),
+        prior_prec=np.asarray(prior_prec, dtype=np.float64),
+    )
+
+    best_score, best_load, auto_report = autotune_sparse_nopattern_threads(
+        inputs,
+        candidates=candidates,
+        reps=reps,
+        max_total_time=max_time,
+        tuning_mode=ctx.tuning_mode,
+    )
+
+    runtime_threads = replace(
+        ctx.runtime_threads,
+        score_update_sparse=int(best_score),
+        loadings_update_sparse=int(best_load),
+    )
+    runtime_report: dict[str, object] = ctx.runtime_report
+    kernel_values = cast(
+        "dict[str, object]",
+        runtime_report.setdefault("kernel_values", {}),
+    )
+    kernel_sources = cast(
+        "dict[str, object]",
+        runtime_report.setdefault("kernel_sources", {}),
+    )
+    kernel_values["score_update_sparse"] = int(best_score)
+    kernel_values["loadings_update_sparse"] = int(best_load)
+    kernel_sources["score_update_sparse"] = "autotune_measure"
+    kernel_sources["loadings_update_sparse"] = "autotune_measure"
+    runtime_report["autotune_sparse"] = auto_report
+
+    with contextlib.suppress(OSError):
+        save_autotune_profile_rule(
+            profile_path=ctx.profile_path,
+            workload=ctx.workload,
+            score_threads=int(best_score),
+            loadings_threads=int(best_load),
+        )
+        if ctx.profile_path is not None:
+            runtime_report["runtime_profile_saved"] = str(ctx.profile_path)
+
+    return runtime_threads, runtime_report
+
+
+def _dense_autotune_candidates(ctx: _AutotuneContext, cap: int) -> list[int]:
+    score_candidates = _build_dense_autotune_candidates(
+        max_threads=cap,
+        axis_limit=ctx.prepared.n_samples,
+        tuning_mode=ctx.tuning_mode,
+    )
+    load_candidates = _build_dense_autotune_candidates(
+        max_threads=cap,
+        axis_limit=ctx.prepared.n_features,
+        tuning_mode=ctx.tuning_mode,
+    )
+    return sorted(set(score_candidates + load_candidates))
+
+
+def _thread_cap(*, hint_threads: object, global_hint: object, hw_threads: int) -> int:
+    cap = hw_threads
+    if isinstance(hint_threads, int) and hint_threads > 0:
+        return min(cap, int(hint_threads))
+    if isinstance(global_hint, int) and global_hint > 0:
+        return min(cap, int(global_hint))
+    return cap
+
+
+def _run_training_loop(
+    *,
+    prepared: PreparedProblem,
+    training: TrainingState,
+    use_prior: bool,
+    opts: MutableMapping[str, object],
+) -> TrainingState:
+    """Run the VB / EM iterations, mutating and returning the training state.
+
+    Returns:
+        The updated ``TrainingState`` after running iterations or hitting a stop.
+    """
+    auto_batch = _auto_masked_batch_size(prepared, opts)
+    if auto_batch > 0:
+        opts["masked_batch_size"] = auto_batch
+    runtime_threads, runtime_report = _resolve_runtime_threads_for_training(
+        prepared=prepared,
+        training=training,
+        opts=opts,
+    )
     training.runtime_report = runtime_report
 
     # Hyperparameters for Va, Vmu, V (kept here for compatibility).

@@ -10,9 +10,18 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+import numpy as np
+
+from . import dense_update_kernels as duk
+from . import sparse_update_kernels as suk
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Sequence
 
 
 @dataclass(frozen=True)
@@ -59,6 +68,58 @@ class RuntimeWorkloadProfile:
 
 
 @dataclass(frozen=True)
+class DenseMaskedAutotuneInputs:
+    """Inputs required to benchmark dense masked kernels."""
+
+    x_data: np.ndarray
+    mask: np.ndarray
+    loadings: np.ndarray
+    scores: np.ndarray
+    noise_var: float
+    prior_prec: np.ndarray
+
+
+@dataclass(frozen=True)
+class SparseAutotuneInputs:
+    """Inputs required to benchmark sparse no-pattern kernels."""
+
+    n_features: int
+    n_samples: int
+    x_csc_data: np.ndarray
+    x_csc_indices: np.ndarray
+    x_csc_indptr: np.ndarray
+    x_csr_data: np.ndarray
+    x_csr_indices: np.ndarray
+    x_csr_indptr: np.ndarray
+    loadings: np.ndarray
+    scores: np.ndarray
+    noise_var: float
+    prior_prec: np.ndarray
+
+
+@dataclass(frozen=True)
+class _DenseBenchmarkArrays:
+    x: np.ndarray
+    mask: np.ndarray
+    loadings: np.ndarray
+    scores: np.ndarray
+    prior_prec: np.ndarray
+
+
+@dataclass(frozen=True)
+class _SparseBenchmarkArrays:
+    x_csc_data: np.ndarray
+    x_csc_indices: np.ndarray
+    x_csc_indptr: np.ndarray
+    x_csr_data: np.ndarray
+    x_csr_indices: np.ndarray
+    x_csr_indptr: np.ndarray
+    loadings: np.ndarray
+    scores: np.ndarray
+    prior_prec: np.ndarray
+
+
+@dataclass(frozen=True)
 class _ThreadResolutionInputs:
     opts: dict[str, object]
     env_keys: RuntimeEnvKeys
@@ -92,6 +153,15 @@ def _normalize_profile_option(value: object | None) -> Path | None:
     return Path(raw).expanduser()
 
 
+def resolve_profile_path(value: object | None) -> Path | None:
+    """Public wrapper to resolve a runtime profile path (supports "auto").
+
+    Returns:
+        Expanded path or ``None`` if unset/empty.
+    """
+    return _normalize_profile_option(value)
+
+
 def _load_runtime_profile_data(
     profile_option: object | None,
 ) -> dict[str, object] | None:
@@ -103,6 +173,65 @@ def _load_runtime_profile_data(
     except (OSError, json.JSONDecodeError):
         return None
     return data if isinstance(data, dict) else None
+
+
+def _persist_runtime_profile(
+    profile_path: Path,
+    data: dict[str, object],
+) -> None:
+    profile_path.parent.mkdir(parents=True, exist_ok=True)
+    profile_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+
+def save_autotune_profile_rule(
+    *,
+    profile_path: Path | None,
+    workload: RuntimeWorkloadProfile,
+    score_threads: int,
+    loadings_threads: int,
+    source: str = "autotune_dense_masked",
+) -> None:
+    """Persist a workload-specific thread rule into the runtime profile.
+
+    The rule matches the exact observed workload bounds; callers should pass
+    an appropriate profile path (use ``resolve_profile_path`` to honor "auto").
+    """
+    if profile_path is None:
+        return
+
+    data = _load_runtime_profile_data(profile_path) or {
+        "schema_version": 1,
+        "default_threads": {},
+        "workload_rules": [],
+    }
+
+    rules = data.get("workload_rules")
+    if not isinstance(rules, list):
+        rules = []
+
+    rule = {
+        "match": {
+            "is_sparse": bool(workload.is_sparse),
+            "min_features": int(workload.n_features),
+            "max_features": int(workload.n_features),
+            "min_samples": int(workload.n_samples),
+            "max_samples": int(workload.n_samples),
+            "min_components": int(workload.n_components),
+            "max_components": int(workload.n_components),
+            "min_observed": int(workload.n_observed),
+            "max_observed": int(workload.n_observed),
+        },
+        "threads": {
+            "num_cpu_score_update": int(score_threads),
+            "num_cpu_loadings_update": int(loadings_threads),
+        },
+        "source": source,
+        "updated_at": time.time(),
+    }
+
+    rules.append(rule)
+    data["workload_rules"] = rules
+    _persist_runtime_profile(profile_path, data)
 
 
 def _coerce_profile_thread_map(raw: object) -> dict[str, int]:
@@ -329,6 +458,256 @@ def _resolved_option_value(value: object | None) -> int | None:
     if parsed <= 0:
         return None
     return int(parsed)
+
+
+def _build_dense_autotune_candidates(
+    *,
+    max_threads: int,
+    axis_limit: int,
+    tuning_mode: str,
+) -> list[int]:
+    """Conservative candidate set for dense masked threading autotune.
+
+    Returns:
+        Sorted list of candidate thread counts.
+    """
+    hw = os.cpu_count() or 1
+    cap = max(1, min(int(max_threads), int(hw), int(axis_limit)))
+
+    seeds = [1, cap]
+    seeds.extend([val for val in (2, 4, 8) if val <= cap])
+    if cap > 2:
+        seeds.append(max(1, cap // 2))
+
+    unique = [max(1, min(cap, int(axis_limit), int(s))) for s in seeds]
+
+    if tuning_mode == "aggressive" and cap > 8:
+        unique.extend((min(cap, 12), min(cap, 16)))
+
+    # Deduplicate and keep ascending.
+    dedup = []
+    for val in sorted(set(unique)):
+        if val not in dedup:
+            dedup.append(val)
+    return dedup
+
+
+def _normalize_candidate_list(
+    candidates: Sequence[int],
+    axis_limit: int,
+    hw_threads: int,
+) -> list[int]:
+    """Clamp candidate thread counts to available hardware and axis size.
+
+    Returns:
+        Normalized candidate list respecting ``axis_limit`` and hardware bounds.
+    """
+
+    def _norm(val: int) -> int:
+        if val <= 0:
+            return min(hw_threads, axis_limit)
+        return max(1, min(int(val), hw_threads, axis_limit))
+
+    return [_norm(c) for c in candidates]
+
+
+def _benchmark_pair_candidates(
+    cand_score: Sequence[int],
+    cand_load: Sequence[int],
+    bench_score: Callable[[int], float],
+    bench_load: Callable[[int], float],
+    max_total_time: float,
+) -> tuple[int, int, dict[int, float], dict[int, float], float]:
+    start = time.perf_counter()
+    best_score = cand_score[0]
+    best_score_time = float("inf")
+    best_load = cand_load[0]
+    best_load_time = float("inf")
+    score_timings: dict[int, float] = {}
+    load_timings: dict[int, float] = {}
+
+    for s_threads, l_threads in zip(cand_score, cand_load, strict=False):
+        if time.perf_counter() - start > max_total_time:
+            break
+
+        score_t = bench_score(s_threads)
+        load_t = bench_load(l_threads)
+        score_timings[s_threads] = score_t
+        load_timings[l_threads] = load_t
+
+        if score_t < best_score_time:
+            best_score_time = score_t
+            best_score = s_threads
+        if load_t < best_load_time:
+            best_load_time = load_t
+            best_load = l_threads
+
+    elapsed = time.perf_counter() - start
+    return best_score, best_load, score_timings, load_timings, elapsed
+
+
+def autotune_dense_masked_threads(
+    inputs: DenseMaskedAutotuneInputs,
+    *,
+    candidates: Sequence[int],
+    reps: int = 1,
+    max_total_time: float = 0.35,
+    tuning_mode: str = "safe",
+) -> tuple[int, int, dict[str, object]]:
+    """Benchmark dense masked kernels to pick best num_cpu for score/loadings.
+
+    Returns:
+        Tuple of (score_threads, loadings_threads, benchmark report).
+    """
+    hw_threads = max(1, int(os.cpu_count() or 1))
+    score_axis = int(inputs.x_data.shape[1])
+    load_axis = int(inputs.x_data.shape[0])
+
+    cand_score = _normalize_candidate_list(candidates, score_axis, hw_threads)
+    cand_load = _normalize_candidate_list(candidates, load_axis, hw_threads)
+
+    arrays = _DenseBenchmarkArrays(
+        x=np.asarray(inputs.x_data, dtype=np.float64, order="C"),
+        mask=np.asarray(inputs.mask, dtype=np.float64, order="C"),
+        loadings=np.asarray(inputs.loadings, dtype=np.float64, order="C"),
+        scores=np.asarray(inputs.scores, dtype=np.float64, order="C"),
+        prior_prec=np.asarray(inputs.prior_prec, dtype=np.float64, order="C"),
+    )
+
+    def _bench_score(num_cpu: int) -> float:
+        t0 = time.perf_counter()
+        for _ in range(reps):
+            duk.score_update_dense_masked_nopattern(
+                x_data=arrays.x,
+                mask=arrays.mask,
+                loadings=arrays.loadings,
+                loading_covariances=None,
+                noise_var=float(inputs.noise_var),
+                return_covariances=False,
+                num_cpu=num_cpu,
+            )
+        return (time.perf_counter() - t0) / float(max(1, reps))
+
+    def _bench_load(num_cpu: int) -> float:
+        t0 = time.perf_counter()
+        for _ in range(reps):
+            duk.loadings_update_dense_masked_nopattern(
+                x_data=arrays.x,
+                mask=arrays.mask,
+                scores=arrays.scores,
+                score_covariances=None,
+                prior_prec=arrays.prior_prec,
+                noise_var=float(inputs.noise_var),
+                return_covariances=False,
+                num_cpu=num_cpu,
+            )
+        return (time.perf_counter() - t0) / float(max(1, reps))
+
+    best_score, best_load, score_timings, load_timings, elapsed = (
+        _benchmark_pair_candidates(
+            cand_score,
+            cand_load,
+            _bench_score,
+            _bench_load,
+            max_total_time,
+        )
+    )
+
+    report: dict[str, object] = {
+        "mode": tuning_mode,
+        "candidates": sorted(set(candidates)),
+        "score": {str(k): v for k, v in score_timings.items()},
+        "loadings": {str(k): v for k, v in load_timings.items()},
+        "elapsed_sec": float(elapsed),
+        "max_total_time_sec": float(max_total_time),
+        "reps": int(reps),
+    }
+
+    return int(best_score), int(best_load), report
+
+
+def autotune_sparse_nopattern_threads(
+    inputs: SparseAutotuneInputs,
+    *,
+    candidates: Sequence[int],
+    reps: int = 1,
+    max_total_time: float = 0.35,
+    tuning_mode: str = "safe",
+) -> tuple[int, int, dict[str, object]]:
+    """Benchmark sparse no-pattern kernels to pick best num_cpu for score/loadings.
+
+    Returns:
+        Tuple of (score_threads, loadings_threads, benchmark report).
+    """
+    hw_threads = max(1, int(os.cpu_count() or 1))
+
+    cand_score = _normalize_candidate_list(candidates, inputs.n_samples, hw_threads)
+    cand_load = _normalize_candidate_list(candidates, inputs.n_features, hw_threads)
+
+    arrays = _SparseBenchmarkArrays(
+        x_csc_data=np.asarray(inputs.x_csc_data, dtype=np.float64, order="C"),
+        x_csc_indices=np.asarray(inputs.x_csc_indices, dtype=np.int32, order="C"),
+        x_csc_indptr=np.asarray(inputs.x_csc_indptr, dtype=np.int32, order="C"),
+        x_csr_data=np.asarray(inputs.x_csr_data, dtype=np.float64, order="C"),
+        x_csr_indices=np.asarray(inputs.x_csr_indices, dtype=np.int32, order="C"),
+        x_csr_indptr=np.asarray(inputs.x_csr_indptr, dtype=np.int32, order="C"),
+        loadings=np.asarray(inputs.loadings, dtype=np.float64, order="C"),
+        scores=np.asarray(inputs.scores, dtype=np.float64, order="C"),
+        prior_prec=np.asarray(inputs.prior_prec, dtype=np.float64, order="C"),
+    )
+
+    def _bench_score(num_cpu: int) -> float:
+        t0 = time.perf_counter()
+        for _ in range(reps):
+            suk.score_update_sparse_nopattern(
+                x_data=arrays.x_csc_data,
+                x_indices=arrays.x_csc_indices,
+                x_indptr=arrays.x_csc_indptr,
+                loadings=arrays.loadings,
+                loading_covariances=None,
+                noise_var=float(inputs.noise_var),
+                return_covariances=False,
+                num_cpu=num_cpu,
+            )
+        return (time.perf_counter() - t0) / float(max(1, reps))
+
+    def _bench_load(num_cpu: int) -> float:
+        t0 = time.perf_counter()
+        for _ in range(reps):
+            suk.loadings_update_sparse_nopattern(
+                x_data=arrays.x_csr_data,
+                x_indices=arrays.x_csr_indices,
+                x_indptr=arrays.x_csr_indptr,
+                scores=arrays.scores,
+                score_covariances=None,
+                prior_prec=arrays.prior_prec,
+                noise_var=float(inputs.noise_var),
+                return_covariances=False,
+                num_cpu=num_cpu,
+            )
+        return (time.perf_counter() - t0) / float(max(1, reps))
+
+    best_score, best_load, score_timings, load_timings, elapsed = (
+        _benchmark_pair_candidates(
+            cand_score,
+            cand_load,
+            _bench_score,
+            _bench_load,
+            max_total_time,
+        )
+    )
+
+    report: dict[str, object] = {
+        "mode": tuning_mode,
+        "candidates": sorted(set(candidates)),
+        "score": {str(k): v for k, v in score_timings.items()},
+        "loadings": {str(k): v for k, v in load_timings.items()},
+        "elapsed_sec": float(elapsed),
+        "max_total_time_sec": float(max_total_time),
+        "reps": int(reps),
+    }
+
+    return int(best_score), int(best_load), report
 
 
 def _safe_autotune_rms_threads(profile: RuntimeWorkloadProfile) -> int:

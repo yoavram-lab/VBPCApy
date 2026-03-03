@@ -1,7 +1,6 @@
 """Build configuration for the vbpca_py package."""
 
 import os
-import sys
 from pathlib import Path
 
 import pybind11
@@ -48,23 +47,8 @@ def get_eigen_include_path() -> str:
 
 
 def get_openmp_args() -> tuple[list[str], list[str]]:
-    """Return compiler/linker flags for OpenMP if available.
-
-    Allows opt-out via ``VBPCA_DISABLE_OPENMP=1`` to keep builds portable
-    where libomp is not installed.
-    """
-    if os.environ.get("VBPCA_DISABLE_OPENMP", "0") == "1":
-        return [], []
-
-    if os.name == "nt":
-        # MSVC uses the /openmp switch; linking handled by the toolchain.
-        return ["/openmp"], []
-
-    if sys.platform.startswith("darwin"):
-        # Clang on macOS requires the -Xpreprocessor flag and linking libomp.
-        return ["-Xpreprocessor", "-fopenmp"], ["-lomp"]
-
-    return ["-fopenmp"], ["-fopenmp"]
+    """OpenMP is not used; keep for compatibility."""
+    return [], []
 
 
 ext_modules = [
@@ -105,8 +89,7 @@ ext_modules = [
             get_eigen_include_path(),
         ],
         language="c++",
-        extra_compile_args=["-O3", "-std=c++14", *get_openmp_args()[0]],
-        extra_link_args=get_openmp_args()[1],
+        extra_compile_args=["-O3", "-std=c++14"],
     ),
     Extension(
         name="vbpca_py.noise_update_kernels",

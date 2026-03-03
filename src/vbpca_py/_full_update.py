@@ -1354,6 +1354,7 @@ def _score_update_general_dense_ext(state: ScoreState) -> ScoreState:
         loading_covariances=av_arg,
         noise_var=float(state.noise_var),
         return_covariances=return_score_covariances,
+        num_cpu=int(state.dense_num_cpu),
     )
 
     state.scores[:, :] = np.asarray(result["scores"], dtype=float)
@@ -1400,6 +1401,7 @@ def _loadings_update_general_dense_ext(
         prior_prec=np.asarray(prior_prec, dtype=np.float64),
         noise_var=float(state.noise_var),
         return_covariances=return_loading_covariances,
+        num_cpu=int(state.dense_num_cpu),
     )
 
     loadings = np.asarray(result["loadings"], dtype=float)
