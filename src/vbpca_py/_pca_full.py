@@ -64,6 +64,9 @@ from ._runtime_policy import (
     apply_runtime_policy_defaults,
     autotune_dense_masked_threads,
     autotune_sparse_nopattern_threads,
+    normalize_accessor_mode,
+    normalize_cov_writeback_mode,
+    normalize_log_progress_stride,
     resolve_profile_path,
     resolve_runtime_thread_config_with_report,
     save_autotune_profile_rule,
@@ -549,23 +552,32 @@ def _resolve_runtime_threads_for_training(
         runtime_report["preflight"] = preflight
 
     tuning_mode = str(runtime_report.get("runtime_tuning", "off"))
-    if tuning_mode not in {"safe", "aggressive"}:
-        return runtime_threads, runtime_report
+    if tuning_mode in {"safe", "aggressive"}:
+        ctx = _AutotuneContext(
+            prepared=prepared,
+            training=training,
+            opts=opts,
+            workload=workload,
+            runtime_threads=runtime_threads,
+            runtime_report=runtime_report,
+            tuning_mode=tuning_mode,
+            hw_threads=max(1, int(os.cpu_count() or 1)),
+            profile_path=resolve_profile_path(opts.get("runtime_profile")),
+        )
 
-    ctx = _AutotuneContext(
-        prepared=prepared,
-        training=training,
-        opts=opts,
-        workload=workload,
-        runtime_threads=runtime_threads,
-        runtime_report=runtime_report,
-        tuning_mode=tuning_mode,
-        hw_threads=max(1, int(os.cpu_count() or 1)),
-        profile_path=resolve_profile_path(opts.get("runtime_profile")),
+        runtime_threads, runtime_report = _autotune_dense_masked_runtime(ctx)
+        runtime_threads, runtime_report = _autotune_sparse_runtime(ctx)
+
+    cov_writeback_mode, log_stride, accessor_mode, behavior_sources = (
+        _resolve_runtime_behavior(
+            opts=opts,
+            tuning_mode=tuning_mode,
+        )
     )
-
-    runtime_threads, runtime_report = _autotune_dense_masked_runtime(ctx)
-    runtime_threads, runtime_report = _autotune_sparse_runtime(ctx)
+    runtime_report["cov_writeback_mode"] = cov_writeback_mode
+    runtime_report["log_progress_stride"] = int(log_stride)
+    runtime_report["accessor_mode"] = accessor_mode
+    runtime_report["behavior_sources"] = behavior_sources
     return runtime_threads, runtime_report
 
 
@@ -735,6 +747,56 @@ def _dense_autotune_candidates(ctx: _AutotuneContext, cap: int) -> list[int]:
     return sorted(set(score_candidates + load_candidates))
 
 
+def _resolve_runtime_behavior(
+    *, opts: MutableMapping[str, object], tuning_mode: str
+) -> tuple[str, int, str, dict[str, str]]:
+    cov_raw = opts.get("cov_writeback_mode")
+    cov_mode = normalize_cov_writeback_mode(cov_raw)
+    cov_source = "option" if cov_raw is not None else "default"
+
+    if cov_mode == "auto":
+        if tuning_mode in {"safe", "aggressive"}:
+            cov_mode = "bulk"
+            cov_source = "tuning"
+        else:
+            cov_mode = "python"
+
+    log_raw = opts.get("log_progress_stride")
+    log_stride = normalize_log_progress_stride(log_raw, default=1)
+    log_source = "option" if log_raw is not None else "default"
+
+    verbose = _int_opt(opts.get("verbose", 0), default=0)
+    if log_raw is None and tuning_mode in {"safe", "aggressive"} and verbose <= 0:
+        log_stride = 0
+        log_source = "tuning"
+
+    opts["cov_writeback_mode"] = cov_mode
+    opts["log_progress_stride"] = log_stride
+
+    accessor_raw = opts.get("accessor_mode")
+    accessor_mode = normalize_accessor_mode(accessor_raw)
+    accessor_source = "option" if accessor_raw is not None else "default"
+
+    if accessor_mode == "auto":
+        if tuning_mode in {"safe", "aggressive"}:
+            accessor_mode = "buffered"
+            accessor_source = "tuning"
+        else:
+            accessor_mode = "legacy"
+    opts["accessor_mode"] = accessor_mode
+
+    return (
+        cov_mode,
+        int(log_stride),
+        accessor_mode,
+        {
+            "cov_writeback_mode": cov_source,
+            "log_progress_stride": log_source,
+            "accessor_mode": accessor_source,
+        },
+    )
+
+
 def _thread_cap(*, hint_threads: object, global_hint: object, hw_threads: int) -> int:
     cap = hw_threads
     if isinstance(hint_threads, int) and hint_threads > 0:
@@ -902,6 +964,11 @@ def _score_and_rotate(
         x_csc=score_x_csc,
         sparse_num_cpu=cfg.runtime_threads.score_update_sparse,
         dense_num_cpu=cfg.runtime_threads.score_update_dense,
+        cov_writeback_mode=str(cfg.opts.get("cov_writeback_mode", "python")),
+        log_progress_stride=max(
+            0, _int_opt(cfg.opts.get("log_progress_stride", 1), default=1)
+        ),
+        accessor_mode=str(cfg.opts.get("accessor_mode", "legacy")),
     )
     score_state = _update_scores(score_state)
     m.s = score_state.scores
@@ -944,6 +1011,11 @@ def _update_loadings_phase(ctx: IterationContext, x_data: Matrix) -> float:
             x_csc=loadings_x_csc,
             sparse_num_cpu=cfg.runtime_threads.loadings_update_sparse,
             dense_num_cpu=cfg.runtime_threads.loadings_update_dense,
+            cov_writeback_mode=str(cfg.opts.get("cov_writeback_mode", "python")),
+            log_progress_stride=max(
+                0, _int_opt(cfg.opts.get("log_progress_stride", 1), default=1)
+            ),
+            accessor_mode=str(cfg.opts.get("accessor_mode", "legacy")),
         )
     )
     return time.perf_counter() - loadings_start

@@ -64,6 +64,26 @@ def _covariances_stack(covariances: CovarianceStore) -> np.ndarray:
     return np.stack(covariances, axis=0).astype(np.float64, copy=False)
 
 
+def _progress_should_log(verbose: int, stride: int, current: int, total: int) -> bool:
+    if verbose <= 0:
+        return False
+    effective_stride = max(1, stride)
+    return (current % effective_stride) == 0 or current >= total
+
+
+def _log_progress_if_needed(
+    verbose: int,
+    stride: int,
+    current: int,
+    total: int,
+    *,
+    phase: str,
+) -> None:
+    if not _progress_should_log(verbose, stride, current, total):
+        return
+    log_progress(verbose, current=current, total=total, phase=phase)
+
+
 # ---------------------------------------------------------------------------
 # Small state / context containers
 # ---------------------------------------------------------------------------
@@ -111,6 +131,9 @@ class ScoreState:
     x_csr: sp.csr_matrix | None = None
     x_csc: sp.csc_matrix | None = None
     use_python_scores: bool = False
+    cov_writeback_mode: str = "python"
+    log_progress_stride: int = 1
+    accessor_mode: str = "legacy"
 
 
 @dataclass
@@ -180,6 +203,9 @@ class LoadingsUpdateState:
     dense_num_cpu: int = 0
     x_csr: sp.csr_matrix | None = None
     x_csc: sp.csc_matrix | None = None
+    cov_writeback_mode: str = "python"
+    log_progress_stride: int = 1
+    accessor_mode: str = "legacy"
 
 
 @dataclass
@@ -844,14 +870,30 @@ def _score_update_fast_dense_no_av(state: ScoreState) -> ScoreState:
     )
     state.scores[:, :] = np.asarray(result["scores"], dtype=float)
 
+    log_stride = int(getattr(state, "log_progress_stride", 1))
+    cov_writeback_mode = str(getattr(state, "cov_writeback_mode", "python"))
+
     if _has_covariances(state.score_covariances) and "score_covariance" in result:
         cov_common = np.asarray(result["score_covariance"], dtype=float)
+
+        if cov_writeback_mode != "python":
+            state.score_covariances = [cov_common] * n_samples
+            _log_progress_if_needed(
+                state.verbose,
+                log_stride,
+                n_samples,
+                n_samples,
+                phase="Updating scores",
+            )
+            return state
+
         for j in range(n_samples):
             state.score_covariances[j] = cov_common
-            log_progress(
+            _log_progress_if_needed(
                 state.verbose,
-                current=j + 1,
-                total=n_samples,
+                log_stride,
+                j + 1,
+                n_samples,
                 phase="Updating scores",
             )
     return state
@@ -869,51 +911,194 @@ def _safe_cholesky(mat: np.ndarray, eye: np.ndarray) -> ChoFactor:
         return cho_factor(mat_sym + _EPS_VAR * eye, lower=True, check_finite=False)
 
 
+def _csc_column_accessor(
+    matrix: sp.csc_matrix,
+    *,
+    use_buffered: bool,
+) -> Callable[[int], np.ndarray]:
+    data = matrix.data
+    indices = matrix.indices
+    indptr = matrix.indptr
+    n_rows = matrix.shape[0]
+
+    if use_buffered:
+        buf = np.zeros(n_rows, dtype=float)
+
+        def col_buffered(j: int) -> np.ndarray:
+            buf.fill(0.0)
+            start = int(indptr[j])
+            end = int(indptr[j + 1])
+            if end > start:
+                buf[indices[start:end]] = data[start:end]
+            return buf
+
+        return col_buffered
+
+    def col_allocating(j: int) -> np.ndarray:
+        out = np.zeros(n_rows, dtype=float)
+        start = int(indptr[j])
+        end = int(indptr[j + 1])
+        if end > start:
+            out[indices[start:end]] = data[start:end]
+        return out
+
+    return col_allocating
+
+
+def _csc_mask_column_accessor(
+    matrix: sp.csc_matrix,
+    *,
+    use_buffered: bool,
+) -> Callable[[int], np.ndarray]:
+    indices = matrix.indices
+    indptr = matrix.indptr
+    n_rows = matrix.shape[0]
+
+    if use_buffered:
+        buf = np.zeros(n_rows, dtype=float)
+
+        def col_buffered(j: int) -> np.ndarray:
+            buf.fill(0.0)
+            start = int(indptr[j])
+            end = int(indptr[j + 1])
+            if end > start:
+                buf[indices[start:end]] = 1.0
+            return buf
+
+        return col_buffered
+
+    def col_allocating(j: int) -> np.ndarray:
+        out = np.zeros(n_rows, dtype=float)
+        start = int(indptr[j])
+        end = int(indptr[j + 1])
+        if end > start:
+            out[indices[start:end]] = 1.0
+        return out
+
+    return col_allocating
+
+
+def _csr_row_accessor(
+    matrix: sp.csr_matrix,
+    *,
+    use_buffered: bool,
+) -> Callable[[int], np.ndarray]:
+    data = matrix.data
+    indices = matrix.indices
+    indptr = matrix.indptr
+    n_cols = matrix.shape[1]
+
+    if use_buffered:
+        buf = np.zeros(n_cols, dtype=float)
+
+        def row_buffered(i: int) -> np.ndarray:
+            buf.fill(0.0)
+            start = int(indptr[i])
+            end = int(indptr[i + 1])
+            if end > start:
+                buf[indices[start:end]] = data[start:end]
+            return buf
+
+        return row_buffered
+
+    def row_allocating(i: int) -> np.ndarray:
+        out = np.zeros(n_cols, dtype=float)
+        start = int(indptr[i])
+        end = int(indptr[i + 1])
+        if end > start:
+            out[indices[start:end]] = data[start:end]
+        return out
+
+    return row_allocating
+
+
+def _csr_mask_row_accessor(
+    matrix: sp.csr_matrix,
+    *,
+    use_buffered: bool,
+) -> Callable[[int], np.ndarray]:
+    indices = matrix.indices
+    indptr = matrix.indptr
+    n_cols = matrix.shape[1]
+
+    if use_buffered:
+        buf = np.zeros(n_cols, dtype=float)
+
+        def row_buffered(i: int) -> np.ndarray:
+            buf.fill(0.0)
+            start = int(indptr[i])
+            end = int(indptr[i + 1])
+            if end > start:
+                buf[indices[start:end]] = 1.0
+            return buf
+
+        return row_buffered
+
+    def row_allocating(i: int) -> np.ndarray:
+        out = np.zeros(n_cols, dtype=float)
+        start = int(indptr[i])
+        end = int(indptr[i + 1])
+        if end > start:
+            out[indices[start:end]] = 1.0
+        return out
+
+    return row_allocating
+
+
+def _dense_column_accessor(arr: np.ndarray) -> Callable[[int], np.ndarray]:
+    def _col(j: int) -> np.ndarray:
+        return np.asarray(arr[:, j], dtype=float)
+
+    return _col
+
+
+def _dense_mask_column_accessor(arr: np.ndarray) -> Callable[[int], np.ndarray]:
+    def _col(j: int) -> np.ndarray:
+        return np.asarray(arr[:, j], dtype=float)
+
+    return _col
+
+
+def _dense_row_accessor(arr: np.ndarray) -> Callable[[int], np.ndarray]:
+    def _row(i: int) -> np.ndarray:
+        return np.asarray(arr[i, :], dtype=float)
+
+    return _row
+
+
+def _dense_mask_row_accessor(arr: np.ndarray) -> Callable[[int], np.ndarray]:
+    def _row(i: int) -> np.ndarray:
+        return np.asarray(arr[i, :], dtype=float)
+
+    return _row
+
+
 def _score_accessors(
     state: ScoreState,
 ) -> tuple[Callable[[int], np.ndarray], Callable[[int], np.ndarray], int]:
+    accessor_mode = str(getattr(state, "accessor_mode", "legacy"))
+    use_buffered = (
+        accessor_mode == "buffered"
+        and int(getattr(state, "pattern_batch_size", 0)) <= 1
+    )
+
     if sp.issparse(state.x_data):
         x_csc = state.x_csc if state.x_csc is not None else sp.csc_matrix(state.x_data)
-        x_data = x_csc.data
-        x_indices = x_csc.indices
-        x_indptr = x_csc.indptr
-        n_rows = x_csc.shape[0]
-
-        def _x_col(j: int) -> np.ndarray:
-            out = np.zeros(n_rows, dtype=float)
-            start = int(x_indptr[j])
-            end = int(x_indptr[j + 1])
-            if end > start:
-                out[x_indices[start:end]] = x_data[start:end]
-            return out
+        x_col = _csc_column_accessor(x_csc, use_buffered=use_buffered)
 
     else:
         x_arr = np.asarray(state.x_data, dtype=float)
-
-        def _x_col(j: int) -> np.ndarray:
-            return np.asarray(x_arr[:, j], dtype=float)
+        x_col = _dense_column_accessor(x_arr)
 
     if sp.issparse(state.mask):
         mask_csc = sp.csc_matrix(state.mask)
-        mask_indices = mask_csc.indices
-        mask_indptr = mask_csc.indptr
-        n_mask_rows = mask_csc.shape[0]
-
-        def _mask_col(j: int) -> np.ndarray:
-            out = np.zeros(n_mask_rows, dtype=float)
-            start = int(mask_indptr[j])
-            end = int(mask_indptr[j + 1])
-            if end > start:
-                out[mask_indices[start:end]] = 1.0
-            return out
+        mask_col = _csc_mask_column_accessor(mask_csc, use_buffered=use_buffered)
 
     else:
         mask_arr = np.asarray(state.mask, dtype=float)
+        mask_col = _dense_mask_column_accessor(mask_arr)
 
-        def _mask_col(j: int) -> np.ndarray:
-            return np.asarray(mask_arr[:, j], dtype=float)
-
-    return _x_col, _mask_col, int(state.x_data.shape[1])
+    return x_col, mask_col, int(state.x_data.shape[1])
 
 
 def _score_cholesky(
@@ -977,6 +1162,8 @@ def _score_update_general_no_patterns(state: ScoreState) -> ScoreState:
 
     x_col, mask_col, n_samples = _score_accessors(state)
 
+    log_stride = int(getattr(state, "log_progress_stride", 1))
+
     for j in range(n_samples):
         mask_vec = mask_col(j)
         cho, loadings_masked, sv_pattern = _score_cholesky(
@@ -988,10 +1175,11 @@ def _score_update_general_no_patterns(state: ScoreState) -> ScoreState:
         rhs = loadings_masked.T @ x_col(j)
         state.scores[:, j] = cho_solve(cho, rhs, check_finite=False)
 
-        log_progress(
+        _log_progress_if_needed(
             state.verbose,
-            current=j + 1,
-            total=n_samples,
+            log_stride,
+            j + 1,
+            n_samples,
             phase="Updating scores",
         )
 
@@ -1020,6 +1208,8 @@ def _score_update_with_patterns(state: ScoreState) -> ScoreState:
     """
     x_col, mask_col, _ = _score_accessors(state)
 
+    log_stride = int(getattr(state, "log_progress_stride", 1))
+
     for pattern_index, cols in enumerate(state.obs_patterns):
         if not cols:
             continue
@@ -1033,10 +1223,11 @@ def _score_update_with_patterns(state: ScoreState) -> ScoreState:
             batch_size=int(state.pattern_batch_size),
         )
 
-        log_progress(
+        _log_progress_if_needed(
             state.verbose,
-            current=pattern_index + 1,
-            total=len(state.obs_patterns),
+            log_stride,
+            pattern_index + 1,
+            len(state.obs_patterns),
             phase="Updating scores (patterns)",
         )
 
@@ -1085,48 +1276,26 @@ def _update_scores(state: ScoreState) -> ScoreState:
 def _loadings_accessors(
     state: LoadingsUpdateState,
 ) -> tuple[Callable[[int], np.ndarray], Callable[[int], np.ndarray], int]:
+    accessor_mode = str(getattr(state, "accessor_mode", "legacy"))
+    use_buffered = accessor_mode == "buffered"
+
     if sp.issparse(state.x_data):
         x_csr = state.x_csr if state.x_csr is not None else sp.csr_matrix(state.x_data)
-        x_data = x_csr.data
-        x_indices = x_csr.indices
-        x_indptr = x_csr.indptr
-        n_cols = x_csr.shape[1]
-
-        def _x_row(i: int) -> np.ndarray:
-            out = np.zeros(n_cols, dtype=float)
-            start = int(x_indptr[i])
-            end = int(x_indptr[i + 1])
-            if end > start:
-                out[x_indices[start:end]] = x_data[start:end]
-            return out
+        x_row = _csr_row_accessor(x_csr, use_buffered=use_buffered)
 
     else:
         x_arr = np.asarray(state.x_data, dtype=float)
-
-        def _x_row(i: int) -> np.ndarray:
-            return np.asarray(x_arr[i, :], dtype=float)
+        x_row = _dense_row_accessor(x_arr)
 
     if sp.issparse(state.mask):
         mask_csr = sp.csr_matrix(state.mask)
-        mask_indices = mask_csr.indices
-        mask_indptr = mask_csr.indptr
-        n_mask_cols = mask_csr.shape[1]
-
-        def _mask_row(i: int) -> np.ndarray:
-            out = np.zeros(n_mask_cols, dtype=float)
-            start = int(mask_indptr[i])
-            end = int(mask_indptr[i + 1])
-            if end > start:
-                out[mask_indices[start:end]] = 1.0
-            return out
+        mask_row = _csr_mask_row_accessor(mask_csr, use_buffered=use_buffered)
 
     else:
         mask_arr = np.asarray(state.mask, dtype=float)
+        mask_row = _dense_mask_row_accessor(mask_arr)
 
-        def _mask_row(i: int) -> np.ndarray:
-            return np.asarray(mask_arr[i, :], dtype=float)
-
-    return _x_row, _mask_row, int(state.x_data.shape[0])
+    return x_row, mask_row, int(state.x_data.shape[0])
 
 
 def _prior_precision_matrix(va: np.ndarray, noise_var: float) -> np.ndarray:
@@ -1215,13 +1384,22 @@ def _loadings_update_fast_dense_ext(
     else:
         loading_cov_common = None
 
+    log_stride = int(getattr(state, "log_progress_stride", 1))
+    cov_writeback_mode = str(getattr(state, "cov_writeback_mode", "python"))
+
+    if loading_cov_common is not None and cov_writeback_mode != "python":
+        state.loading_covariances = [loading_cov_common] * n_features
+        if not _progress_should_log(state.verbose, log_stride, n_features, n_features):
+            return np.asarray(loadings, dtype=float), state.loading_covariances
+
     for i in range(n_features):
-        if loading_cov_common is not None:
+        if loading_cov_common is not None and cov_writeback_mode == "python":
             state.loading_covariances[i] = loading_cov_common
-        log_progress(
+        _log_progress_if_needed(
             state.verbose,
-            current=i + 1,
-            total=n_features,
+            log_stride,
+            i + 1,
+            n_features,
             phase="Updating loadings",
         )
 
@@ -1255,6 +1433,7 @@ def _loadings_update_general(
         logger.info("Updating loadings")
 
     loadings = np.empty((n_features, n_components), dtype=float)
+    log_stride = int(getattr(state, "log_progress_stride", 1))
 
     for i in range(n_features):
         mask_vec = mask_row(i)
@@ -1271,10 +1450,11 @@ def _loadings_update_general(
                 check_finite=False,
             )
 
-        log_progress(
+        _log_progress_if_needed(
             state.verbose,
-            current=i + 1,
-            total=n_features,
+            log_stride,
+            i + 1,
+            n_features,
             phase="Updating loadings",
         )
 
@@ -1367,13 +1547,16 @@ def _score_update_general_dense_ext(state: ScoreState) -> ScoreState:
             for j in range(score_covariances_arr.shape[0])
         ]
 
-    for j in range(n_samples):
-        log_progress(
-            state.verbose,
-            current=j + 1,
-            total=n_samples,
-            phase="Updating scores",
-        )
+    log_stride = int(getattr(state, "log_progress_stride", 1))
+    if _progress_should_log(state.verbose, log_stride, 1, n_samples):
+        for j in range(n_samples):
+            _log_progress_if_needed(
+                state.verbose,
+                log_stride,
+                j + 1,
+                n_samples,
+                phase="Updating scores",
+            )
 
     return state
 
@@ -1414,13 +1597,16 @@ def _loadings_update_general_dense_ext(
             for i in range(loading_covariances_arr.shape[0])
         ]
 
-    for i in range(n_features):
-        log_progress(
-            state.verbose,
-            current=i + 1,
-            total=n_features,
-            phase="Updating loadings",
-        )
+    log_stride = int(getattr(state, "log_progress_stride", 1))
+    if _progress_should_log(state.verbose, log_stride, 1, n_features):
+        for i in range(n_features):
+            _log_progress_if_needed(
+                state.verbose,
+                log_stride,
+                i + 1,
+                n_features,
+                phase="Updating loadings",
+            )
 
     return loadings, state.loading_covariances
 

@@ -10,8 +10,8 @@ from __future__ import annotations
 import argparse
 import os
 import time
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
 
 import numpy as np
 import pandas as pd
@@ -48,7 +48,7 @@ def _host_info() -> dict[str, object]:
                     parts = line.split()
                     if len(parts) >= 2:
                         mem_kb = float(parts[1])
-                        mem_gb = mem_kb / (1024 ** 2)
+                        mem_gb = mem_kb / (1024**2)
                     break
     except OSError:
         mem_gb = None
@@ -105,6 +105,12 @@ def _parse_args() -> argparse.Namespace:
         choices=["off", "safe", "aggressive"],
     )
     parser.add_argument("--num-cpu", type=int, default=None)
+    parser.add_argument(
+        "--accessor-mode",
+        type=str,
+        default="auto",
+        choices=["auto", "legacy", "buffered"],
+    )
     parser.add_argument("--rotate2pca", type=int, default=1)
     parser.add_argument(
         "--out",
@@ -161,6 +167,7 @@ def main() -> None:
                     "runtime_tuning": str(args.runtime_tuning),
                     "rotate2pca": int(args.rotate2pca),
                     "verbose": int(args.verbose),
+                    "accessor_mode": str(args.accessor_mode),
                 }
                 if args.num_cpu is not None:
                     model_kwargs["num_cpu"] = int(args.num_cpu)
@@ -187,6 +194,7 @@ def main() -> None:
                         "seed": int(seed),
                         "rotate2pca": int(args.rotate2pca),
                         "maxiters": int(args.maxiters),
+                        "accessor_mode": str(args.accessor_mode),
                         "host_cpu_count": host["host_cpu_count"],
                         "host_mem_gb": host["host_mem_gb"],
                         "time_sec": float(elapsed),

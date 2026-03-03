@@ -334,6 +334,55 @@ def normalize_runtime_tuning_mode(mode: object | None) -> str:
     return "off"
 
 
+def normalize_cov_writeback_mode(mode: object | None) -> str:
+    """Normalize covariance writeback mode.
+
+    Allowed values: ``{"python", "bulk", "auto"}``; invalid inputs fall back
+    to ``"auto"`` so that callers can apply context-aware defaults.
+
+    Returns:
+        Normalized writeback mode string.
+    """
+    if mode is None:
+        return "auto"
+    normalized = str(mode).strip().lower()
+    if normalized in {"python", "bulk", "auto"}:
+        return normalized
+    return "auto"
+
+
+def normalize_log_progress_stride(stride: object | None, *, default: int = 1) -> int:
+    """Normalize stride for progress logging loops.
+
+    Negative values are clamped to ``0`` (disabled). ``None`` falls back to
+    ``default``.
+
+    Returns:
+        Non-negative stride value.
+    """
+    parsed = _parse_int_or_none(stride)
+    if parsed is None:
+        return max(0, int(default))
+    return max(0, int(parsed))
+
+
+def normalize_accessor_mode(mode: object | None) -> str:
+    """Normalize accessor mode for score/loadings sparse handling.
+
+    Allowed values: ``{"legacy", "buffered", "auto"}``; invalid inputs fall back
+    to ``"auto"`` so callers can apply context-aware defaults.
+
+    Returns:
+        Normalized accessor mode string.
+    """
+    if mode is None:
+        return "auto"
+    normalized = str(mode).strip().lower()
+    if normalized in {"legacy", "buffered", "auto"}:
+        return normalized
+    return "auto"
+
+
 def _default_num_cpu() -> int:
     """Conservative default thread count when user did not opt in.
 
@@ -824,6 +873,17 @@ def apply_runtime_policy_defaults(opts: dict[str, Any]) -> dict[str, Any]:
     opts["runtime_tuning"] = resolved.runtime_tuning
     runtime_profile = opts.get("runtime_profile")
     opts["runtime_profile"] = None if runtime_profile is None else str(runtime_profile)
+    if "cov_writeback_mode" in opts:
+        opts["cov_writeback_mode"] = normalize_cov_writeback_mode(
+            opts.get("cov_writeback_mode")
+        )
+    if "log_progress_stride" in opts:
+        opts["log_progress_stride"] = normalize_log_progress_stride(
+            opts.get("log_progress_stride"),
+            default=1,
+        )
+    if "accessor_mode" in opts:
+        opts["accessor_mode"] = normalize_accessor_mode(opts.get("accessor_mode"))
     return opts
 
 

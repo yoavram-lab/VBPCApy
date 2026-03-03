@@ -1,8 +1,16 @@
 import numpy as np
 import pytest
+import scipy.sparse as sp
 from pytest_benchmark.fixture import BenchmarkFixture
 
 from vbpca_py import dense_update_kernels as duk
+from vbpca_py._full_update import (
+    LoadingsUpdateState,
+    ScoreState,
+    _loadings_update_general,
+    _score_update_fast_dense_no_av,
+    _score_update_general_no_patterns,
+)
 
 
 def _fixture():
@@ -20,6 +28,112 @@ def _fixture():
     sv = np.stack([np.eye(n_components) * 0.02 for _ in range(n_samples)])
     prior_prec = np.eye(n_components) * 0.1
     return x_data, mask, loadings, scores, av, sv, prior_prec
+
+
+def test_score_update_fast_dense_bulk_writeback_equivalence() -> None:
+    rng = np.random.default_rng(7)
+    n_features, n_samples, n_components = 6, 5, 3
+    x_data = rng.standard_normal((n_features, n_samples))
+    loadings = rng.standard_normal((n_features, n_components))
+    mask = np.ones_like(x_data)
+
+    def _make_state(mode: str, log_stride: int) -> ScoreState:
+        scores = np.zeros((n_components, n_samples), dtype=float)
+        sv = [np.eye(n_components) for _ in range(n_samples)]
+        return ScoreState(
+            x_data=x_data,
+            mask=mask,
+            loadings=loadings,
+            scores=scores,
+            loading_covariances=[],
+            score_covariances=list(sv),
+            pattern_index=None,
+            obs_patterns=[],
+            noise_var=0.3,
+            eye_components=np.eye(n_components),
+            verbose=0,
+            cov_writeback_mode=mode,
+            log_progress_stride=log_stride,
+        )
+
+    base = _score_update_fast_dense_no_av(_make_state("python", 1))
+    bulk = _score_update_fast_dense_no_av(_make_state("bulk", 0))
+
+    assert np.allclose(base.scores, bulk.scores)
+    assert len(bulk.score_covariances) == n_samples
+    assert all(
+        np.allclose(cov, base.score_covariances[0]) for cov in bulk.score_covariances
+    )
+
+
+def test_sparse_score_accessors_buffered_equivalence() -> None:
+    rng = np.random.default_rng(9)
+    n_features, n_samples, n_components = 4, 3, 2
+
+    data = rng.standard_normal((n_features, n_samples))
+    mask_dense = np.ones_like(data)
+    x_sparse = sp.csc_matrix(data)
+    mask_sparse = sp.csc_matrix(mask_dense)
+
+    loadings = rng.standard_normal((n_features, n_components))
+    scores = np.zeros((n_components, n_samples), dtype=float)
+
+    def _state(mode: str) -> ScoreState:
+        return ScoreState(
+            x_data=x_sparse,
+            mask=mask_sparse,
+            loadings=loadings,
+            scores=scores.copy(),
+            loading_covariances=[],
+            score_covariances=[np.eye(n_components) for _ in range(n_samples)],
+            pattern_index=None,
+            obs_patterns=[],
+            noise_var=0.4,
+            eye_components=np.eye(n_components),
+            verbose=0,
+            pattern_batch_size=0,
+            accessor_mode=mode,
+            use_python_scores=True,
+        )
+
+    legacy = _score_update_general_no_patterns(_state("legacy"))
+    buffered = _score_update_general_no_patterns(_state("buffered"))
+
+    assert np.allclose(legacy.scores, buffered.scores)
+    for l_cov, b_cov in zip(legacy.score_covariances, buffered.score_covariances):
+        assert np.allclose(l_cov, b_cov)
+
+
+def test_sparse_loadings_accessors_buffered_equivalence() -> None:
+    rng = np.random.default_rng(10)
+    n_features, n_samples, n_components = 5, 4, 3
+
+    data = rng.standard_normal((n_features, n_samples))
+    mask_dense = np.ones_like(data)
+    x_sparse = sp.csr_matrix(data)
+    mask_sparse = sp.csr_matrix(mask_dense)
+
+    scores = rng.standard_normal((n_components, n_samples))
+    loadings_cov = [np.eye(n_components) for _ in range(n_features)]
+
+    def _state(mode: str) -> LoadingsUpdateState:
+        return LoadingsUpdateState(
+            x_data=x_sparse,
+            mask=mask_sparse,
+            scores=scores,
+            loading_covariances=loadings_cov.copy(),
+            score_covariances=[],
+            pattern_index=None,
+            va=np.ones(n_components),
+            noise_var=0.5,
+            verbose=0,
+            accessor_mode=mode,
+        )
+
+    legacy_loadings, _ = _loadings_update_general(_state("legacy"))
+    buffered_loadings, _ = _loadings_update_general(_state("buffered"))
+
+    assert np.allclose(legacy_loadings, buffered_loadings)
 
 
 def test_score_update_dense_masked_parallel_parity() -> None:
