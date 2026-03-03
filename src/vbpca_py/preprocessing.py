@@ -117,6 +117,7 @@ class MissingAwareOneHotEncoder:
         self.feature_names_out_: list[str] = []
         self.column_means_: np.ndarray | None = None
         self.n_features_in_: int | None = None
+        self._output_widths: list[int] = []
 
     def fit(self, x: np.ndarray, mask: Mask | None = None) -> MissingAwareOneHotEncoder:
         x_arr = np.asarray(x)
@@ -124,6 +125,7 @@ class MissingAwareOneHotEncoder:
         n_features = x_arr.shape[1]
         self.categories_ = []
         self.feature_names_out_ = []
+        self._output_widths = []
         means: list[float] = []
 
         for j in range(n_features):
@@ -131,9 +133,17 @@ class MissingAwareOneHotEncoder:
             observed_vals = x_arr[col_obs, j]
             cats = _safe_unique(observed_vals)
             self.categories_.append(cats)
-            for c in cats:
-                self.feature_names_out_.append(f"col{j}_{c}")
-            means.extend([0.0] * len(cats))
+            if len(cats) == 2:
+                # Mirror legacy OHspecial_transform: collapse binary to a single
+                # indicator column for the second category.
+                self.feature_names_out_.append(f"col{j}_{cats[1]}")
+                self._output_widths.append(1)
+                means.extend([0.0])
+            else:
+                for c in cats:
+                    self.feature_names_out_.append(f"col{j}_{c}")
+                self._output_widths.append(len(cats))
+                means.extend([0.0] * len(cats))
 
         self.column_means_ = np.array(means, dtype=self.dtype)
         self.n_features_in_ = n_features
@@ -143,15 +153,63 @@ class MissingAwareOneHotEncoder:
         self, x: np.ndarray, mask: Mask, j: int
     ) -> tuple[np.ndarray, list[str], np.ndarray]:
         cats = self.categories_[j]
-        n_rows = x.shape[0]
         n_cats = len(cats)
-        out: np.ndarray = np.zeros((n_rows, n_cats), dtype=self.dtype)
+        if n_cats == 0:
+            empty: np.ndarray = np.zeros((x.shape[0], 0), dtype=self.dtype)
+            return empty, [], np.zeros(0, dtype=self.dtype)
+
         col_mask = np.asarray(mask[:, j], dtype=bool)
         col_vals = x[:, j]
 
-        if n_cats == 0:
-            return out, [], np.zeros(0, dtype=self.dtype)
+        if n_cats == 2:
+            return self._transform_binary(col_vals, col_mask, cats, j)
+        return self._transform_multicat(col_vals, col_mask, cats, j)
 
+    def _transform_binary(
+        self,
+        col_vals: np.ndarray,
+        col_mask: np.ndarray,
+        cats: list[Any],
+        j: int,
+    ) -> tuple[np.ndarray, list[str], np.ndarray]:
+        out: np.ndarray = np.zeros((col_vals.shape[0], 1), dtype=self.dtype)
+        if not np.all(col_mask):
+            out[~col_mask, :] = np.nan
+
+        if np.any(col_mask):
+            cat0, cat1 = cats[0], cats[1]
+            obs_rows = np.nonzero(col_mask)[0]
+            observed_vals = col_vals[col_mask]
+            for row_idx, val in zip(obs_rows, observed_vals, strict=False):
+                if val == cat1:
+                    out[row_idx, 0] = 1.0
+                elif val == cat0:
+                    out[row_idx, 0] = 0.0
+                else:
+                    if self.handle_unknown == "raise":
+                        raise ValueError(
+                            f"Unknown category {val!r} in binary column {j}"
+                        )
+                    out[row_idx, 0] = 0.0
+
+        means: np.ndarray = np.zeros(1, dtype=self.dtype)
+        if self.mean_center:
+            with np.errstate(invalid="ignore"):
+                means = np.nanmean(out, axis=0)
+            out -= means
+            out[~np.isfinite(out)] = np.nan
+        names = [f"col{j}_{cats[1]}"]
+        return out, names, means
+
+    def _transform_multicat(
+        self,
+        col_vals: np.ndarray,
+        col_mask: np.ndarray,
+        cats: list[Any],
+        j: int,
+    ) -> tuple[np.ndarray, list[str], np.ndarray]:
+        n_cats = len(cats)
+        out: np.ndarray = np.zeros((col_vals.shape[0], n_cats), dtype=self.dtype)
         if not np.all(col_mask):
             out[~col_mask, :] = np.nan
 
@@ -220,31 +278,66 @@ class MissingAwareOneHotEncoder:
         mean_idx = 0
         for j, cats in enumerate(self.categories_):
             n_cats = len(cats)
+            width = self._output_widths[j] if j < len(self._output_widths) else n_cats
             if n_cats == 0:
                 out_cols.append(np.full(z_arr.shape[0], np.nan))
                 continue
-            block = z_arr[:, col_start : col_start + n_cats]
+            block = z_arr[:, col_start : col_start + width]
             if self.mean_center and self.column_means_ is not None:
-                means = self.column_means_[mean_idx : mean_idx + n_cats]
+                means = self.column_means_[mean_idx : mean_idx + width]
                 block += means
             col_vals = np.full(z_arr.shape[0], np.nan, dtype=object)
-            for i in range(block.shape[0]):
-                if obs_mask is not None and not obs_mask[i, j]:
-                    col_vals[i] = np.nan
-                    continue
-                row = block[i, :]
-                if np.all(np.isnan(row)):
-                    col_vals[i] = np.nan
-                    continue
-                idx = int(np.nanargmax(row))
-                if np.allclose(row, 0.0) and self.handle_unknown == "ignore":
-                    col_vals[i] = np.nan
-                else:
-                    col_vals[i] = cats[idx]
+            if n_cats == 2 and width == 1:
+                self._decode_binary(block, col_vals, cats, obs_mask, j)
+            else:
+                self._decode_multicat(block, col_vals, cats, obs_mask, j)
             out_cols.append(col_vals.astype(object))
-            col_start += n_cats
-            mean_idx += n_cats
+            col_start += width
+            mean_idx += width
         return np.column_stack(out_cols)
+
+    @staticmethod
+    def _decode_binary(
+        block: np.ndarray,
+        col_vals: np.ndarray,
+        cats: list[Any],
+        obs_mask: np.ndarray | None,
+        j: int,
+    ) -> None:
+        cat0, cat1 = cats[0], cats[1]
+        for i in range(block.shape[0]):
+            if obs_mask is not None and not obs_mask[i, j]:
+                col_vals[i] = np.nan
+                continue
+            val = block[i, 0]
+            if np.isnan(val):
+                col_vals[i] = np.nan
+            elif val >= 0.5:
+                col_vals[i] = cat1
+            else:
+                col_vals[i] = cat0
+
+    def _decode_multicat(
+        self,
+        block: np.ndarray,
+        col_vals: np.ndarray,
+        cats: list[Any],
+        obs_mask: np.ndarray | None,
+        j: int,
+    ) -> None:
+        for i in range(block.shape[0]):
+            if obs_mask is not None and not obs_mask[i, j]:
+                col_vals[i] = np.nan
+                continue
+            row = block[i, :]
+            if np.all(np.isnan(row)):
+                col_vals[i] = np.nan
+                continue
+            idx = int(np.nanargmax(row))
+            if np.allclose(row, 0.0) and self.handle_unknown == "ignore":
+                col_vals[i] = np.nan
+            else:
+                col_vals[i] = cats[idx]
 
 
 class _BaseScaler:
@@ -295,6 +388,7 @@ class MissingAwareSparseOneHotEncoder:
         self.feature_names_out_: list[str] = []
         self.column_means_: np.ndarray | None = None
         self.n_features_in_: int | None = None
+        self._output_width: int = 0
 
     def fit(
         self, x: sp.spmatrix, mask: Mask | None = None
@@ -312,20 +406,24 @@ class MissingAwareSparseOneHotEncoder:
             self.feature_names_out_ = []
             self.column_means_ = np.array([], dtype=self.dtype)
             self.n_features_in_ = 1
+            self._output_width = 0
             return self
 
         # Require numeric categories to round-trip through sparse matrices.
         cats = np.unique(np.asarray(x_csr.data, dtype=float))
         self.categories_ = [float(c) for c in cats.tolist()]
         self.feature_names_out_ = [f"col0_{c}" for c in self.categories_]
+        self._output_width = len(self.categories_)
 
         n_rows = x_csr.shape[0]
         counts = np.zeros(len(self.categories_), dtype=float)
         cat_to_idx = {cat: idx for idx, cat in enumerate(self.categories_)}
         for val in x_csr.data:
             counts[cat_to_idx[float(val)]] += 1.0
-        means = counts / float(max(n_rows, 1))
-        self.column_means_ = means.astype(self.dtype, copy=False)
+        means_arr: np.ndarray = (counts / float(max(n_rows, 1))).astype(
+            self.dtype, copy=False
+        )
+        self.column_means_ = means_arr
         self.n_features_in_ = 1
         return self
 
@@ -344,11 +442,31 @@ class MissingAwareSparseOneHotEncoder:
         n_cats = len(self.categories_)
         if n_cats == 0:
             return sp.csr_matrix((n_rows, 0), dtype=self.dtype)
+        return self._transform_multicat_sparse(x_csr, n_rows)
 
-        cat_to_idx = {cat: idx for idx, cat in enumerate(self.categories_)}
+    def inverse_transform(
+        self, z: sp.spmatrix, mask: Mask | None = None
+    ) -> sp.csr_matrix:
+        if self.n_features_in_ is None:
+            raise RuntimeError("Encoder not fitted")
+        if mask is not None:
+            msg = "mask must be None for sparse one-hot encoder"
+            raise ValueError(msg)
+        z_csr = _to_csr(z)
+        n_rows, n_cols = z_csr.shape
+        expected_width = len(self.categories_)
+        if n_cols != expected_width:
+            msg = "Input width must match fitted categories"
+            raise ValueError(msg)
+        return self._inverse_multicat_sparse(z_csr, n_rows)
+
+    def _transform_multicat_sparse(
+        self, x_csr: sp.csr_matrix, n_rows: int
+    ) -> sp.csr_matrix:
         rows: list[int] = []
         cols: list[int] = []
         data: list[float] = []
+        cat_to_idx = {cat: idx for idx, cat in enumerate(self.categories_)}
         coo = x_csr.tocoo()
         for row, val in zip(coo.row, np.asarray(coo.data, dtype=float), strict=False):
             cat_idx = cat_to_idx.get(val, -1)
@@ -363,26 +481,41 @@ class MissingAwareSparseOneHotEncoder:
 
         out: sp.csr_matrix = sp.csr_matrix(
             (np.array(data, dtype=self.dtype), (rows, cols)),
-            shape=(n_rows, n_cats),
+            shape=(n_rows, len(self.categories_)),
         )
         if self.mean_center and self.column_means_ is not None and out.data.size > 0:
             out.data -= self.column_means_[out.indices]
         return out
 
-    def inverse_transform(
-        self, z: sp.spmatrix, mask: Mask | None = None
+    def _inverse_binary_sparse(
+        self, z_csr: sp.csr_matrix, n_rows: int
     ) -> sp.csr_matrix:
-        if self.n_features_in_ is None:
-            raise RuntimeError("Encoder not fitted")
-        if mask is not None:
-            msg = "mask must be None for sparse one-hot encoder"
-            raise ValueError(msg)
-        z_csr = _to_csr(z)
-        n_rows, n_cols = z_csr.shape
-        if n_cols != len(self.categories_):
-            msg = "Input width must match fitted categories"
-            raise ValueError(msg)
+        means = self.column_means_ if self.mean_center else None
+        data_out: list[float] = []
+        row_idx_out: list[int] = []
+        for row in range(n_rows):
+            start, end = z_csr.indptr[row], z_csr.indptr[row + 1]
+            if end <= start:
+                continue
+            row_data = z_csr.data[start:end].copy()
+            if means is not None:
+                row_data += means[z_csr.indices[start:end]]
+            cat_val = self.categories_[int(np.argmax(row_data))]
+            row_idx_out.append(row)
+            data_out.append(cat_val)
 
+        if not data_out:
+            return sp.csr_matrix((n_rows, 1), dtype=self.dtype)
+
+        cols_out = np.zeros(len(data_out), dtype=int)
+        return sp.csr_matrix(
+            (np.array(data_out, dtype=self.dtype), (np.array(row_idx_out), cols_out)),
+            shape=(n_rows, 1),
+        )
+
+    def _inverse_multicat_sparse(
+        self, z_csr: sp.csr_matrix, n_rows: int
+    ) -> sp.csr_matrix:
         means = self.column_means_ if self.mean_center else None
         data_out: list[float] = []
         row_idx_out: list[int] = []

@@ -671,6 +671,7 @@ def _score_and_rotate(
         x_csr=score_x_csr,
         x_csc=score_x_csc,
         sparse_num_cpu=cfg.runtime_threads.score_update_sparse,
+        dense_num_cpu=cfg.runtime_threads.score_update_dense,
     )
     score_state = _update_scores(score_state)
     m.s = score_state.scores
@@ -712,6 +713,7 @@ def _update_loadings_phase(ctx: IterationContext, x_data: Matrix) -> float:
             x_csr=loadings_x_csr,
             x_csc=loadings_x_csc,
             sparse_num_cpu=cfg.runtime_threads.loadings_update_sparse,
+            dense_num_cpu=cfg.runtime_threads.loadings_update_dense,
         )
     )
     return time.perf_counter() - loadings_start
@@ -1256,12 +1258,12 @@ def _build_options(kwargs: Mapping[str, object]) -> dict[str, object]:
         "rmsstop": np.array([100, 1e-4, 1e-3]),
         "cfstop": np.array([]),
         "verbose": 1,
-        "num_cpu": 1,
+        "num_cpu": None,
         "num_cpu_score_update": None,
         "num_cpu_loadings_update": None,
         "num_cpu_noise_update": None,
         "num_cpu_rms": None,
-        "runtime_tuning": "off",
+        "runtime_tuning": "safe",
         "runtime_profile": None,
         "masked_batch_size": 0,
         "xprobe": None,

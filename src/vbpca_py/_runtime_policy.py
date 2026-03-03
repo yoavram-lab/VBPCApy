@@ -41,6 +41,8 @@ class RuntimeThreadConfig:
 
     score_update_sparse: int
     loadings_update_sparse: int
+    score_update_dense: int
+    loadings_update_dense: int
     noise_sxv_sum: int
     rms: int
 
@@ -54,6 +56,17 @@ class RuntimeWorkloadProfile:
     n_components: int
     n_observed: int
     is_sparse: bool
+
+
+@dataclass(frozen=True)
+class _ThreadResolutionInputs:
+    opts: dict[str, object]
+    env_keys: RuntimeEnvKeys
+    env_overrides: dict[str, int]
+    profile_overrides: dict[str, int]
+    global_env: int | None
+    global_num_cpu: int
+    num_cpu_user_set: bool
 
 
 _PROFILE_THREAD_KEYS = (
@@ -190,6 +203,19 @@ def normalize_runtime_tuning_mode(mode: object | None) -> str:
     if normalized in {"off", "safe", "aggressive"}:
         return normalized
     return "off"
+
+
+def _default_num_cpu() -> int:
+    """Conservative default thread count when user did not opt in.
+
+    Uses ``os.cpu_count() - 2`` to avoid oversubscribing shared machines while
+    ensuring at least one worker.
+
+    Returns:
+        Auto-selected worker count respecting a two-core cushion.
+    """
+    hw = os.cpu_count() or 1
+    return max(1, int(hw) - 2)
 
 
 def normalize_num_cpu(num_cpu_value: object | None, *, default: int = 1) -> int:
@@ -388,15 +414,18 @@ def resolve_runtime_policy(
     *,
     num_cpu_value: object | None,
     runtime_tuning_value: object | None,
-    default_num_cpu: int = 1,
+    default_num_cpu: int | None = None,
 ) -> RuntimePolicyConfig:
     """Resolve runtime policy fields from raw option values.
 
     Returns:
         Resolved runtime policy configuration.
     """
+    effective_default = (
+        _default_num_cpu() if default_num_cpu is None else default_num_cpu
+    )
     return RuntimePolicyConfig(
-        num_cpu=normalize_num_cpu(num_cpu_value, default=default_num_cpu),
+        num_cpu=normalize_num_cpu(num_cpu_value, default=effective_default),
         runtime_tuning=normalize_runtime_tuning_mode(runtime_tuning_value),
     )
 
@@ -410,14 +439,12 @@ def apply_runtime_policy_defaults(opts: dict[str, Any]) -> dict[str, Any]:
     resolved = resolve_runtime_policy(
         num_cpu_value=opts.get("num_cpu"),
         runtime_tuning_value=opts.get("runtime_tuning"),
-        default_num_cpu=1,
+        default_num_cpu=None,
     )
     opts["num_cpu"] = int(resolved.num_cpu)
     opts["runtime_tuning"] = resolved.runtime_tuning
     runtime_profile = opts.get("runtime_profile")
-    opts["runtime_profile"] = (
-        None if runtime_profile is None else str(runtime_profile)
-    )
+    opts["runtime_profile"] = None if runtime_profile is None else str(runtime_profile)
     return opts
 
 
@@ -435,7 +462,133 @@ def resolve_runtime_thread_config(
     return cfg
 
 
-def resolve_runtime_thread_config_with_report(  # noqa: PLR0914
+def _build_workload_report(
+    workload: RuntimeWorkloadProfile | None,
+) -> dict[str, object] | None:
+    if workload is None:
+        return None
+
+    total = max(1, workload.n_features * workload.n_samples)
+    density = float(workload.n_observed) / float(total)
+    return {
+        "n_features": int(workload.n_features),
+        "n_samples": int(workload.n_samples),
+        "n_components": int(workload.n_components),
+        "n_observed": int(workload.n_observed),
+        "is_sparse": bool(workload.is_sparse),
+        "density": float(density),
+    }
+
+
+def _resolve_kernel_threads_with_sources(
+    inputs: _ThreadResolutionInputs,
+    workload: RuntimeWorkloadProfile | None,
+) -> tuple[dict[str, int], dict[str, str], str]:
+    opts = inputs.opts
+    env_keys = inputs.env_keys
+    env_overrides = inputs.env_overrides
+    profile_overrides = inputs.profile_overrides
+    global_env = inputs.global_env
+    global_num_cpu = inputs.global_num_cpu
+    num_cpu_user_set = inputs.num_cpu_user_set
+
+    def _resolve_kernel(
+        *,
+        option_key: str,
+        env_key: str,
+        profile_key: str,
+        default_value: int,
+    ) -> tuple[int, str, bool]:
+        threads, source = _resolve_thread_count_with_source(
+            _ThreadResolveRequest(
+                option_value=opts.get(option_key),
+                use_global_opt=num_cpu_user_set,
+                global_opt_value=global_num_cpu,
+                profile_value=profile_overrides.get(profile_key),
+                env_specific_value=env_overrides.get(env_key),
+                env_global_value=global_env,
+                default_value=default_value,
+            )
+        )
+        explicit = _is_explicit_thread_source(
+            option_value=opts.get(option_key),
+            global_opt_set=num_cpu_user_set,
+            profile_value=profile_overrides.get(profile_key),
+            env_specific=env_overrides.get(env_key),
+            env_global=global_env,
+        )
+        return int(threads), source, explicit
+
+    kernel_specs = (
+        (
+            "score_update_sparse",
+            "score",
+            env_keys.score_threads,
+            "num_cpu_score_update",
+            0,
+        ),
+        (
+            "loadings_update_sparse",
+            "loadings",
+            env_keys.loadings_threads,
+            "num_cpu_loadings_update",
+            0,
+        ),
+        (
+            "score_update_dense",
+            "score",
+            env_keys.score_threads,
+            "num_cpu_score_update",
+            0,
+        ),
+        (
+            "loadings_update_dense",
+            "loadings",
+            env_keys.loadings_threads,
+            "num_cpu_loadings_update",
+            0,
+        ),
+        ("noise_sxv_sum", "noise", env_keys.noise_threads, "num_cpu_noise_update", 0),
+        (
+            "rms",
+            "rms",
+            env_keys.rms_threads,
+            "num_cpu_rms",
+            global_num_cpu,
+        ),
+    )
+
+    kernel_values: dict[str, int] = {}
+    kernel_sources: dict[str, str] = {}
+    kernel_explicit: dict[str, bool] = {}
+
+    for name, _kind, env_key, option_key, default_value in kernel_specs:
+        threads, source, explicit = _resolve_kernel(
+            option_key=option_key,
+            env_key=env_key,
+            profile_key=option_key,
+            default_value=default_value,
+        )
+        kernel_values[name] = threads
+        kernel_sources[name] = source
+        kernel_explicit[name] = explicit
+
+    tuning_mode = normalize_runtime_tuning_mode(opts.get("runtime_tuning"))
+    if tuning_mode == "safe" and workload is not None:
+        for name, kind, _, _, _ in kernel_specs:
+            if kernel_explicit[name]:
+                continue
+
+            if kind == "rms":
+                kernel_values[name] = _safe_autotune_rms_threads(workload)
+            else:
+                kernel_values[name] = _safe_autotune_kernel_threads(workload, kind=kind)
+            kernel_sources[name] = "autotune_safe"
+
+    return kernel_values, kernel_sources, tuning_mode
+
+
+def resolve_runtime_thread_config_with_report(
     opts: dict[str, object],
     *,
     keys: RuntimeEnvKeys | None = None,
@@ -463,121 +616,32 @@ def resolve_runtime_thread_config_with_report(  # noqa: PLR0914
         workload=workload,
     )
 
-    global_num_cpu = normalize_num_cpu(opts.get("num_cpu"), default=1)
+    global_num_cpu = normalize_num_cpu(opts.get("num_cpu"), default=_default_num_cpu())
     num_cpu_user_set = bool(opts.get("_num_cpu_user_set"))
-
     global_env = env_overrides.get(env_keys.global_threads)
-
-    score_threads, score_source = _resolve_thread_count_with_source(
-        _ThreadResolveRequest(
-            option_value=opts.get("num_cpu_score_update"),
-            use_global_opt=num_cpu_user_set,
-            global_opt_value=global_num_cpu,
-            profile_value=profile_overrides.get("num_cpu_score_update"),
-            env_specific_value=env_overrides.get(env_keys.score_threads),
-            env_global_value=global_env,
-            default_value=0,
-        )
+    inputs = _ThreadResolutionInputs(
+        opts=opts,
+        env_keys=env_keys,
+        env_overrides=env_overrides,
+        profile_overrides=profile_overrides,
+        global_env=global_env,
+        global_num_cpu=global_num_cpu,
+        num_cpu_user_set=num_cpu_user_set,
     )
-
-    loadings_threads, loadings_source = _resolve_thread_count_with_source(
-        _ThreadResolveRequest(
-            option_value=opts.get("num_cpu_loadings_update"),
-            use_global_opt=num_cpu_user_set,
-            global_opt_value=global_num_cpu,
-            profile_value=profile_overrides.get("num_cpu_loadings_update"),
-            env_specific_value=env_overrides.get(env_keys.loadings_threads),
-            env_global_value=global_env,
-            default_value=0,
-        )
+    kernel_values, kernel_sources, tuning_mode = _resolve_kernel_threads_with_sources(
+        inputs,
+        workload,
     )
-
-    noise_threads, noise_source = _resolve_thread_count_with_source(
-        _ThreadResolveRequest(
-            option_value=opts.get("num_cpu_noise_update"),
-            use_global_opt=num_cpu_user_set,
-            global_opt_value=global_num_cpu,
-            profile_value=profile_overrides.get("num_cpu_noise_update"),
-            env_specific_value=env_overrides.get(env_keys.noise_threads),
-            env_global_value=global_env,
-            default_value=0,
-        )
-    )
-
-    rms_threads, rms_source = _resolve_thread_count_with_source(
-        _ThreadResolveRequest(
-            option_value=opts.get("num_cpu_rms"),
-            use_global_opt=num_cpu_user_set,
-            global_opt_value=global_num_cpu,
-            profile_value=profile_overrides.get("num_cpu_rms"),
-            env_specific_value=env_overrides.get(env_keys.rms_threads),
-            env_global_value=global_env,
-            default_value=global_num_cpu,
-        )
-    )
-
-    tuning_mode = normalize_runtime_tuning_mode(opts.get("runtime_tuning"))
-    if tuning_mode == "safe" and workload is not None:
-        score_explicit = _is_explicit_thread_source(
-            option_value=opts.get("num_cpu_score_update"),
-            global_opt_set=num_cpu_user_set,
-            profile_value=profile_overrides.get("num_cpu_score_update"),
-            env_specific=env_overrides.get(env_keys.score_threads),
-            env_global=global_env,
-        )
-        loadings_explicit = _is_explicit_thread_source(
-            option_value=opts.get("num_cpu_loadings_update"),
-            global_opt_set=num_cpu_user_set,
-            profile_value=profile_overrides.get("num_cpu_loadings_update"),
-            env_specific=env_overrides.get(env_keys.loadings_threads),
-            env_global=global_env,
-        )
-        noise_explicit = _is_explicit_thread_source(
-            option_value=opts.get("num_cpu_noise_update"),
-            global_opt_set=num_cpu_user_set,
-            profile_value=profile_overrides.get("num_cpu_noise_update"),
-            env_specific=env_overrides.get(env_keys.noise_threads),
-            env_global=global_env,
-        )
-        rms_explicit = _is_explicit_thread_source(
-            option_value=opts.get("num_cpu_rms"),
-            global_opt_set=num_cpu_user_set,
-            profile_value=profile_overrides.get("num_cpu_rms"),
-            env_specific=env_overrides.get(env_keys.rms_threads),
-            env_global=global_env,
-        )
-
-        if not score_explicit:
-            score_threads = _safe_autotune_kernel_threads(workload, kind="score")
-            score_source = "autotune_safe"
-        if not loadings_explicit:
-            loadings_threads = _safe_autotune_kernel_threads(workload, kind="loadings")
-            loadings_source = "autotune_safe"
-        if not noise_explicit:
-            noise_threads = _safe_autotune_kernel_threads(workload, kind="noise")
-            noise_source = "autotune_safe"
-        if not rms_explicit:
-            rms_threads = _safe_autotune_rms_threads(workload)
-            rms_source = "autotune_safe"
 
     cfg = RuntimeThreadConfig(
-        score_update_sparse=int(score_threads),
-        loadings_update_sparse=int(loadings_threads),
-        noise_sxv_sum=int(noise_threads),
-        rms=max(1, int(rms_threads)),
+        score_update_sparse=int(kernel_values["score_update_sparse"]),
+        loadings_update_sparse=int(kernel_values["loadings_update_sparse"]),
+        score_update_dense=int(kernel_values["score_update_dense"]),
+        loadings_update_dense=int(kernel_values["loadings_update_dense"]),
+        noise_sxv_sum=int(kernel_values["noise_sxv_sum"]),
+        rms=max(1, int(kernel_values["rms"])),
     )
-    workload_report: dict[str, object] | None = None
-    if workload is not None:
-        total = max(1, workload.n_features * workload.n_samples)
-        density = float(workload.n_observed) / float(total)
-        workload_report = {
-            "n_features": int(workload.n_features),
-            "n_samples": int(workload.n_samples),
-            "n_components": int(workload.n_components),
-            "n_observed": int(workload.n_observed),
-            "is_sparse": bool(workload.is_sparse),
-            "density": float(density),
-        }
+    workload_report = _build_workload_report(workload)
 
     report: dict[str, object] = {
         "runtime_tuning": tuning_mode,
@@ -587,14 +651,18 @@ def resolve_runtime_thread_config_with_report(  # noqa: PLR0914
         "kernel_values": {
             "score_update_sparse": int(cfg.score_update_sparse),
             "loadings_update_sparse": int(cfg.loadings_update_sparse),
+            "score_update_dense": int(cfg.score_update_dense),
+            "loadings_update_dense": int(cfg.loadings_update_dense),
             "noise_sxv_sum": int(cfg.noise_sxv_sum),
             "rms": int(cfg.rms),
         },
         "kernel_sources": {
-            "score_update_sparse": score_source,
-            "loadings_update_sparse": loadings_source,
-            "noise_sxv_sum": noise_source,
-            "rms": rms_source,
+            "score_update_sparse": kernel_sources["score_update_sparse"],
+            "loadings_update_sparse": kernel_sources["loadings_update_sparse"],
+            "score_update_dense": kernel_sources["score_update_dense"],
+            "loadings_update_dense": kernel_sources["loadings_update_dense"],
+            "noise_sxv_sum": kernel_sources["noise_sxv_sum"],
+            "rms": kernel_sources["rms"],
         },
     }
     if workload_report is not None:

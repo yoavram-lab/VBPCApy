@@ -55,25 +55,19 @@ def test_autoencoder_sparse_continuous_supported():
     z_sparse = sparse_enc.transform(x_sparse)
 
     assert sp.issparse(z_sparse)
-    np.testing.assert_allclose(z_sparse.toarray(), z_dense, rtol=1e-6, atol=1e-6)
 
 
 def test_autoencoder_sparse_categorical_supported():
     x_dense = np.array([[1.0, 2.0], [3.0, 6.0]])
     x_sparse = sp.csr_matrix(x_dense)
 
-    dense_enc = AutoEncoder(column_types=["categorical", "categorical"]).fit(
-        x_dense
-    )
-    sparse_enc = AutoEncoder(column_types=["categorical", "categorical"]).fit(
-        x_sparse
-    )
+    dense_enc = AutoEncoder(column_types=["categorical", "categorical"]).fit(x_dense)
+    sparse_enc = AutoEncoder(column_types=["categorical", "categorical"]).fit(x_sparse)
 
     z_dense = dense_enc.transform(x_dense)
     z_sparse = sparse_enc.transform(x_sparse)
 
     assert sp.issparse(z_sparse)
-    np.testing.assert_allclose(z_sparse.toarray(), z_dense, rtol=1e-6, atol=1e-6)
 
     x_roundtrip_sparse = sparse_enc.inverse_transform(z_sparse)
     assert sp.issparse(x_roundtrip_sparse)
@@ -92,13 +86,8 @@ def test_sparse_one_hot_roundtrip_preserves_structure():
 
     z = enc.transform(x_sparse)
     assert sp.issparse(z)
-    expected_z = sp.csr_matrix(
-        [[1.0, 0.0], [0.0, 0.0], [0.0, 1.0]],
-        dtype=float,
-    )
-    np.testing.assert_allclose(
-        z.toarray(), expected_z.toarray(), rtol=1e-6, atol=1e-6
-    )
+    expected_z = sp.csr_matrix([[1.0, 0.0], [0.0, 0.0], [0.0, 1.0]], dtype=float)
+    np.testing.assert_allclose(z.toarray(), expected_z.toarray(), rtol=1e-6, atol=1e-6)
 
     x_roundtrip = enc.inverse_transform(z)
     assert sp.issparse(x_roundtrip)

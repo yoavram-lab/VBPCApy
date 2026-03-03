@@ -202,6 +202,7 @@ scores = model.transform(x_sparse)
 - `auto_pattern_masked`: when true, reuse dense mask patterns even with `uniquesv=0` to reduce repeated per-column score covariance work (default off for parity).
 
 ### Runtime tuning and fast-mode sweep suggestions
+- Default runtime behavior uses `runtime_tuning="safe"` and auto-selects threads as `max(1, cpu_count - 2)` unless you pass `num_cpu` explicitly or set per-kernel env vars.
 - Fast sweep preset: use `runtime_tuning="safe"`, `SelectionConfig(compute_explained_variance=False, patience=2, max_trials=5)`, and cap the k sweep to a modest window (e.g., 25–45 for tall/wide matrices).
 - The cultural replay script exposes `--fast-mode`, `--runtime-tuning`, and `--num-cpu` to apply these defaults without code changes.
 

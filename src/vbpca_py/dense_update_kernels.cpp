@@ -13,6 +13,7 @@ namespace {
 constexpr double EPS_JITTER = 1e-15;
 
 Eigen::LLT<Eigen::MatrixXd> stable_llt(Eigen::MatrixXd mat) {
+    // Symmetrize to avoid tiny asymmetries from prior operations.
     mat = 0.5 * (mat + mat.transpose());
     Eigen::LLT<Eigen::MatrixXd> llt;
     llt.compute(mat);
@@ -128,9 +129,7 @@ py::dict score_update_dense_masked_nopattern(
     py::array_t<double, py::array::c_style | py::array::forcecast> av_arr;
     const double *av_ptr = nullptr;
     if (!loading_covariances_obj.is_none()) {
-        av_arr = py::array_t<double, py::array::c_style | py::array::forcecast>(
-            loading_covariances_obj
-        );
+        av_arr = py::array_t<double, py::array::c_style | py::array::forcecast>(loading_covariances_obj);
         auto av_buf = av_arr.request();
         if (av_buf.ndim != 3) {
             throw std::invalid_argument("loading_covariances must be 3-D.");
@@ -171,8 +170,7 @@ py::dict score_update_dense_masked_nopattern(
                 for (int r = 0; r < n_components; ++r) {
                     for (int c = 0; c < n_components; ++c) {
                         psi(r, c) += av_ptr[
-                            base + static_cast<std::size_t>(r) *
-                                       static_cast<std::size_t>(n_components) +
+                            base + static_cast<std::size_t>(r) * static_cast<std::size_t>(n_components) +
                             static_cast<std::size_t>(c)
                         ];
                     }
@@ -249,9 +247,7 @@ py::dict loadings_update_dense_masked_nopattern(
     py::array_t<double, py::array::c_style | py::array::forcecast> sv_arr;
     const double *sv_ptr = nullptr;
     if (!score_covariances_obj.is_none()) {
-        sv_arr = py::array_t<double, py::array::c_style | py::array::forcecast>(
-            score_covariances_obj
-        );
+        sv_arr = py::array_t<double, py::array::c_style | py::array::forcecast>(score_covariances_obj);
         auto sv_buf = sv_arr.request();
         if (sv_buf.ndim != 3) {
             throw std::invalid_argument("score_covariances must be 3-D.");
@@ -292,8 +288,7 @@ py::dict loadings_update_dense_masked_nopattern(
                 for (int r = 0; r < n_components; ++r) {
                     for (int c = 0; c < n_components; ++c) {
                         phi(r, c) += sv_ptr[
-                            base + static_cast<std::size_t>(r) *
-                                       static_cast<std::size_t>(n_components) +
+                            base + static_cast<std::size_t>(r) * static_cast<std::size_t>(n_components) +
                             static_cast<std::size_t>(c)
                         ];
                     }

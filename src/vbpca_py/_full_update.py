@@ -107,6 +107,7 @@ class ScoreState:
     verbose: int
     pattern_batch_size: int = 0
     sparse_num_cpu: int = 0
+    dense_num_cpu: int = 0
     x_csr: sp.csr_matrix | None = None
     x_csc: sp.csc_matrix | None = None
     use_python_scores: bool = False
@@ -176,6 +177,7 @@ class LoadingsUpdateState:
     noise_var: float
     verbose: int
     sparse_num_cpu: int = 0
+    dense_num_cpu: int = 0
     x_csr: sp.csr_matrix | None = None
     x_csc: sp.csc_matrix | None = None
 

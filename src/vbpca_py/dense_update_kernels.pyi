@@ -7,7 +7,6 @@ def score_update_dense_no_av(
     noise_var: float,
     return_covariance: bool = ...,
 ) -> dict[str, np.ndarray]: ...
-
 def loadings_update_dense_no_sv(
     x_data: npt.NDArray[np.float64],
     scores: npt.NDArray[np.float64],
@@ -15,7 +14,6 @@ def loadings_update_dense_no_sv(
     noise_var: float,
     return_covariance: bool = ...,
 ) -> dict[str, np.ndarray]: ...
-
 def score_update_dense_masked_nopattern(
     x_data: npt.NDArray[np.float64],
     mask: npt.NDArray[np.float64],
@@ -24,7 +22,6 @@ def score_update_dense_masked_nopattern(
     noise_var: float = ...,
     return_covariances: bool = ...,
 ) -> dict[str, np.ndarray]: ...
-
 def loadings_update_dense_masked_nopattern(
     x_data: npt.NDArray[np.float64],
     mask: npt.NDArray[np.float64],

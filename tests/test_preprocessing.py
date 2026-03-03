@@ -22,8 +22,8 @@ def test_missing_aware_one_hot_preserves_missing_and_inverse() -> None:
     )
     enc = MissingAwareOneHotEncoder(mean_center=True)
     z = enc.fit_transform(x)
-    # Missing row should be all NaN for the first column's block.
-    assert np.isnan(z[2, 0:2]).all()
+    # Missing row should be NaN for the first column's indicator.
+    assert np.isnan(z[2, 0])
     x_inv = enc.inverse_transform(z)
     assert x_inv.shape == x.shape
     assert x_inv[0, 0] == "a"
@@ -95,10 +95,10 @@ def test_one_hot_encoder_unknown_category_ignore() -> None:
 
     enc = MissingAwareOneHotEncoder(handle_unknown="ignore")
     z = enc.fit_transform(x_train)
-    assert z.shape == (2, 2)
+    assert z.shape == (2, 1)
 
     z_test = enc.transform(x_test)
-    assert z_test.shape == (1, 2)
+    assert z_test.shape == (1, 1)
     assert np.allclose(z_test, 0.0)
 
 
