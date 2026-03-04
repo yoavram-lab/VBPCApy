@@ -4,7 +4,7 @@
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
 
-Variational Bayesian PCA (Illin and Raiko, 2010) with support for missing data, sparse masks, optional bias terms, and an orthogonal post-rotation to a PCA basis. The implementation follows the original MATLAB reference while adding Python-native APIs and fast C++ extensions for heavy routines.
+Variational Bayesian PCA (Illin and Raiko, 2010) with support for missing data, sparse masks, optional bias terms, and an orthogonal post-rotation to a PCA basis. The implementation follows the original MATLAB reference while adding Python-native APIs, fast C++ extensions for heavy routines, and runtime autotuning for thread/accessor/covariance writeback modes.
 
 ## Statement of need
 
@@ -36,7 +36,7 @@ In short: backend selection affects runtime, not model semantics.
 - Support for shared observation patterns to reuse factorizations and speed inference.
 - Posterior covariances for scores and loadings; probe-set RMS for held-out validation.
 - Direct access to reconstructions and per-entry marginal variances from the sklearn-like `VBPCA` estimator.
-- C++ extensions via pybind11 for performance-critical routines.
+- C++ extensions via pybind11 for performance-critical routines; runtime autotune selects thread counts, buffered accessors, and covariance writeback modes.
 - Missing-aware preprocessing utilities (one-hot encode, standardize, min-max, auto-routing) that preserve NaNs/masks for generative reconstruction.
 - `VBPCA` sklearn-like wrapper (fit/transform/inverse_transform) with mask support.
 - Empirical risk minimization based model selector for number of PCs which best reconstruct the empirical data.
@@ -181,13 +181,13 @@ mask = x_sparse.copy()
 mask.data[:] = 1.0
 
 model = VBPCA(n_components=2, maxiters=100)
-model.fit(x_sparse, mask=mask)
-scores = model.transform(x_sparse)
+scores = model.fit_transform(x_sparse, mask=mask)
 ```
 
 - Sparse inputs must be CSR/CSC; they remain sparse throughout computation.
 - For sparse data, the observation set is the stored entries of `X` (including stored zeros); if you pass a mask it must match `spones(X)` exactly.
 - For dense data, pass a dense mask of 0/1 with the same shape; a mask is required for dense inputs when any missingness exists.
+- `transform()` only returns training scores; it does not accept new data. Use `fit_transform` on the training set.
 - To encode wide numeric categorical columns sparsely, use `MissingAwareSparseOneHotEncoder` (one column at a time, CSR input) and keep the mask `None`.
 
 
@@ -198,11 +198,12 @@ scores = model.transform(x_sparse)
 - `maxiters`, `tol`, `verbose`: convergence control and logging.
 - `rotation`: final orthogonal rotation to a PCA-aligned solution.
 - `compat_mode`: compatibility policy for sparse empty-row/column handling (`strict_legacy` default, `modern` available).
-- `runtime_tuning` / `num_cpu`: runtime policy and threading controls. `runtime_tuning="safe"` enables conservative RMS thread autotuning; per-kernel env vars include `VBPCA_NUM_THREADS`, `VBPCA_SCORE_THREADS`, `VBPCA_LOADINGS_THREADS`, `VBPCA_NOISE_THREADS`, `VBPCA_RMS_THREADS`.
+- `runtime_tuning` / `num_cpu`: runtime policy and threading controls. `runtime_tuning="safe"` (default) runs a short probe to pick threads, accessor mode (`legacy` vs `buffered`), and covariance writeback (`python`, `bulk`, `kernel`) based on measured speed. `runtime_tuning="aggressive"` tries a wider search. Per-kernel env vars include `VBPCA_NUM_THREADS`, `VBPCA_SCORE_THREADS`, `VBPCA_LOADINGS_THREADS`, `VBPCA_NOISE_THREADS`, `VBPCA_RMS_THREADS`.
 - `auto_pattern_masked`: when true, reuse dense mask patterns even with `uniquesv=0` to reduce repeated per-column score covariance work (default off for parity).
 
 ### Runtime tuning and fast-mode sweep suggestions
-- Default runtime behavior uses `runtime_tuning="safe"` and auto-selects threads as `max(1, cpu_count - 2)` unless you pass `num_cpu` explicitly or set per-kernel env vars.
+- Default runtime behavior uses `runtime_tuning="safe"` to measure and choose `num_cpu`, accessor mode, and covariance writeback mode; you can still pin `num_cpu` explicitly or override with env vars.
+- `runtime_tuning="aggressive"` expands the search if you want maximum throughput and can tolerate a slightly longer probe.
 - Fast sweep preset: use `runtime_tuning="safe"`, `SelectionConfig(compute_explained_variance=False, patience=2, max_trials=5)`, and cap the k sweep to a modest window (e.g., 25–45 for tall/wide matrices).
 - The cultural replay script exposes `--fast-mode`, `--runtime-tuning`, and `--num-cpu` to apply these defaults without code changes.
 

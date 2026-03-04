@@ -16,6 +16,7 @@ from vbpca_py._full_update import (
     _has_covariances,
     _loadings_accessors,
     _loadings_update_fast_dense_ext,
+    _loadings_update_general,
     _loadings_update_sparse_no_patterns,
     _missing_patterns_info,
     _normalize_sparse_data,
@@ -337,3 +338,33 @@ def test_loadings_update_sparse_bulk_covariances() -> None:
     )
     _, covs = _loadings_update_sparse_no_patterns(state)
     assert isinstance(covs, np.ndarray)
+
+
+def test_loadings_general_caches_mask_pattern() -> None:
+    x = np.array([[1.0, 0.0, 0.0], [0.5, 0.0, 1.0]])
+    mask = np.array([[1.0, 1.0, 0.0], [1.0, 1.0, 0.0]])
+    scores = np.array([[1.0, 2.0, 3.0]])
+    load_cov = [np.eye(1), np.eye(1)]
+    score_cov = [np.eye(1), np.eye(1), np.eye(1)]
+    state = LoadingsUpdateState(
+        x_data=x,
+        mask=mask,
+        scores=scores,
+        loading_covariances=load_cov,
+        score_covariances=score_cov,
+        pattern_index=None,
+        va=np.array([1.0]),
+        noise_var=0.1,
+        verbose=0,
+        x_csr=None,
+        x_csc=None,
+        sparse_num_cpu=0,
+        dense_num_cpu=1,
+        cov_writeback_mode="python",
+        log_progress_stride=2,
+        accessor_mode="buffered",
+    )
+    loadings, covs = _loadings_update_general(state)
+    assert loadings.shape == (2, 1)
+    assert isinstance(covs, list)
+    assert covs[0] is not covs[1]

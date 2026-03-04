@@ -1484,38 +1484,71 @@ def _loadings_update_general(
         return _loadings_update_general_dense_ext(state)
 
     x_row, mask_row, n_features = _loadings_accessors(state)
-    n_components = state.scores.shape[0]
     prior_prec = _prior_precision_matrix(state.va, state.noise_var)
-    eye_components = np.eye(n_components)
+    eye_components = np.eye(state.scores.shape[0])
+    has_cov = _has_covariances(state.loading_covariances)
 
     if state.verbose == 2:
         logger.info("Updating loadings")
 
-    loadings = np.empty((n_features, n_components), dtype=float)
-    log_stride = int(getattr(state, "log_progress_stride", 1))
+    loadings = np.empty((n_features, eye_components.shape[0]), dtype=float)
+
+    # Cache factorizations for repeated mask patterns to avoid recomputing Phi.
+    cho_cache: dict[bytes, tuple[ChoFactor, np.ndarray, np.ndarray | None]] = {}
 
     for i in range(n_features):
         mask_vec = mask_row(i)
-        phi, scores_masked = _phi_for_row(mask_vec, state, prior_prec)
-        cho = _safe_cholesky(phi, eye_components)
 
-        rhs = scores_masked @ x_row(i)
-        loadings[i, :] = cho_solve(cho, rhs, check_finite=False)
+        cached = cho_cache.get(mask_vec.tobytes())
+        if cached is None:
+            phi, scores_masked = _phi_for_row(mask_vec, state, prior_prec)
+            cho = _safe_cholesky(phi, eye_components)
 
-        if _has_covariances(state.loading_covariances):
-            cov_val = state.noise_var * cho_solve(
-                cho,
-                eye_components,
-                check_finite=False,
-            )
+            cov_template: np.ndarray | None = None
+            if has_cov:
+                cov_template = state.noise_var * cho_solve(
+                    cho,
+                    eye_components,
+                    check_finite=False,
+                )
+
+            cho_cache[mask_vec.tobytes()] = (cho, scores_masked, cov_template)
+        else:
+            cho, scores_masked, cov_template = cached
+
+        loadings[i, :] = cho_solve(
+            cho,
+            scores_masked @ x_row(i),
+            check_finite=False,
+        )
+
+        if has_cov:
             if isinstance(state.loading_covariances, np.ndarray):
-                state.loading_covariances[i, :, :] = cov_val
+                state.loading_covariances[i, :, :] = (
+                    np.array(cov_template, copy=True)
+                    if cached is not None and cov_template is not None
+                    else state.noise_var
+                    * cho_solve(
+                        cho,
+                        eye_components,
+                        check_finite=False,
+                    )
+                )
             else:
-                state.loading_covariances[i] = cov_val
+                state.loading_covariances[i] = (
+                    np.array(cov_template, copy=True)
+                    if cached is not None and cov_template is not None
+                    else state.noise_var
+                    * cho_solve(
+                        cho,
+                        eye_components,
+                        check_finite=False,
+                    )
+                )
 
         _log_progress_if_needed(
             state.verbose,
-            log_stride,
+            int(getattr(state, "log_progress_stride", 1)),
             i + 1,
             n_features,
             phase="Updating loadings",
