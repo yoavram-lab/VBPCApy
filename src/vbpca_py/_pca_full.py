@@ -30,6 +30,7 @@ from ._expand import _add_m_cols, _add_m_rows
 from ._full_update import (
     BiasState,
     CenteringState,
+    CovarianceStore,
     HyperpriorContext,
     InitContext,
     LoadingsUpdateState,
@@ -38,6 +39,7 @@ from ._full_update import (
     RotationContext,
     ScoreState,
     _build_masks_and_counts,
+    _covariances_list,
     _final_rotation,
     _initialize_parameters,
     _missing_patterns_info,
@@ -62,6 +64,8 @@ from ._runtime_policy import (
     SparseAutotuneInputs,
     _build_dense_autotune_candidates,
     apply_runtime_policy_defaults,
+    autotune_cov_writeback_mode_dense,
+    autotune_cov_writeback_mode_sparse,
     autotune_dense_masked_threads,
     autotune_sparse_nopattern_threads,
     normalize_accessor_mode,
@@ -228,8 +232,8 @@ class ModelState:
     s: np.ndarray
     mu: np.ndarray
     noise_var: float
-    av: list[np.ndarray]
-    sv: list[np.ndarray]
+    av: CovarianceStore
+    sv: CovarianceStore
     muv: np.ndarray
     va: np.ndarray
     vmu: float
@@ -256,8 +260,8 @@ class FinalState:
     s: np.ndarray
     mu: np.ndarray
     noise_var: float
-    av: list[np.ndarray]
-    sv: list[np.ndarray]
+    av: CovarianceStore
+    sv: CovarianceStore
     pattern_index: np.ndarray | None
     muv: np.ndarray
     va: np.ndarray
@@ -552,6 +556,7 @@ def _resolve_runtime_threads_for_training(
         runtime_report["preflight"] = preflight
 
     tuning_mode = str(runtime_report.get("runtime_tuning", "off"))
+    cov_source_override: str | None = None
     if tuning_mode in {"safe", "aggressive"}:
         ctx = _AutotuneContext(
             prepared=prepared,
@@ -567,11 +572,15 @@ def _resolve_runtime_threads_for_training(
 
         runtime_threads, runtime_report = _autotune_dense_masked_runtime(ctx)
         runtime_threads, runtime_report = _autotune_sparse_runtime(ctx)
+        runtime_threads, runtime_report, cov_source_override = (
+            _autotune_cov_writeback_mode(ctx)
+        )
 
     cov_writeback_mode, log_stride, accessor_mode, behavior_sources = (
         _resolve_runtime_behavior(
             opts=opts,
             tuning_mode=tuning_mode,
+            cov_source_override=cov_source_override,
         )
     )
     runtime_report["cov_writeback_mode"] = cov_writeback_mode
@@ -733,6 +742,108 @@ def _autotune_sparse_runtime(
     return runtime_threads, runtime_report
 
 
+def _build_sparse_cov_inputs(ctx: _AutotuneContext) -> SparseAutotuneInputs:
+    x_csc = sp.csc_matrix(ctx.prepared.x_data)
+    x_csr = sp.csr_matrix(ctx.prepared.x_data)
+    prior_prec = _prior_precision_matrix(
+        ctx.training.model.va, ctx.training.model.noise_var
+    )
+    return SparseAutotuneInputs(
+        n_features=ctx.prepared.n_features,
+        n_samples=ctx.prepared.n_samples,
+        x_csc_data=np.asarray(x_csc.data, dtype=np.float64),
+        x_csc_indices=np.asarray(x_csc.indices, dtype=np.int32),
+        x_csc_indptr=np.asarray(x_csc.indptr, dtype=np.int32),
+        x_csr_data=np.asarray(x_csr.data, dtype=np.float64),
+        x_csr_indices=np.asarray(x_csr.indices, dtype=np.int32),
+        x_csr_indptr=np.asarray(x_csr.indptr, dtype=np.int32),
+        loadings=np.asarray(ctx.training.model.a, dtype=np.float64),
+        scores=np.asarray(ctx.training.model.s, dtype=np.float64),
+        noise_var=float(ctx.training.model.noise_var),
+        prior_prec=np.asarray(prior_prec, dtype=np.float64),
+    )
+
+
+def _build_dense_cov_inputs(ctx: _AutotuneContext) -> DenseMaskedAutotuneInputs:
+    prior_prec = _prior_precision_matrix(
+        ctx.training.model.va, ctx.training.model.noise_var
+    )
+    return DenseMaskedAutotuneInputs(
+        x_data=np.asarray(ctx.prepared.x_data, dtype=np.float64),
+        mask=np.asarray(ctx.prepared.mask, dtype=np.float64),
+        loadings=np.asarray(ctx.training.model.a, dtype=np.float64),
+        scores=np.asarray(ctx.training.model.s, dtype=np.float64),
+        noise_var=float(ctx.training.model.noise_var),
+        prior_prec=np.asarray(prior_prec, dtype=np.float64),
+    )
+
+
+def _autotune_cov_writeback_mode(
+    ctx: _AutotuneContext,
+) -> tuple[RuntimeThreadConfig, dict[str, object], str | None]:
+    cov_raw = ctx.opts.get("cov_writeback_mode")
+    cov_mode_normalized = normalize_cov_writeback_mode(cov_raw)
+
+    if cov_raw is not None and cov_mode_normalized != "auto":
+        return ctx.runtime_threads, ctx.runtime_report, None
+
+    if ctx.prepared.mask is None:
+        return ctx.runtime_threads, ctx.runtime_report, None
+
+    reps = 1 if ctx.tuning_mode == "safe" else 2
+    max_time = 0.25 if ctx.tuning_mode == "safe" else 0.6
+
+    modes = ("python", "bulk", "kernel")
+    if ctx.workload.is_sparse:
+        inputs_sparse = _build_sparse_cov_inputs(ctx)
+
+        mode, timings, elapsed = autotune_cov_writeback_mode_sparse(
+            inputs_sparse,
+            modes=modes,
+            reps=reps,
+            max_total_time=max_time,
+            num_cpu_score=max(1, int(ctx.runtime_threads.score_update_sparse)),
+            num_cpu_load=max(1, int(ctx.runtime_threads.loadings_update_sparse)),
+        )
+        workload = "sparse"
+    else:
+        inputs_dense = _build_dense_cov_inputs(ctx)
+
+        mode, timings, elapsed = autotune_cov_writeback_mode_dense(
+            inputs_dense,
+            modes=modes,
+            reps=reps,
+            max_total_time=max_time,
+            num_cpu_score=max(1, int(ctx.runtime_threads.score_update_dense)),
+            num_cpu_load=max(1, int(ctx.runtime_threads.loadings_update_dense)),
+        )
+        workload = "dense"
+
+    ctx.opts["cov_writeback_mode"] = mode
+    runtime_report = ctx.runtime_report
+    runtime_report["cov_writeback_autotune"] = {
+        "mode": mode,
+        "timings": timings,
+        "elapsed_sec": float(elapsed),
+        "modes": list(modes),
+        "tuning_mode": ctx.tuning_mode,
+        "workload": workload,
+    }
+
+    kernel_values = cast(
+        "dict[str, object]",
+        runtime_report.setdefault("kernel_values", {}),
+    )
+    kernel_sources = cast(
+        "dict[str, object]",
+        runtime_report.setdefault("kernel_sources", {}),
+    )
+    kernel_values["cov_writeback_mode"] = mode
+    kernel_sources["cov_writeback_mode"] = "autotune_measure"
+
+    return ctx.runtime_threads, runtime_report, "autotune_measure"
+
+
 def _dense_autotune_candidates(ctx: _AutotuneContext, cap: int) -> list[int]:
     score_candidates = _build_dense_autotune_candidates(
         max_threads=cap,
@@ -748,11 +859,14 @@ def _dense_autotune_candidates(ctx: _AutotuneContext, cap: int) -> list[int]:
 
 
 def _resolve_runtime_behavior(
-    *, opts: MutableMapping[str, object], tuning_mode: str
+    *,
+    opts: MutableMapping[str, object],
+    tuning_mode: str,
+    cov_source_override: str | None = None,
 ) -> tuple[str, int, str, dict[str, str]]:
     cov_raw = opts.get("cov_writeback_mode")
     cov_mode = normalize_cov_writeback_mode(cov_raw)
-    cov_source = "option" if cov_raw is not None else "default"
+    cov_source = cov_source_override or ("option" if cov_raw is not None else "default")
 
     if cov_mode == "auto":
         if tuning_mode in {"safe", "aggressive"}:
@@ -1089,10 +1203,10 @@ def _convergence_phase(
             mu=m.mu,
             noise_var=float(m.noise_var),
             va=m.va,
-            loading_covariances=m.av,
+            loading_covariances=_covariances_list(m.av),
             vmu=float(m.vmu),
             mu_variances=m.muv,
-            score_covariances=m.sv,
+            score_covariances=_covariances_list(m.sv),
             pattern_index=ctx.prepared.pattern_index,
             mask=ctx.prepared.mask,
             s_xv=float(s_xv),
@@ -1263,7 +1377,14 @@ def _restore_original_shape(
         FinalState containing parameters expanded back to original dimensions.
     """
     m = training.model
-    a, av, s, sv, mu, muv = m.a, m.av, m.s, m.sv, m.mu, m.muv
+    a, av, s, sv, mu, muv = (
+        m.a,
+        _covariances_list(m.av),
+        m.s,
+        _covariances_list(m.sv),
+        m.mu,
+        m.muv,
+    )
     pattern_index: np.ndarray | list[int] | None = prepared.pattern_index
 
     row_idx = (

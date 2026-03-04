@@ -5,9 +5,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import numpy as np
+import scipy.sparse as sp
+
 from vbpca_py._runtime_policy import (
+    DenseMaskedAutotuneInputs,
     RuntimeWorkloadProfile,
-    _ThreadResolveRequest,
+    SparseAutotuneInputs,
     _default_profile_path,
     _is_explicit_thread_source,
     _load_runtime_profile_data,
@@ -16,7 +20,10 @@ from vbpca_py._runtime_policy import (
     _resolve_profile_thread_overrides,
     _resolve_thread_count,
     _safe_autotune_rms_threads,
+    _ThreadResolveRequest,
     apply_runtime_policy_defaults,
+    autotune_cov_writeback_mode_dense,
+    autotune_cov_writeback_mode_sparse,
     resolve_runtime_thread_config,
     resolve_runtime_thread_config_with_report,
 )
@@ -457,7 +464,9 @@ def test_resolve_profile_thread_overrides_rejects_invalid_schema() -> None:
     assert out == {}
 
 
-def test_resolve_profile_thread_overrides_handles_malformed_rules_and_negatives() -> None:
+def test_resolve_profile_thread_overrides_handles_malformed_rules_and_negatives() -> (
+    None
+):
     profile_data = {
         "schema_version": 1,
         "default_threads": {
@@ -481,7 +490,9 @@ def test_resolve_profile_thread_overrides_handles_malformed_rules_and_negatives(
         n_observed=200_000,
         is_sparse=True,
     )
-    out = _resolve_profile_thread_overrides(profile_data=profile_data, workload=workload)
+    out = _resolve_profile_thread_overrides(
+        profile_data=profile_data, workload=workload
+    )
 
     assert out == {"num_cpu_score_update": 3}
 
@@ -553,3 +564,72 @@ def test_is_explicit_thread_source_detects_env_global_only() -> None:
         env_specific=None,
         env_global=3,
     )
+
+
+def test_autotune_cov_writeback_mode_dense_smoke() -> None:
+    rng = np.random.default_rng(0)
+    x = rng.standard_normal((4, 3))
+    mask = np.ones_like(x)
+    loadings = rng.standard_normal((4, 2))
+    scores = rng.standard_normal((2, 3))
+    prior_prec = np.eye(2)
+
+    inputs = DenseMaskedAutotuneInputs(
+        x_data=x,
+        mask=mask,
+        loadings=loadings,
+        scores=scores,
+        noise_var=0.2,
+        prior_prec=prior_prec,
+    )
+
+    mode, timings, elapsed = autotune_cov_writeback_mode_dense(
+        inputs,
+        modes=("python", "bulk"),
+        reps=1,
+        max_total_time=0.2,
+        num_cpu_score=1,
+        num_cpu_load=1,
+    )
+
+    assert mode in {"python", "bulk"}
+    assert set(timings) == {"python", "bulk"}
+    assert elapsed >= 0.0
+
+
+def test_autotune_cov_writeback_mode_sparse_smoke() -> None:
+    rng = np.random.default_rng(1)
+    x_dense = rng.standard_normal((4, 3))
+    x_csc = sp.csc_matrix(x_dense)
+    x_csr = sp.csr_matrix(x_dense)
+    loadings = rng.standard_normal((4, 2))
+    scores = rng.standard_normal((2, 3))
+    prior_prec = np.eye(2)
+
+    inputs = SparseAutotuneInputs(
+        n_features=4,
+        n_samples=3,
+        x_csc_data=x_csc.data,
+        x_csc_indices=x_csc.indices,
+        x_csc_indptr=x_csc.indptr,
+        x_csr_data=x_csr.data,
+        x_csr_indices=x_csr.indices,
+        x_csr_indptr=x_csr.indptr,
+        loadings=loadings,
+        scores=scores,
+        noise_var=0.2,
+        prior_prec=prior_prec,
+    )
+
+    mode, timings, elapsed = autotune_cov_writeback_mode_sparse(
+        inputs,
+        modes=("python", "bulk"),
+        reps=1,
+        max_total_time=0.2,
+        num_cpu_score=1,
+        num_cpu_load=1,
+    )
+
+    assert mode in {"python", "bulk"}
+    assert set(timings) == {"python", "bulk"}
+    assert elapsed >= 0.0

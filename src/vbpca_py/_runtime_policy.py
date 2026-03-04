@@ -337,8 +337,8 @@ def normalize_runtime_tuning_mode(mode: object | None) -> str:
 def normalize_cov_writeback_mode(mode: object | None) -> str:
     """Normalize covariance writeback mode.
 
-    Allowed values: ``{"python", "bulk", "auto"}``; invalid inputs fall back
-    to ``"auto"`` so that callers can apply context-aware defaults.
+    Allowed values: ``{"python", "bulk", "kernel", "auto"}``; invalid inputs
+    fall back to ``"auto"`` so that callers can apply context-aware defaults.
 
     Returns:
         Normalized writeback mode string.
@@ -346,7 +346,7 @@ def normalize_cov_writeback_mode(mode: object | None) -> str:
     if mode is None:
         return "auto"
     normalized = str(mode).strip().lower()
-    if normalized in {"python", "bulk", "auto"}:
+    if normalized in {"python", "bulk", "kernel", "auto"}:
         return normalized
     return "auto"
 
@@ -675,6 +675,81 @@ def autotune_dense_masked_threads(
     return int(best_score), int(best_load), report
 
 
+def autotune_cov_writeback_mode_dense(  # noqa: PLR0913
+    inputs: DenseMaskedAutotuneInputs,
+    *,
+    modes: Sequence[str] = ("python", "bulk", "kernel"),
+    reps: int = 1,
+    max_total_time: float = 0.35,
+    num_cpu_score: int = 1,
+    num_cpu_load: int = 1,
+) -> tuple[str, dict[str, float], float]:
+    """Benchmark dense masked covariance writeback modes.
+
+    Returns:
+        Best mode, per-mode timings, total elapsed seconds.
+    """
+    modes_unique = list(dict.fromkeys(normalize_cov_writeback_mode(m) for m in modes))
+    arrays = _DenseBenchmarkArrays(
+        x=np.asarray(inputs.x_data, dtype=np.float64, order="C"),
+        mask=np.asarray(inputs.mask, dtype=np.float64, order="C"),
+        loadings=np.asarray(inputs.loadings, dtype=np.float64, order="C"),
+        scores=np.asarray(inputs.scores, dtype=np.float64, order="C"),
+        prior_prec=np.asarray(inputs.prior_prec, dtype=np.float64, order="C"),
+    )
+
+    timings: dict[str, float] = {}
+    best = (modes_unique[0] if modes_unique else "python", float("inf"))
+    start_total = time.perf_counter()
+    reps_eff = max(1, reps)
+
+    for mode in modes_unique:
+        if time.perf_counter() - start_total > max_total_time:
+            break
+
+        t0 = time.perf_counter()
+        for _ in range(reps_eff):
+            score_res = duk.score_update_dense_masked_nopattern(
+                x_data=arrays.x,
+                mask=arrays.mask,
+                loadings=arrays.loadings,
+                loading_covariances=None,
+                noise_var=float(inputs.noise_var),
+                return_covariances=True,
+                num_cpu=num_cpu_score,
+            )
+            sv = np.asarray(score_res["score_covariances"], dtype=np.float64, order="C")
+            sv_kernel_arg = (
+                sv
+                if mode != "python"
+                else np.stack([sv[j, :, :] for j in range(sv.shape[0])])
+            )
+
+            load_res = duk.loadings_update_dense_masked_nopattern(
+                x_data=arrays.x,
+                mask=arrays.mask,
+                scores=arrays.scores,
+                score_covariances=sv_kernel_arg,
+                prior_prec=arrays.prior_prec,
+                noise_var=float(inputs.noise_var),
+                return_covariances=True,
+                num_cpu=num_cpu_load,
+            )
+            av = np.asarray(
+                load_res["loading_covariances"], dtype=np.float64, order="C"
+            )
+            if mode == "python":
+                _ = [av[i, :, :] for i in range(av.shape[0])]
+
+        elapsed = (time.perf_counter() - t0) / float(reps_eff)
+        timings[mode] = float(elapsed)
+        if elapsed < best[1]:
+            best = (mode, elapsed)
+
+    total_elapsed = time.perf_counter() - start_total
+    return best[0], timings, float(total_elapsed)
+
+
 def autotune_sparse_nopattern_threads(
     inputs: SparseAutotuneInputs,
     *,
@@ -757,6 +832,88 @@ def autotune_sparse_nopattern_threads(
     }
 
     return int(best_score), int(best_load), report
+
+
+def autotune_cov_writeback_mode_sparse(  # noqa: PLR0913
+    inputs: SparseAutotuneInputs,
+    *,
+    modes: Sequence[str] = ("python", "bulk", "kernel"),
+    reps: int = 1,
+    max_total_time: float = 0.35,
+    num_cpu_score: int = 1,
+    num_cpu_load: int = 1,
+) -> tuple[str, dict[str, float], float]:
+    """Benchmark sparse no-pattern covariance writeback modes.
+
+    Returns:
+        Best mode, per-mode timings, total elapsed seconds.
+    """
+    modes_unique = list(dict.fromkeys(normalize_cov_writeback_mode(m) for m in modes))
+
+    arrays = _SparseBenchmarkArrays(
+        x_csc_data=np.asarray(inputs.x_csc_data, dtype=np.float64, order="C"),
+        x_csc_indices=np.asarray(inputs.x_csc_indices, dtype=np.int32, order="C"),
+        x_csc_indptr=np.asarray(inputs.x_csc_indptr, dtype=np.int32, order="C"),
+        x_csr_data=np.asarray(inputs.x_csr_data, dtype=np.float64, order="C"),
+        x_csr_indices=np.asarray(inputs.x_csr_indices, dtype=np.int32, order="C"),
+        x_csr_indptr=np.asarray(inputs.x_csr_indptr, dtype=np.int32, order="C"),
+        loadings=np.asarray(inputs.loadings, dtype=np.float64, order="C"),
+        scores=np.asarray(inputs.scores, dtype=np.float64, order="C"),
+        prior_prec=np.asarray(inputs.prior_prec, dtype=np.float64, order="C"),
+    )
+
+    timings: dict[str, float] = {}
+    best = (modes_unique[0] if modes_unique else "python", float("inf"))
+    start_total = time.perf_counter()
+    reps_eff = max(1, reps)
+
+    for mode in modes_unique:
+        if time.perf_counter() - start_total > max_total_time:
+            break
+
+        t0 = time.perf_counter()
+        for _ in range(reps_eff):
+            score_res = suk.score_update_sparse_nopattern(
+                x_data=arrays.x_csc_data,
+                x_indices=arrays.x_csc_indices,
+                x_indptr=arrays.x_csc_indptr,
+                loadings=arrays.loadings,
+                loading_covariances=None,
+                noise_var=float(inputs.noise_var),
+                return_covariances=True,
+                num_cpu=num_cpu_score,
+            )
+            sv = np.asarray(score_res["score_covariances"], dtype=np.float64, order="C")
+            sv_kernel_arg = (
+                sv
+                if mode != "python"
+                else np.stack([sv[j, :, :] for j in range(sv.shape[0])])
+            )
+
+            load_res = suk.loadings_update_sparse_nopattern(
+                x_data=arrays.x_csr_data,
+                x_indices=arrays.x_csr_indices,
+                x_indptr=arrays.x_csr_indptr,
+                scores=arrays.scores,
+                score_covariances=sv_kernel_arg,
+                prior_prec=arrays.prior_prec,
+                noise_var=float(inputs.noise_var),
+                return_covariances=True,
+                num_cpu=num_cpu_load,
+            )
+            av = np.asarray(
+                load_res["loading_covariances"], dtype=np.float64, order="C"
+            )
+            if mode == "python":
+                _ = [av[i, :, :] for i in range(av.shape[0])]
+
+        elapsed = (time.perf_counter() - t0) / float(reps_eff)
+        timings[mode] = float(elapsed)
+        if elapsed < best[1]:
+            best = (mode, elapsed)
+
+    total_elapsed = time.perf_counter() - start_total
+    return best[0], timings, float(total_elapsed)
 
 
 def _safe_autotune_rms_threads(profile: RuntimeWorkloadProfile) -> int:

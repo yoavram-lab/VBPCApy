@@ -7,6 +7,7 @@ from vbpca_py import dense_update_kernels as duk
 from vbpca_py._full_update import (
     LoadingsUpdateState,
     ScoreState,
+    _covariances_stack,
     _loadings_update_general,
     _score_update_fast_dense_no_av,
     _score_update_general_no_patterns,
@@ -134,6 +135,171 @@ def test_sparse_loadings_accessors_buffered_equivalence() -> None:
     buffered_loadings, _ = _loadings_update_general(_state("buffered"))
 
     assert np.allclose(legacy_loadings, buffered_loadings)
+
+
+def test_dense_score_bulk_cov_writeback_parity_and_type() -> None:
+    x_data, mask, loadings, _scores, av, _sv, _prior_prec = _fixture()
+    n_components = loadings.shape[1]
+    n_samples = x_data.shape[1]
+
+    def _state(mode: str) -> ScoreState:
+        return ScoreState(
+            x_data=x_data,
+            mask=mask,
+            loadings=loadings,
+            scores=np.zeros((n_components, n_samples), dtype=float),
+            loading_covariances=list(av),
+            score_covariances=[np.eye(n_components) for _ in range(n_samples)],
+            pattern_index=None,
+            obs_patterns=[],
+            noise_var=0.5,
+            eye_components=np.eye(n_components),
+            verbose=0,
+            dense_num_cpu=0,
+            cov_writeback_mode=mode,
+        )
+
+    py_state = _score_update_general_no_patterns(_state("python"))
+    bulk_state = _score_update_general_no_patterns(_state("bulk"))
+    kernel_state = _score_update_general_no_patterns(_state("kernel"))
+
+    assert np.allclose(py_state.scores, bulk_state.scores)
+    assert np.allclose(
+        _covariances_stack(py_state.score_covariances),
+        _covariances_stack(bulk_state.score_covariances),
+    )
+    assert isinstance(bulk_state.score_covariances, np.ndarray)
+    assert np.allclose(bulk_state.scores, kernel_state.scores)
+    assert np.allclose(
+        _covariances_stack(bulk_state.score_covariances),
+        _covariances_stack(kernel_state.score_covariances),
+    )
+    assert isinstance(kernel_state.score_covariances, np.ndarray)
+
+
+def test_sparse_score_bulk_cov_writeback_parity_and_type() -> None:
+    rng = np.random.default_rng(1234)
+    n_features, n_samples, n_components = 6, 5, 3
+
+    dense = rng.standard_normal((n_features, n_samples))
+    mask_dense = np.ones_like(dense)
+    x_csc = sp.csc_matrix(dense)
+    mask_csc = sp.csc_matrix(mask_dense)
+    loadings = rng.standard_normal((n_features, n_components))
+
+    def _state(mode: str) -> ScoreState:
+        return ScoreState(
+            x_data=x_csc,
+            mask=mask_csc,
+            loadings=loadings,
+            scores=np.zeros((n_components, n_samples), dtype=float),
+            loading_covariances=[np.eye(n_components) for _ in range(n_features)],
+            score_covariances=[np.eye(n_components) for _ in range(n_samples)],
+            pattern_index=None,
+            obs_patterns=[],
+            noise_var=0.2,
+            eye_components=np.eye(n_components),
+            verbose=0,
+            sparse_num_cpu=0,
+            cov_writeback_mode=mode,
+        )
+
+    py_state = _score_update_general_no_patterns(_state("python"))
+    bulk_state = _score_update_general_no_patterns(_state("bulk"))
+    kernel_state = _score_update_general_no_patterns(_state("kernel"))
+
+    assert np.allclose(py_state.scores, bulk_state.scores)
+    assert np.allclose(
+        _covariances_stack(py_state.score_covariances),
+        _covariances_stack(bulk_state.score_covariances),
+    )
+    assert isinstance(bulk_state.score_covariances, np.ndarray)
+    assert np.allclose(bulk_state.scores, kernel_state.scores)
+    assert np.allclose(
+        _covariances_stack(bulk_state.score_covariances),
+        _covariances_stack(kernel_state.score_covariances),
+    )
+    assert isinstance(kernel_state.score_covariances, np.ndarray)
+
+
+def test_dense_loadings_bulk_cov_writeback_parity_and_type() -> None:
+    x_data, mask, _loadings, scores, _av, sv, prior_prec = _fixture()
+    n_components = scores.shape[0]
+    n_features = x_data.shape[0]
+
+    def _state(mode: str) -> LoadingsUpdateState:
+        return LoadingsUpdateState(
+            x_data=x_data,
+            mask=mask,
+            scores=scores,
+            loading_covariances=[np.eye(n_components) for _ in range(n_features)],
+            score_covariances=list(sv),
+            pattern_index=None,
+            va=np.ones(n_components),
+            noise_var=0.5,
+            verbose=0,
+            cov_writeback_mode=mode,
+            log_progress_stride=0,
+        )
+
+    py_loadings, py_cov = _loadings_update_general(_state("python"))
+    bulk_loadings, bulk_cov = _loadings_update_general(_state("bulk"))
+    kernel_loadings, kernel_cov = _loadings_update_general(_state("kernel"))
+
+    assert np.allclose(py_loadings, bulk_loadings)
+    assert np.allclose(
+        _covariances_stack(py_cov),
+        _covariances_stack(bulk_cov),
+    )
+    assert isinstance(bulk_cov, np.ndarray)
+    assert np.allclose(bulk_loadings, kernel_loadings)
+    assert np.allclose(
+        _covariances_stack(bulk_cov),
+        _covariances_stack(kernel_cov),
+    )
+    assert isinstance(kernel_cov, np.ndarray)
+
+
+def test_sparse_loadings_bulk_cov_writeback_parity_and_type() -> None:
+    rng = np.random.default_rng(456)
+    n_features, n_samples, n_components = 5, 4, 3
+    dense = rng.standard_normal((n_features, n_samples))
+    mask_dense = np.ones_like(dense)
+    x_csr = sp.csr_matrix(dense)
+    mask_csr = sp.csr_matrix(mask_dense)
+    scores = rng.standard_normal((n_components, n_samples))
+
+    def _state(mode: str) -> LoadingsUpdateState:
+        return LoadingsUpdateState(
+            x_data=x_csr,
+            mask=mask_csr,
+            scores=scores,
+            loading_covariances=[np.eye(n_components) for _ in range(n_features)],
+            score_covariances=[np.eye(n_components) for _ in range(n_samples)],
+            pattern_index=None,
+            va=np.ones(n_components),
+            noise_var=0.5,
+            verbose=0,
+            sparse_num_cpu=0,
+            cov_writeback_mode=mode,
+        )
+
+    py_loadings, py_cov = _loadings_update_general(_state("python"))
+    bulk_loadings, bulk_cov = _loadings_update_general(_state("bulk"))
+    kernel_loadings, kernel_cov = _loadings_update_general(_state("kernel"))
+
+    assert np.allclose(py_loadings, bulk_loadings)
+    assert np.allclose(
+        _covariances_stack(py_cov),
+        _covariances_stack(bulk_cov),
+    )
+    assert isinstance(bulk_cov, np.ndarray)
+    assert np.allclose(bulk_loadings, kernel_loadings)
+    assert np.allclose(
+        _covariances_stack(bulk_cov),
+        _covariances_stack(kernel_cov),
+    )
+    assert isinstance(kernel_cov, np.ndarray)
 
 
 def test_score_update_dense_masked_parallel_parity() -> None:
