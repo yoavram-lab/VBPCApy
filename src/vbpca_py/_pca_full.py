@@ -311,6 +311,15 @@ class _AutotuneContext:
     profile_path: Path | None
 
 
+@dataclass(frozen=True)
+class _PatternAutotuneSubset:
+    x_data: Matrix
+    mask: Matrix
+    obs_patterns: list[list[int]]
+    pattern_index: np.ndarray
+    columns: np.ndarray
+
+
 # ---------------------------------------------------------------------------
 # Orchestration helpers
 # ---------------------------------------------------------------------------
@@ -556,6 +565,7 @@ def _resolve_runtime_threads_for_training(
         runtime_report["preflight"] = preflight
 
     tuning_mode = str(runtime_report.get("runtime_tuning", "off"))
+    accessor_source_override: str | None = None
     cov_source_override: str | None = None
     if tuning_mode in {"safe", "aggressive"}:
         ctx = _AutotuneContext(
@@ -572,6 +582,9 @@ def _resolve_runtime_threads_for_training(
 
         runtime_threads, runtime_report = _autotune_dense_masked_runtime(ctx)
         runtime_threads, runtime_report = _autotune_sparse_runtime(ctx)
+        runtime_threads, runtime_report, accessor_source_override = (
+            _autotune_masked_batch_and_accessor(ctx)
+        )
         runtime_threads, runtime_report, cov_source_override = (
             _autotune_cov_writeback_mode(ctx)
         )
@@ -581,6 +594,7 @@ def _resolve_runtime_threads_for_training(
             opts=opts,
             tuning_mode=tuning_mode,
             cov_source_override=cov_source_override,
+            accessor_source_override=accessor_source_override,
         )
     )
     runtime_report["cov_writeback_mode"] = cov_writeback_mode
@@ -661,6 +675,242 @@ def _autotune_dense_masked_runtime(
             runtime_report["runtime_profile_saved"] = str(ctx.profile_path)
 
     return runtime_threads, runtime_report
+
+
+def _build_pattern_autotune_subset(
+    ctx: _AutotuneContext, *, max_columns: int
+) -> _PatternAutotuneSubset | None:
+    obs_patterns = ctx.prepared.obs_patterns
+    if not obs_patterns:
+        return None
+
+    budget = max(1, int(max_columns))
+    per_pattern_cap = 4 if ctx.tuning_mode == "aggressive" else 2
+    selected_cols: list[int] = []
+    pattern_index: list[int] = []
+    compact_patterns: list[list[int]] = []
+
+    for cols in obs_patterns:
+        if not cols or len(selected_cols) >= budget:
+            continue
+
+        take = min(len(cols), per_pattern_cap, budget - len(selected_cols))
+        if take <= 0:
+            continue
+
+        pattern_id = len(compact_patterns)
+        compact_patterns.append([])
+        for col in cols[:take]:
+            if len(selected_cols) >= budget:
+                break
+            new_idx = len(selected_cols)
+            selected_cols.append(int(col))
+            pattern_index.append(pattern_id)
+            compact_patterns[pattern_id].append(new_idx)
+
+        if len(selected_cols) >= budget:
+            break
+
+    if not selected_cols:
+        return None
+
+    col_idx = np.asarray(selected_cols, dtype=int)
+    return _PatternAutotuneSubset(
+        x_data=ctx.prepared.x_data[:, col_idx],
+        mask=ctx.prepared.mask[:, col_idx],
+        obs_patterns=compact_patterns,
+        pattern_index=np.asarray(pattern_index, dtype=int),
+        columns=col_idx,
+    )
+
+
+def _pattern_batch_candidates(
+    subset: _PatternAutotuneSubset, tuning_mode: str
+) -> list[int]:
+    cap = int(subset.pattern_index.shape[0])
+    max_per_pattern = max((len(cols) for cols in subset.obs_patterns), default=0)
+    cap = max(cap, max_per_pattern)
+
+    candidates = [0]
+    if cap >= 8:
+        candidates.append(min(cap, 16))
+    if cap >= 24:
+        candidates.append(min(cap, 32))
+    if tuning_mode == "aggressive" and cap >= 48:
+        candidates.append(min(cap, 64))
+
+    return sorted({max(0, int(val)) for val in candidates})
+
+
+def _measure_pattern_autotune_combo(
+    ctx: _AutotuneContext,
+    subset: _PatternAutotuneSubset,
+    *,
+    pattern_batch_size: int,
+    accessor_mode: str,
+    reps: int,
+) -> float:
+    def _make_state() -> ScoreState:
+        scores = np.asarray(
+            ctx.training.model.s[:, subset.columns], dtype=np.float64, order="C"
+        ).copy()
+
+        n_patterns = len(subset.obs_patterns)
+        components = scores.shape[0]
+        score_covariances = ctx.training.model.sv
+        if isinstance(score_covariances, np.ndarray):
+            if score_covariances.shape[0] >= n_patterns:
+                sv_local: CovarianceStore = np.asarray(
+                    score_covariances[:n_patterns, :, :],
+                    dtype=np.float64,
+                    order="C",
+                ).copy()
+            else:
+                sv_local = np.zeros(
+                    (n_patterns, components, components), dtype=np.float64
+                )
+        elif len(score_covariances) >= n_patterns:
+            sv_local = [
+                np.asarray(score_covariances[idx], dtype=np.float64, order="C").copy()
+                for idx in range(n_patterns)
+            ]
+        else:
+            eye = np.eye(components, dtype=np.float64)
+            sv_local = [eye.copy() for _ in range(n_patterns)]
+
+        x_csr, x_csc = _coerce_sparse_views(subset.x_data)
+
+        return ScoreState(
+            x_data=subset.x_data,
+            mask=subset.mask,
+            loadings=np.asarray(ctx.training.model.a, dtype=np.float64, order="C"),
+            scores=scores,
+            loading_covariances=ctx.training.model.av,
+            score_covariances=sv_local,
+            pattern_index=np.asarray(subset.pattern_index, dtype=int),
+            obs_patterns=[list(cols) for cols in subset.obs_patterns],
+            noise_var=float(ctx.training.model.noise_var),
+            eye_components=np.eye(ctx.training.model.s.shape[0]),
+            verbose=0,
+            pattern_batch_size=int(pattern_batch_size),
+            sparse_num_cpu=ctx.runtime_threads.score_update_sparse,
+            dense_num_cpu=ctx.runtime_threads.score_update_dense,
+            x_csr=x_csr,
+            x_csc=x_csc,
+            cov_writeback_mode=str(ctx.opts.get("cov_writeback_mode", "python")),
+            log_progress_stride=0,
+            accessor_mode=str(accessor_mode),
+        )
+
+    start = time.perf_counter()
+    for _ in range(reps):
+        _update_scores(_make_state())
+    return (time.perf_counter() - start) / float(max(1, reps))
+
+
+def _benchmark_pattern_combos(
+    ctx: _AutotuneContext,
+    subset: _PatternAutotuneSubset,
+    combos: list[tuple[int, str]],
+    *,
+    reps: int,
+    max_total_time: float,
+) -> tuple[tuple[int, str], dict[str, float], float]:
+    start = time.perf_counter()
+    best_combo = combos[0]
+    best_time = float("inf")
+    timings: dict[str, float] = {}
+
+    for batch, accessor in combos:
+        if timings and (time.perf_counter() - start) > max_total_time:
+            break
+
+        elapsed = _measure_pattern_autotune_combo(
+            ctx,
+            subset,
+            pattern_batch_size=batch,
+            accessor_mode=accessor,
+            reps=reps,
+        )
+        timings[f"{batch}:{accessor}"] = float(elapsed)
+
+        if elapsed < best_time:
+            best_time = elapsed
+            best_combo = (batch, accessor)
+
+    return best_combo, timings, float(time.perf_counter() - start)
+
+
+def _autotune_masked_batch_and_accessor(
+    ctx: _AutotuneContext,
+) -> tuple[RuntimeThreadConfig, dict[str, object], str | None]:
+    accessor_source_override: str | None = None
+
+    if ctx.prepared.pattern_index is None or not ctx.prepared.obs_patterns:
+        return ctx.runtime_threads, ctx.runtime_report, accessor_source_override
+
+    subset = _build_pattern_autotune_subset(
+        ctx, max_columns=96 if ctx.tuning_mode == "aggressive" else 64
+    )
+    if subset is None:
+        return ctx.runtime_threads, ctx.runtime_report, accessor_source_override
+
+    user_batch = _int_opt(ctx.opts.get("masked_batch_size", 0))
+    batch_candidates = (
+        [user_batch]
+        if user_batch > 0
+        else _pattern_batch_candidates(subset, ctx.tuning_mode)
+    )
+
+    accessor_raw = ctx.opts.get("accessor_mode")
+    accessor_normalized = normalize_accessor_mode(accessor_raw)
+    if accessor_raw is not None and accessor_normalized != "auto":
+        accessor_candidates = [accessor_normalized]
+    else:
+        accessor_candidates = ["legacy", "buffered"]
+
+    combos = [
+        (batch, accessor)
+        for batch in batch_candidates
+        for accessor in accessor_candidates
+        if not (accessor == "buffered" and batch > 1)
+    ]
+
+    if not combos:
+        return ctx.runtime_threads, ctx.runtime_report, accessor_source_override
+
+    reps = 1 if ctx.tuning_mode == "safe" else 2
+    best_combo, timings, elapsed_total = _benchmark_pattern_combos(
+        ctx,
+        subset,
+        combos,
+        reps=reps,
+        max_total_time=0.35 if ctx.tuning_mode == "safe" else 0.8,
+    )
+
+    best_batch, best_accessor = best_combo
+    ctx.opts["masked_batch_size"] = int(best_batch)
+    ctx.opts["accessor_mode"] = str(best_accessor)
+    accessor_source_override = "autotune_measure"
+
+    runtime_report = ctx.runtime_report
+    runtime_report["autotune_masked_batch"] = {
+        "best": {
+            "masked_batch_size": int(best_batch),
+            "accessor_mode": str(best_accessor),
+        },
+        "candidates": [
+            {"masked_batch_size": int(batch), "accessor_mode": str(accessor)}
+            for batch, accessor in combos
+        ],
+        "timings": timings,
+        "elapsed_sec": float(elapsed_total),
+        "reps": int(reps),
+        "subset_columns": int(subset.pattern_index.shape[0]),
+        "tuning_mode": ctx.tuning_mode,
+    }
+
+    return ctx.runtime_threads, runtime_report, accessor_source_override
 
 
 def _autotune_sparse_runtime(
@@ -863,6 +1113,7 @@ def _resolve_runtime_behavior(
     opts: MutableMapping[str, object],
     tuning_mode: str,
     cov_source_override: str | None = None,
+    accessor_source_override: str | None = None,
 ) -> tuple[str, int, str, dict[str, str]]:
     cov_raw = opts.get("cov_writeback_mode")
     cov_mode = normalize_cov_writeback_mode(cov_raw)
@@ -889,7 +1140,9 @@ def _resolve_runtime_behavior(
 
     accessor_raw = opts.get("accessor_mode")
     accessor_mode = normalize_accessor_mode(accessor_raw)
-    accessor_source = "option" if accessor_raw is not None else "default"
+    accessor_source = accessor_source_override or (
+        "option" if accessor_raw is not None else "default"
+    )
 
     if accessor_mode == "auto":
         if tuning_mode in {"safe", "aggressive"}:

@@ -188,40 +188,41 @@ def main() -> None:
                             "accessor_mode": str(args.accessor_mode),
                             "cov_writeback_mode": str(cov_mode),
                         }
-                    if args.num_cpu is not None:
-                        model_kwargs["num_cpu"] = int(args.num_cpu)
 
-                    model = VBPCA(**model_kwargs)
+                        if args.num_cpu is not None:
+                            model_kwargs["num_cpu"] = int(args.num_cpu)
 
-                    start = time.perf_counter()
-                    model.fit(x, mask=mask)
-                    elapsed = time.perf_counter() - start
-                    timings.append(float(elapsed))
+                        model = VBPCA(**model_kwargs)
 
-                    rows.append(
-                        {
-                            "shape": f"{n_features}x{n_samples}",
-                            "n_features": int(n_features),
-                            "n_samples": int(n_samples),
-                            "missing_rate": float(missing_rate),
-                            "observed_rate": float(np.mean(mask)),
-                            "n_components": int(n_comp),
-                            "runtime_tuning": str(args.runtime_tuning),
-                            "compat_mode": str(args.compat_mode),
-                            "cov_writeback_mode": str(cov_mode),
-                            "num_cpu": None
-                            if args.num_cpu is None
-                            else int(args.num_cpu),
-                            "repetition": int(rep),
-                            "seed": int(seed),
-                            "rotate2pca": int(args.rotate2pca),
-                            "maxiters": int(args.maxiters),
-                            "accessor_mode": str(args.accessor_mode),
-                            "host_cpu_count": host["host_cpu_count"],
-                            "host_mem_gb": host["host_mem_gb"],
-                            "time_sec": float(elapsed),
-                        }
-                    )
+                        start = time.perf_counter()
+                        model.fit(x, mask=mask)
+                        elapsed = time.perf_counter() - start
+                        timings.append(float(elapsed))
+
+                        rows.append(
+                            {
+                                "shape": f"{n_features}x{n_samples}",
+                                "n_features": int(n_features),
+                                "n_samples": int(n_samples),
+                                "missing_rate": float(missing_rate),
+                                "observed_rate": float(np.mean(mask)),
+                                "n_components": int(n_comp),
+                                "runtime_tuning": str(args.runtime_tuning),
+                                "compat_mode": str(args.compat_mode),
+                                "cov_writeback_mode": str(cov_mode),
+                                "num_cpu": None
+                                if args.num_cpu is None
+                                else int(args.num_cpu),
+                                "repetition": int(rep),
+                                "seed": int(seed),
+                                "rotate2pca": int(args.rotate2pca),
+                                "maxiters": int(args.maxiters),
+                                "accessor_mode": str(args.accessor_mode),
+                                "host_cpu_count": host["host_cpu_count"],
+                                "host_mem_gb": host["host_mem_gb"],
+                                "time_sec": float(elapsed),
+                            }
+                        )
 
     timing_stats = _stats(timings) if timings else {}
 

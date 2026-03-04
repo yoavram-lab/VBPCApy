@@ -71,6 +71,23 @@ def _covariances_stack(covariances: CovarianceStore) -> np.ndarray:
     return np.stack(covariances, axis=0).astype(np.float64, copy=False)
 
 
+def _covariances_stack_cached(
+    covariances: CovarianceStore,
+    cache: dict[str, np.ndarray],
+    key: str,
+) -> np.ndarray:
+    if isinstance(covariances, np.ndarray):
+        return np.asarray(covariances, dtype=np.float64, copy=False)
+
+    cached = cache.get(key)
+    if cached is not None:
+        return cached
+
+    stacked = _covariances_stack(covariances)
+    cache[key] = stacked
+    return stacked
+
+
 def _covariances_list(covariances: CovarianceStore) -> list[np.ndarray]:
     if isinstance(covariances, np.ndarray):
         if covariances.ndim != 3:
@@ -1184,22 +1201,28 @@ def _score_update_general_no_patterns(state: ScoreState) -> ScoreState:
         return _score_update_general_dense_ext(state)
 
     x_col, mask_col, n_samples = _score_accessors(state)
-
+    has_cov = _has_covariances(state.score_covariances)
     log_stride = int(getattr(state, "log_progress_stride", 1))
+    cho_cache: dict[bytes, tuple[ChoFactor, np.ndarray, np.ndarray]] = {}
 
     for j in range(n_samples):
         mask_vec = mask_col(j)
-        cho, loadings_masked, sv_pattern = _score_cholesky(
-            state,
-            mask_vec,
-        )
-        if isinstance(state.score_covariances, np.ndarray):
-            state.score_covariances[j, :, :] = sv_pattern
+        cached = cho_cache.get(mask_vec.tobytes())
+        if cached is None:
+            cho, loadings_masked, sv_pattern = _score_cholesky(state, mask_vec)
+            cho_cache[mask_vec.tobytes()] = (cho, loadings_masked, sv_pattern)
         else:
-            state.score_covariances[j] = sv_pattern
+            cho, loadings_masked, sv_pattern = cached
 
         rhs = loadings_masked.T @ x_col(j)
         state.scores[:, j] = cho_solve(cho, rhs, check_finite=False)
+
+        if has_cov:
+            sv_out = np.array(sv_pattern, copy=True)
+            if isinstance(state.score_covariances, np.ndarray):
+                state.score_covariances[j, :, :] = sv_out
+            else:
+                state.score_covariances[j] = sv_out
 
         _log_progress_if_needed(
             state.verbose,
@@ -1595,9 +1618,11 @@ def _score_update_sparse_ext_apply(state: ScoreState, x_csc: sp.csc_matrix) -> N
     return_score_covariances = _has_covariances(state.score_covariances)
     cov_mode = str(getattr(state, "cov_writeback_mode", "python"))
 
+    cov_cache: dict[str, np.ndarray] = {}
+
     av_arg: np.ndarray | None
     if has_loading_covariances:
-        av_arg = _covariances_stack(state.loading_covariances)
+        av_arg = _covariances_stack_cached(state.loading_covariances, cov_cache, "av")
     else:
         av_arg = None
 
@@ -1636,9 +1661,11 @@ def _score_update_general_dense_ext(state: ScoreState) -> ScoreState:
     return_score_covariances = _has_covariances(state.score_covariances)
     cov_mode = str(getattr(state, "cov_writeback_mode", "python"))
 
+    cov_cache: dict[str, np.ndarray] = {}
+
     av_arg: np.ndarray | None
     if has_loading_covariances:
-        av_arg = _covariances_stack(state.loading_covariances)
+        av_arg = _covariances_stack_cached(state.loading_covariances, cov_cache, "av")
     else:
         av_arg = None
 
@@ -1697,9 +1724,11 @@ def _loadings_update_general_dense_ext(
     return_loading_covariances = _has_covariances(state.loading_covariances)
     cov_mode = str(getattr(state, "cov_writeback_mode", "python"))
 
+    cov_cache: dict[str, np.ndarray] = {}
+
     sv_arg: np.ndarray | None
     if has_score_covariances:
-        sv_arg = _covariances_stack(state.score_covariances)
+        sv_arg = _covariances_stack_cached(state.score_covariances, cov_cache, "sv")
     else:
         sv_arg = None
 
@@ -1757,9 +1786,11 @@ def _loadings_update_sparse_ext_apply(
     return_loading_covariances = _has_covariances(state.loading_covariances)
     cov_mode = str(getattr(state, "cov_writeback_mode", "python"))
 
+    cov_cache: dict[str, np.ndarray] = {}
+
     sv_arg: np.ndarray | None
     if has_score_covariances:
-        sv_arg = _covariances_stack(state.score_covariances)
+        sv_arg = _covariances_stack_cached(state.score_covariances, cov_cache, "sv")
     else:
         sv_arg = None
 
@@ -1829,7 +1860,8 @@ def _update_loadings(
             and _has_covariances(covariances)
             and not isinstance(covariances, np.ndarray)
         ):
-            covariances = _covariances_stack(covariances)
+            cov_cache: dict[str, np.ndarray] = {}
+            covariances = _covariances_stack_cached(covariances, cov_cache, "av")
         return loadings, covariances
 
     if (
@@ -1908,9 +1940,12 @@ def _update_noise_variance(
     scores = noise_state.scores
     loading_covariances = noise_state.loading_covariances
     score_covariances = noise_state.score_covariances
+    cov_cache: dict[str, np.ndarray] = {}
 
     n_samples = int(scores.shape[1])
     fully_observed = int(ix.size) == (int(loadings.shape[0]) * n_samples)
+
+    av_stack: np.ndarray | None = None
 
     if fully_observed and _has_covariances(score_covariances):
         sv_by_col = _score_covariances_by_column(
@@ -1918,10 +1953,14 @@ def _update_noise_variance(
             noise_state.pattern_index,
             n_samples,
         )
+        if _has_covariances(loading_covariances):
+            av_stack = _covariances_stack_cached(loading_covariances, cov_cache, "av")
+
         s_xv = _fully_observed_s_xv(
             noise_state=noise_state,
             sv_by_col=sv_by_col,
             n_samples=n_samples,
+            av_stack=av_stack,
         )
         s_xv += (rms**2) * noise_state.n_data
         updated_state, _ = _finalize_noise_state(noise_state, s_xv, hp_v)
@@ -1934,12 +1973,8 @@ def _update_noise_variance(
     )
 
     has_loading_covariances = _has_covariances(loading_covariances)
-
-    av_arg: np.ndarray | None
-    if has_loading_covariances:
-        av_arg = _covariances_stack(loading_covariances)
-    else:
-        av_arg = None
+    if has_loading_covariances and av_stack is None:
+        av_stack = _covariances_stack_cached(loading_covariances, cov_cache, "av")
 
     sv_arr = np.stack(sv_by_col, axis=0).astype(np.float64, copy=False)
     s_xv = float(
@@ -1949,7 +1984,7 @@ def _update_noise_variance(
             loadings=np.asarray(loadings, dtype=np.float64),
             scores=np.asarray(scores, dtype=np.float64),
             sv_by_col=sv_arr,
-            loading_covariances=av_arg,
+            loading_covariances=av_stack,
             num_cpu=int(noise_state.sparse_num_cpu),
         )
     )
@@ -1981,6 +2016,7 @@ def _fully_observed_s_xv(
     noise_state: NoiseState,
     sv_by_col: list[np.ndarray],
     n_samples: int,
+    av_stack: np.ndarray | None = None,
 ) -> float:
     loadings = noise_state.loadings
     scores = noise_state.scores
@@ -1992,7 +2028,12 @@ def _fully_observed_s_xv(
     s_xv = sv_term
 
     if _has_covariances(loading_covariances):
-        av_sum = np.sum(_covariances_stack(loading_covariances), axis=0)
+        av_sum = np.sum(
+            av_stack
+            if av_stack is not None
+            else _covariances_stack(loading_covariances),
+            axis=0,
+        )
         av_cov_term = float(np.sum(scores * (av_sum @ scores)))
         av_trace_term = float(sum(np.sum(sv_j * av_sum) for sv_j in sv_by_col))
         s_xv += av_cov_term

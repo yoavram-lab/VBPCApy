@@ -9,7 +9,7 @@ This script benchmarks methods under controlled missingness:
 
 Outputs one long-form CSV with one row per (setting, replicate, method).
 """
-
+        include_svd_zero: bool,
 from __future__ import annotations
 
 import argparse
@@ -18,61 +18,60 @@ import time
 import warnings
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+    if include_knn:
+        start = time.perf_counter()
+        recon_knn = _run_knn_pca(
+            x_obs,
+            n_components=effective_k,
+            seed=seed_method,
+            n_neighbors=knn_neighbors,
+        )
+        _validate_same_shape("knn_pca", x_true, recon_knn, holdout_mask)
+        knn_time = time.perf_counter() - start
+        rows.append(
+            {
+                "method": "knn_pca",
+                "rmse": _masked_rmse(x_true, recon_knn, holdout_mask),
+                "mae": _masked_mae(x_true, recon_knn, holdout_mask),
+                "wall_time_sec": knn_time,
+                "vbpca_mean_variance": np.nan,
+                "vbpca_median_variance": np.nan,
+                "vbpca_median_variance_holdout": np.nan,
+                "vbpca_median_variance_observed": np.nan,
+                "mice_converged": np.nan,
+                "mice_n_iter": np.nan,
+                "mice_retry_used": np.nan,
+                "vbpca_selected_k": int(selected_k),
+                "k_used": int(effective_k),
+            }
+        )
 
-import numpy as np
-import pandas as pd
-from joblib import Parallel, delayed
-from sklearn.datasets import load_breast_cancer, load_diabetes, load_wine
-from sklearn.decomposition import PCA
-from sklearn.experimental import enable_iterative_imputer  # noqa: F401
-from sklearn.exceptions import ConvergenceWarning
-from sklearn.impute import IterativeImputer, KNNImputer, SimpleImputer
-
-from vbpca_py import (
-    MissingAwareStandardScaler,
-    SelectionConfig,
-    VBPCA,
-    select_n_components,
-)
-
-
-@dataclass(frozen=True)
-class Setting:
-    dataset: str
-    mechanism: str
-    pattern: str
-    missing_rate: float
-    n_components: int
-    synthetic_shape: str
-
-
-@dataclass(frozen=True)
-class ReplicateTask:
-    setting: Setting
-    replicate_id: int
-    seed_data: int
-    seed_mask: int
-    seed_method: int
-
-
-@dataclass(frozen=True)
-class DatasetSelectionResult:
-    selected_k: int
-    trace_rows: list[dict[str, float]]
-
-
-def _parse_csv_values(raw: str) -> list[str]:
-    return [item.strip() for item in raw.split(",") if item.strip()]
-
-
-def _parse_float_list(raw: str) -> list[float]:
-    return [float(item.strip()) for item in raw.split(",") if item.strip()]
-
-
-def _parse_shape(shape_raw: str) -> tuple[int, int]:
-    left, right = shape_raw.lower().split("x")
-    return int(left), int(right)
+    if include_svd_zero:
+        start = time.perf_counter()
+        recon_svd = _run_svd_zero(
+            x_obs,
+            n_components=effective_k,
+            seed=seed_method,
+        )
+        _validate_same_shape("svd_zero", x_true, recon_svd, holdout_mask)
+        svd_time = time.perf_counter() - start
+        rows.append(
+            {
+                "method": "svd_zero",
+                "rmse": _masked_rmse(x_true, recon_svd, holdout_mask),
+                "mae": _masked_mae(x_true, recon_svd, holdout_mask),
+                "wall_time_sec": svd_time,
+                "vbpca_mean_variance": np.nan,
+                "vbpca_median_variance": np.nan,
+                "vbpca_median_variance_holdout": np.nan,
+                "vbpca_median_variance_observed": np.nan,
+                "mice_converged": np.nan,
+                "mice_n_iter": np.nan,
+                "mice_retry_used": np.nan,
+                "vbpca_selected_k": int(selected_k),
+                "k_used": int(effective_k),
+            }
+        )
 
 
 def _resolve_n_jobs(n_jobs: int) -> int:
@@ -108,10 +107,14 @@ def _load_dataset(
         active_per_factor = max(1, n_features // (rank * 6))
         for idx in range(rank):
             active = rng.choice(n_features, size=active_per_factor, replace=False)
-            loadings[idx, active] = rng.normal(loc=0.0, scale=1.0, size=active_per_factor)
+            loadings[idx, active] = rng.normal(
+                loc=0.0, scale=1.0, size=active_per_factor
+            )
         signal = factors @ loadings
         hetero_scale = rng.uniform(0.75, 1.5, size=(1, n_features))
-        noise = noise_scale * hetero_scale * rng.standard_normal((n_samples, n_features))
+        noise = (
+            noise_scale * hetero_scale * rng.standard_normal((n_samples, n_features))
+        )
         return signal + noise
 
     if dataset == "diabetes":
@@ -128,6 +131,7 @@ def _load_dataset(
 
     msg = f"Unsupported dataset: {dataset!r}"
     raise ValueError(msg)
+            include_svd_zero=bool(include_svd_zero),
 
 
 def _scale_with_package_standard_scaler(
@@ -144,7 +148,9 @@ def _scale_with_package_standard_scaler(
     scaler = MissingAwareStandardScaler()
     scaler.fit(x_obs, mask=observed_mask)
 
-    x_true_scaled = scaler.transform(x_true, mask=np.ones_like(observed_mask, dtype=bool))
+    x_true_scaled = scaler.transform(
+        x_true, mask=np.ones_like(observed_mask, dtype=bool)
+    )
     x_obs_scaled = scaler.transform(x_obs, mask=observed_mask)
     return x_true_scaled, x_obs_scaled
 
@@ -290,9 +296,7 @@ def _run_mice_pca(
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always", ConvergenceWarning)
             x_imp_local = imputer.fit_transform(x_obs)
-        had_warning = any(
-            issubclass(w.category, ConvergenceWarning) for w in caught
-        )
+        had_warning = any(issubclass(w.category, ConvergenceWarning) for w in caught)
         n_iter_local = int(getattr(imputer, "n_iter_", iter_cap))
         converged_local = not had_warning
         return x_imp_local, converged_local, n_iter_local
@@ -323,6 +327,17 @@ def _run_knn_pca(
     pca = PCA(n_components=n_components, random_state=seed)
     scores = pca.fit_transform(x_imp)
     return pca.inverse_transform(scores)
+
+
+def _run_svd_zero(
+    x_obs: np.ndarray,
+    n_components: int,
+    seed: int,
+) -> np.ndarray:
+    filled = np.nan_to_num(x_obs, nan=0.0)
+    svd = TruncatedSVD(n_components=n_components, random_state=seed)
+    scores = svd.fit_transform(filled)
+    return scores @ svd.components_
 
 
 def _run_vbpca(
@@ -416,7 +431,14 @@ def _run_vbpca(
             }
         )
 
-    return x_recon, variance, mean_variance, median_variance, selected_k, selection_trace_rows
+    return (
+        x_recon,
+        variance,
+        mean_variance,
+        median_variance,
+        selected_k,
+        selection_trace_rows,
+    )
 
 
 def _select_dataset_components(
@@ -481,6 +503,8 @@ def _evaluate_methods(
     mice_tol: float,
     include_mice: bool,
     include_knn: bool,
+    include_svd_zero: bool,
+    comparator_preset: str,
     knn_neighbors: int,
     vbpca_select_components: bool,
     vbpca_selection_patience: int | None,
@@ -492,7 +516,14 @@ def _evaluate_methods(
 
     # Select VBPCA k first, then optionally reuse that k for all methods.
     start = time.perf_counter()
-    recon_vbpca, variance_vbpca, mean_var, median_var, selected_k, selection_trace_rows = _run_vbpca(
+    (
+        recon_vbpca,
+        variance_vbpca,
+        mean_var,
+        median_var,
+        selected_k,
+        selection_trace_rows,
+    ) = _run_vbpca(
         x_obs,
         n_components=n_components,
         maxiters=vbpca_maxiters,
@@ -513,7 +544,9 @@ def _evaluate_methods(
         float(np.median(observed_values)) if observed_values.size > 0 else float("nan")
     )
 
-    effective_k = int(selected_k) if use_selected_k_for_all_methods else int(n_components)
+    effective_k = (
+        int(selected_k) if use_selected_k_for_all_methods else int(n_components)
+    )
 
     start = time.perf_counter()
     recon_mean = _run_mean_pca(x_obs, n_components=effective_k, seed=seed_method)
@@ -594,6 +627,33 @@ def _evaluate_methods(
             }
         )
 
+    if include_svd_zero:
+        start = time.perf_counter()
+        recon_svd = _run_svd_zero(
+            x_obs,
+            n_components=effective_k,
+            seed=seed_method,
+        )
+        _validate_same_shape("svd_zero", x_true, recon_svd, holdout_mask)
+        svd_time = time.perf_counter() - start
+        rows.append(
+            {
+                "method": "svd_zero",
+                "rmse": _masked_rmse(x_true, recon_svd, holdout_mask),
+                "mae": _masked_mae(x_true, recon_svd, holdout_mask),
+                "wall_time_sec": svd_time,
+                "vbpca_mean_variance": np.nan,
+                "vbpca_median_variance": np.nan,
+                "vbpca_median_variance_holdout": np.nan,
+                "vbpca_median_variance_observed": np.nan,
+                "mice_converged": np.nan,
+                "mice_n_iter": np.nan,
+                "mice_retry_used": np.nan,
+                "vbpca_selected_k": int(selected_k),
+                "k_used": int(effective_k),
+            }
+        )
+
     rows.append(
         {
             "method": "vbpca_vb_modern",
@@ -628,6 +688,8 @@ def _run_one_task(
     mice_tol: float,
     include_mice: bool,
     include_knn: bool,
+    include_svd_zero: bool,
+    comparator_preset: str,
     knn_neighbors: int,
     vbpca_select_components: bool,
     dataset_selected_k: int,
@@ -685,6 +747,7 @@ def _run_one_task(
         mice_tol=mice_tol,
         include_mice=include_mice,
         include_knn=include_knn,
+        include_svd_zero=include_svd_zero,
         knn_neighbors=knn_neighbors,
         vbpca_select_components=bool(vbpca_select_components),
         vbpca_selection_patience=vbpca_selection_patience,
@@ -721,6 +784,8 @@ def _run_one_task(
         "scaling": "MissingAwareStandardScaler_observed_only",
         "include_mice": bool(include_mice),
         "include_knn": bool(include_knn),
+        "include_svd_zero": bool(include_svd_zero),
+        "comparator_preset": comparator_preset,
         "knn_neighbors": int(knn_neighbors),
         "vbpca_model_selection": bool(vbpca_select_components),
         "vbpca_model_selection_scope": selection_scope,
@@ -741,9 +806,7 @@ def _run_one_task(
     }
 
     for row in method_rows:
-        row.update(
-            common_fields
-        )
+        row.update(common_fields)
 
     trace_rows: list[dict[str, Any]] = []
     for trace in selection_trace_rows:
@@ -829,6 +892,15 @@ def _parse_args() -> argparse.Namespace:
         help="Comma-separated missingness rates in [0,1].",
     )
     parser.add_argument(
+        "--max-missing-rate",
+        type=float,
+        default=0.5,
+        help=(
+            "Upper bound on allowed missingness rate; use to guard against "
+            "extreme masks that distort comparisons."
+        ),
+    )
+    parser.add_argument(
         "--n-reps",
         type=int,
         default=40,
@@ -894,14 +966,30 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--include-mice",
         action=argparse.BooleanOptionalAction,
-        default=True,
+        default=None,
         help="Include MICE+PCA comparator (disable for very large-loci wall-time runs).",
     )
     parser.add_argument(
         "--include-knn",
         action=argparse.BooleanOptionalAction,
-        default=True,
+        default=None,
         help="Include KNN+PCA comparator.",
+    )
+    parser.add_argument(
+        "--include-svd-zero",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Include TruncatedSVD with zero-imputation comparator.",
+    )
+    parser.add_argument(
+        "--comparator-preset",
+        type=str,
+        default="core",
+        choices=["core", "light", "heavy"],
+        help=(
+            "Comparator bundle: core=mean/mice/knn/vbpca, light=mean/knn/vbpca, "
+            "heavy=core+svd_zero. Individual include-* flags override when set."
+        ),
     )
     parser.add_argument("--knn-neighbors", type=int, default=5)
     parser.add_argument("--n-jobs", type=int, default=-2)
@@ -943,12 +1031,32 @@ def main() -> None:
         msg = "--vbpca-local-window must be >= 0"
         raise ValueError(msg)
 
+    max_missing_rate = float(args.max_missing_rate)
     for rate in missing_rates:
         if not (0 < rate < 1):
             msg = f"Invalid missing rate {rate}; expected 0 < rate < 1"
             raise ValueError(msg)
+        if rate > max_missing_rate:
+            msg = (
+                f"Missing rate {rate} exceeds configured cap {max_missing_rate}; "
+                "use --max-missing-rate to override."
+            )
+            raise ValueError(msg)
 
     synthetic_shape = _parse_shape(args.synthetic_shape)
+
+    # Resolve comparator bundle with overrides.
+    include_mice = (
+        bool(args.include_mice)
+        if args.include_mice is not None
+        else args.comparator_preset != "light"
+    )
+    include_knn = bool(args.include_knn) if args.include_knn is not None else True
+    include_svd_zero = (
+        bool(args.include_svd_zero)
+        if args.include_svd_zero is not None
+        else args.comparator_preset == "heavy"
+    )
     selection_patience = (
         int(args.vbpca_selection_patience)
         if int(args.vbpca_selection_patience) > 0
@@ -1026,8 +1134,10 @@ def main() -> None:
             vbpca_selection_max_trials=selection_max_trials,
             mice_max_iter=args.mice_max_iter,
             mice_tol=args.mice_tol,
-            include_mice=bool(args.include_mice),
-            include_knn=bool(args.include_knn),
+            include_mice=bool(include_mice),
+            include_knn=bool(include_knn),
+            include_svd_zero=bool(include_svd_zero),
+            comparator_preset=str(args.comparator_preset),
             knn_neighbors=int(args.knn_neighbors),
             vbpca_select_components=bool(args.vbpca_select_components),
             dataset_selected_k=int(dataset_selected_k[task.setting.dataset]),
@@ -1037,8 +1147,12 @@ def main() -> None:
         for task in tasks
     )
 
-    method_rows = [row for method_batch, _trace_batch in rows_nested for row in method_batch]
-    trace_rows = [row for _method_batch, trace_batch in rows_nested for row in trace_batch]
+    method_rows = [
+        row for method_batch, _trace_batch in rows_nested for row in method_batch
+    ]
+    trace_rows = [
+        row for _method_batch, trace_batch in rows_nested for row in trace_batch
+    ]
 
     frame = pd.DataFrame(method_rows)
     trace_frame = pd.DataFrame(dataset_anchor_trace_rows + trace_rows)
@@ -1048,7 +1162,9 @@ def main() -> None:
     args.selection_trace_output.parent.mkdir(parents=True, exist_ok=True)
     trace_frame.to_csv(args.selection_trace_output, index=False)
 
-    total_settings = len(datasets) * len(mechanisms) * len(patterns) * len(missing_rates)
+    total_settings = (
+        len(datasets) * len(mechanisms) * len(patterns) * len(missing_rates)
+    )
     print(
         "Completed benchmark run:",
         f"settings={total_settings}",

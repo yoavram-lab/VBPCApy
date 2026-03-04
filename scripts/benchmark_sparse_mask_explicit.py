@@ -210,41 +210,41 @@ def main() -> None:
                     "accessor_mode": str(args.accessor_mode),
                     "cov_writeback_mode": str(cov_mode),
                 }
-            if args.num_cpu is not None:
-                model_kwargs["num_cpu"] = int(args.num_cpu)
+                if args.num_cpu is not None:
+                    model_kwargs["num_cpu"] = int(args.num_cpu)
 
-            model = VBPCA(**model_kwargs)
+                model = VBPCA(**model_kwargs)
 
-            start = time.perf_counter()
-            model.fit(x, mask=mask)
-            elapsed = time.perf_counter() - start
+                start = time.perf_counter()
+                model.fit(x, mask=mask)
+                elapsed = time.perf_counter() - start
 
-            timings.append(float(elapsed))
+                timings.append(float(elapsed))
 
-            rows.append(
-                {
-                    "case": args.case_name,
-                    "kind": "sparse_explicit_mask",
-                    "n_features": int(n_features),
-                    "n_samples": int(n_samples),
-                    "n_components": int(n_comp),
-                    "observed_rate": float(obs_frac),
-                    "missing_rate": 1.0 - float(obs_frac),
-                    "zero_rate": float(args.zero_rate),
-                    "nnz_fraction": float(nnz_frac),
-                    "rotate2pca": int(args.rotate2pca),
-                    "runtime_tuning": str(args.runtime_tuning),
-                    "compat_mode": str(args.compat_mode),
-                    "cov_writeback_mode": str(cov_mode),
-                    "num_cpu": None if args.num_cpu is None else int(args.num_cpu),
-                    "accessor_mode": str(args.accessor_mode),
-                    "repetition": int(rep),
-                    "seed": int(seed),
-                    "host_cpu_count": host["host_cpu_count"],
-                    "host_mem_gb": host["host_mem_gb"],
-                    "time_sec": float(elapsed),
-                }
-            )
+                rows.append(
+                    {
+                        "case": args.case_name,
+                        "kind": "sparse_explicit_mask",
+                        "n_features": int(n_features),
+                        "n_samples": int(n_samples),
+                        "n_components": int(n_comp),
+                        "observed_rate": float(obs_frac),
+                        "missing_rate": 1.0 - float(obs_frac),
+                        "zero_rate": float(args.zero_rate),
+                        "nnz_fraction": float(nnz_frac),
+                        "rotate2pca": int(args.rotate2pca),
+                        "runtime_tuning": str(args.runtime_tuning),
+                        "compat_mode": str(args.compat_mode),
+                        "cov_writeback_mode": str(cov_mode),
+                        "num_cpu": None if args.num_cpu is None else int(args.num_cpu),
+                        "accessor_mode": str(args.accessor_mode),
+                        "repetition": int(rep),
+                        "seed": int(seed),
+                        "host_cpu_count": host["host_cpu_count"],
+                        "host_mem_gb": host["host_mem_gb"],
+                        "time_sec": float(elapsed),
+                    }
+                )
 
     timing_stats = _stats(timings) if timings else {}
 

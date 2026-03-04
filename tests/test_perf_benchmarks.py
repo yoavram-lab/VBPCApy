@@ -46,6 +46,34 @@ def _make_sparse(
     return sp.csr_matrix(dense)
 
 
+def _make_dense_high_masked(
+    n_features: int,
+    n_samples: int,
+    *,
+    seed: int,
+    missing_rate: float = 0.98,
+) -> np.ndarray:
+    rng = np.random.default_rng(seed)
+    x = rng.standard_normal((n_features, n_samples), dtype=np.float32)
+    missing = rng.random(x.shape) < missing_rate
+    x = x.astype(np.float64, copy=False)
+    x[missing] = np.nan
+    return x
+
+
+def _make_sparse_high(
+    n_features: int,
+    n_samples: int,
+    *,
+    seed: int,
+    zero_rate: float = 0.995,
+) -> sp.csr_matrix:
+    rng = np.random.default_rng(seed)
+    dense = rng.standard_normal((n_features, n_samples), dtype=np.float32)
+    dense[rng.random(dense.shape) < zero_rate] = 0.0
+    return sp.csr_matrix(dense)
+
+
 def _octave_perf_available() -> bool:
     has_octave = shutil.which("octave") is not None
     has_oct2py = importlib.util.find_spec("oct2py") is not None
@@ -164,6 +192,64 @@ def test_benchmark_scaling_sparse_modern(
 
     result = benchmark(run_once)
     assert np.asarray(result["A"]).shape == (n_features, n_components)
+
+
+@pytest.mark.perf
+@pytest.mark.parametrize("compat_mode", ["modern", "strict_legacy"])
+def test_benchmark_high_feature_masked_dense(
+    benchmark: pytest.BenchmarkFixture,
+    compat_mode: str,
+) -> None:
+    """Smoke benchmark for high-feature masked dense path (~100k x 1k)."""
+    n_features = 100_000
+    n_samples = 1_000
+    x = _make_dense_high_masked(n_features, n_samples, seed=2025)
+
+    def run_once() -> dict[str, object]:
+        return pca_full(
+            x,
+            n_components=32,
+            maxiters=2,
+            algorithm="vb",
+            autosave=0,
+            display=0,
+            verbose=0,
+            rotate2pca=0,
+            compat_mode=compat_mode,
+            auto_pattern_masked=1,
+        )
+
+    result = benchmark(run_once)
+    assert np.asarray(result["A"]).shape == (n_features, 32)
+
+
+@pytest.mark.perf
+@pytest.mark.parametrize("compat_mode", ["modern", "strict_legacy"])
+def test_benchmark_high_feature_sparse(
+    benchmark: pytest.BenchmarkFixture,
+    compat_mode: str,
+) -> None:
+    """Smoke benchmark for high-feature sparse path (~100k x 1k)."""
+    n_features = 100_000
+    n_samples = 1_000
+    x_sparse = _make_sparse_high(n_features, n_samples, seed=2026)
+
+    def run_once() -> dict[str, object]:
+        return pca_full(
+            x_sparse,
+            n_components=32,
+            maxiters=2,
+            algorithm="vb",
+            autosave=0,
+            display=0,
+            verbose=0,
+            rotate2pca=0,
+            compat_mode=compat_mode,
+            auto_pattern_masked=1,
+        )
+
+    result = benchmark(run_once)
+    assert np.asarray(result["A"]).shape == (n_features, 32)
 
 
 @pytest.mark.perf

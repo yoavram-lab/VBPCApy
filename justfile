@@ -89,6 +89,25 @@ bench-study-paper:
 	python scripts/make_paper_outputs.py --replicates results/replicates.csv --summary results/summary.csv --pairwise results/pairwise_summary.csv --out-dir results/paper
 	python scripts/make_selection_supplement.py --replicates results/replicates.csv --selection-trace results/vbpca_selection_trace.csv --out-dir results/paper
 
+# Aggregate figures and tables from script benchmarks (final analysis bundle).
+figures-tables:
+	python scripts/make_figures_and_tables.py --replicates results/replicates.csv --selection-trace results/vbpca_selection_trace.csv --dense-runtime results/perf_baseline/dense_runtime.csv --sparse-runtime results/perf_baseline/sparse_mask_explicit.csv --out-dir results/figures_tables
+
+# End-to-end analysis steps (data imputation benchmarks + runtime + summary + figures).
+analysis-impute:
+	python scripts/benchmark_missing_pca.py --comparator-preset core --output results/replicates.csv --selection-trace-output results/vbpca_selection_trace.csv
+
+analysis-dense-runtime:
+	python scripts/benchmark_dense_runtime.py --out results/perf_baseline/dense_runtime.csv
+
+analysis-sparse-runtime:
+	python scripts/benchmark_sparse_mask_explicit.py --out results/perf_baseline/sparse_mask_explicit.csv
+
+analysis-summary:
+	python scripts/summarize_missing_pca.py --input results/replicates.csv --summary-output results/summary.csv --pairwise-output results/pairwise_summary.csv
+
+analysis-all: analysis-impute analysis-dense-runtime analysis-sparse-runtime analysis-summary figures-tables
+
 # Run pilot + summary + paper output generation end-to-end.
 bench-study-pipeline: bench-study-pilot
 	python scripts/summarize_missing_pca.py --input results/replicates_pilot.csv --summary-output results/summary_pilot.csv --pairwise-output results/pairwise_summary_pilot.csv

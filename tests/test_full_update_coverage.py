@@ -29,6 +29,7 @@ from vbpca_py._full_update import (
     _score_accessors,
     _score_update_fast_dense_no_av,
     _score_update_general_dense_ext,
+    _score_update_general_no_patterns,
     _update_loadings,
 )
 
@@ -368,3 +369,37 @@ def test_loadings_general_caches_mask_pattern() -> None:
     assert loadings.shape == (2, 1)
     assert isinstance(covs, list)
     assert covs[0] is not covs[1]
+
+
+def test_score_general_caches_mask_and_copies_covariances() -> None:
+    x = np.array([[1.0, 0.0, 2.0], [0.5, 1.0, 2.5]])
+    mask = sp.csr_matrix([[1.0, 0.0, 1.0], [1.0, 1.0, 1.0]])
+    loadings = np.array([[1.0], [0.25]])
+    state = ScoreState(
+        x_data=x,
+        mask=mask,
+        loadings=loadings,
+        scores=np.zeros((1, x.shape[1])),
+        loading_covariances=[],
+        score_covariances=[np.eye(1) for _ in range(x.shape[1])],
+        pattern_index=None,
+        obs_patterns=[],
+        noise_var=0.1,
+        eye_components=np.eye(1),
+        verbose=0,
+        pattern_batch_size=0,
+        x_csr=None,
+        x_csc=None,
+        sparse_num_cpu=0,
+        dense_num_cpu=1,
+        cov_writeback_mode="python",
+        log_progress_stride=1,
+        accessor_mode="legacy",
+    )
+    updated = _score_update_general_no_patterns(state)
+    assert updated.scores.shape == (1, x.shape[1])
+    covs = updated.score_covariances
+    assert isinstance(covs, list)
+    assert len(covs) == x.shape[1]
+    assert np.allclose(covs[0], covs[2])
+    assert not np.shares_memory(covs[0], covs[2])

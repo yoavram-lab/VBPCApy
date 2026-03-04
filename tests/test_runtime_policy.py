@@ -8,8 +8,16 @@ from pathlib import Path
 import numpy as np
 import scipy.sparse as sp
 
+from vbpca_py._pca_full import (
+    ModelState,
+    PreparedProblem,
+    TrainingState,
+    _autotune_masked_batch_and_accessor,
+    _AutotuneContext,
+)
 from vbpca_py._runtime_policy import (
     DenseMaskedAutotuneInputs,
+    RuntimeThreadConfig,
     RuntimeWorkloadProfile,
     SparseAutotuneInputs,
     _default_profile_path,
@@ -222,6 +230,148 @@ def test_safe_autotune_keeps_wide_sparse_rms_single_thread() -> None:
     )
 
     assert cfg.rms == 1
+
+
+def _build_autotune_ctx_for_masked() -> _AutotuneContext:
+    x = np.ones((2, 20), dtype=float)
+    mask = np.ones_like(x)
+    obs_patterns = [
+        list(range(5)),
+        list(range(5, 9)),
+        list(range(9, 13)),
+        list(range(13, 17)),
+        list(range(17, 20)),
+    ]
+    pattern_index = np.empty(x.shape[1], dtype=int)
+    for pid, cols in enumerate(obs_patterns):
+        for col in cols:
+            pattern_index[col] = pid
+
+    prepared = PreparedProblem(
+        x_data=x,
+        x_probe=None,
+        mask=mask,
+        mask_probe=None,
+        n_obs_row=np.ones(x.shape[0]),
+        n_data=float(mask.size),
+        n_probe=0,
+        ix_obs=np.array([], dtype=int),
+        jx_obs=np.array([], dtype=int),
+        n_features=int(x.shape[0]),
+        n_samples=int(x.shape[1]),
+        n1x=0,
+        n2x=0,
+        row_idx=None,
+        col_idx=None,
+        n_patterns=len(obs_patterns),
+        obs_patterns=obs_patterns,
+        pattern_index=pattern_index,
+    )
+
+    model = ModelState(
+        a=np.ones((x.shape[0], 1)),
+        s=np.zeros((1, x.shape[1])),
+        mu=np.zeros((x.shape[0], 1)),
+        noise_var=0.1,
+        av=[np.eye(1) for _ in range(x.shape[0])],
+        sv=[np.eye(1) for _ in range(x.shape[1])],
+        muv=np.zeros((x.shape[0], 1)),
+        va=np.ones(1),
+        vmu=1.0,
+    )
+    training = TrainingState(
+        model=model,
+        lc={},
+        dsph={},
+        err_mx=None,
+        a_old=model.a.copy(),
+        time_start=0.0,
+        runtime_report={},
+    )
+    workload = RuntimeWorkloadProfile(
+        n_features=int(x.shape[0]),
+        n_samples=int(x.shape[1]),
+        n_components=int(model.s.shape[0]),
+        n_observed=int(mask.size),
+        is_sparse=False,
+    )
+
+    return _AutotuneContext(
+        prepared=prepared,
+        training=training,
+        opts={"runtime_tuning": "aggressive"},
+        workload=workload,
+        runtime_threads=RuntimeThreadConfig(
+            score_update_sparse=0,
+            loadings_update_sparse=0,
+            score_update_dense=1,
+            loadings_update_dense=1,
+            noise_sxv_sum=0,
+            rms=1,
+        ),
+        runtime_report={},
+        tuning_mode="aggressive",
+        hw_threads=8,
+        profile_path=None,
+    )
+
+
+def test_autotune_masked_batch_prefers_best_combo(monkeypatch) -> None:
+    ctx = _build_autotune_ctx_for_masked()
+
+    timings = {
+        (0, "legacy"): 0.3,
+        (0, "buffered"): 0.25,
+        (16, "legacy"): 0.05,
+    }
+
+    def _fake_measure(
+        ctx_in: _AutotuneContext,
+        subset: object,
+        *,
+        pattern_batch_size: int,
+        accessor_mode: str,
+        reps: int,
+    ) -> float:
+        assert ctx_in is ctx
+        return timings[(pattern_batch_size, accessor_mode)]
+
+    monkeypatch.setattr(
+        "vbpca_py._pca_full._measure_pattern_autotune_combo",
+        _fake_measure,
+    )
+
+    _, runtime_report, accessor_source = _autotune_masked_batch_and_accessor(ctx)
+
+    assert accessor_source == "autotune_measure"
+    assert ctx.opts["masked_batch_size"] == 16
+    assert ctx.opts["accessor_mode"] == "legacy"
+
+    auto = runtime_report["autotune_masked_batch"]
+    assert auto["best"]["masked_batch_size"] == 16
+    assert auto["best"]["accessor_mode"] == "legacy"
+    assert "0:legacy" in auto["timings"]
+
+
+def test_autotune_masked_batch_skips_when_user_forces_values(monkeypatch) -> None:
+    ctx = _build_autotune_ctx_for_masked()
+    ctx.opts["masked_batch_size"] = 8
+    ctx.opts["accessor_mode"] = "buffered"
+
+    def _fail_measure(*_: object, **__: object) -> float:
+        raise AssertionError("measure should not be called when user overrides")
+
+    monkeypatch.setattr(
+        "vbpca_py._pca_full._measure_pattern_autotune_combo",
+        _fail_measure,
+    )
+
+    _, runtime_report, accessor_source = _autotune_masked_batch_and_accessor(ctx)
+
+    assert accessor_source is None
+    assert ctx.opts["masked_batch_size"] == 8
+    assert ctx.opts["accessor_mode"] == "buffered"
+    assert "autotune_masked_batch" not in runtime_report
 
 
 def test_runtime_profile_default_threads_override_env(tmp_path, monkeypatch) -> None:
