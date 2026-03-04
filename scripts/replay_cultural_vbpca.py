@@ -144,8 +144,11 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--max-k-cap",
         type=int,
-        default=0,
-        help=("Optional extra cap on k; 0 or less uses min(n_features, n_samples)."),
+        default=75,
+        help=(
+            "Optional extra cap on k (default 75 to mirror legacy MATLAB runs); "
+            "0 or less uses min(n_features, n_samples)."
+        ),
     )
     parser.add_argument(
         "--compat-mode",
