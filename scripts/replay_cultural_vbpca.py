@@ -27,11 +27,34 @@ from typing import Any
 import numpy as np
 import pandas as pd  # type: ignore[import-untyped]
 import scipy.sparse as sp
+import matplotlib.pyplot as plt
 
 from vbpca_py import SelectionConfig, VBPCA, select_n_components
 from vbpca_py.preprocessing import MissingAwareOneHotEncoder, MissingAwareStandardScaler
 
 logger = logging.getLogger(__name__)
+
+
+def _save_pc_scatter(
+    scores: np.ndarray,
+    evr: np.ndarray,
+    dataset_out: Path,
+    dataset_name: str,
+) -> None:
+    if scores.shape[0] < 2 or evr.shape[0] < 2:
+        return
+    pc1, pc2 = scores[0], scores[1]
+    var1 = float(evr[0] * 100.0)
+    var2 = float(evr[1] * 100.0)
+    plt.figure(figsize=(6, 5))
+    plt.scatter(pc1, pc2, s=14, alpha=0.7, edgecolor="none")
+    plt.xlabel(f"PC1 ({var1:.1f}% var)")
+    plt.ylabel(f"PC2 ({var2:.1f}% var)")
+    plt.title(f"{dataset_name}: PC1 vs PC2")
+    plt.tight_layout()
+    dataset_out.mkdir(parents=True, exist_ok=True)
+    plt.savefig(dataset_out / "pc1_pc2.png", dpi=180)
+    plt.close()
 
 
 def _as_float(value: object) -> float:
@@ -557,6 +580,15 @@ def _run_dataset(  # noqa: PLR0912, PLR0913, PLR0915, C901
             variance=model.variance_,
             mean=model.mean_,
             selected_k=int(best_k),
+        )
+
+    # Save PC1 vs PC2 scatter with explained variance percentages when available.
+    if model.scores_ is not None and evr.shape[0] >= 2:
+        _save_pc_scatter(
+            np.asarray(model.scores_, dtype=float),
+            evr,
+            dataset_out,
+            policy.name,
         )
 
     summary: dict[str, Any] = {
