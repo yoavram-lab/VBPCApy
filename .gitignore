@@ -1,5 +1,8 @@
-# Tooling lockfiles not under version control
+########################################
+# Tooling lockfiles (not under version control)
+########################################
 uv.lock
+
 ########################################
 # Python build / cache artifacts
 ########################################

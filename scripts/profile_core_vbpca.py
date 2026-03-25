@@ -175,9 +175,7 @@ def _run_case(
                 for key in phase_totals:
                     vals = lc.get(key, [])
                     if isinstance(vals, list):
-                        phase_totals[key].append(
-                            float(sum(float(v) for v in vals[1:]))
-                        )
+                        phase_totals[key].append(float(sum(float(v) for v in vals[1:])))
 
     arr = np.asarray(times, dtype=float)
     out: dict[str, float | int | str] = {

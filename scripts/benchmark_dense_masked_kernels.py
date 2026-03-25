@@ -142,26 +142,24 @@ def _run_kernel_benchmarks(
                 ),
                 reps=reps,
             )
-            rows.append(
-                {
-                    "kernel": "score",
-                    "num_cpu": int(num_cpu),
-                    "n_features": int(n_features),
-                    "n_samples": int(n_samples),
-                    "n_components": int(n_components),
-                    "missing_rate": float(missing_rate),
-                    "observed_rate": observed_rate,
-                    "reps": int(reps),
-                    "time_mean_sec": score_stats["mean"],
-                    "time_median_sec": score_stats["median"],
-                    "time_min_sec": score_stats["min"],
-                    "time_max_sec": score_stats["max"],
-                    "time_std_sec": score_stats["std"],
-                    "ops_per_sec": score_stats["ops_per_sec"],
-                    "seed": int(base_seed),
-                    **host,
-                }
-            )
+            rows.append({
+                "kernel": "score",
+                "num_cpu": int(num_cpu),
+                "n_features": int(n_features),
+                "n_samples": int(n_samples),
+                "n_components": int(n_components),
+                "missing_rate": float(missing_rate),
+                "observed_rate": observed_rate,
+                "reps": int(reps),
+                "time_mean_sec": score_stats["mean"],
+                "time_median_sec": score_stats["median"],
+                "time_min_sec": score_stats["min"],
+                "time_max_sec": score_stats["max"],
+                "time_std_sec": score_stats["std"],
+                "ops_per_sec": score_stats["ops_per_sec"],
+                "seed": int(base_seed),
+                **host,
+            })
 
             loading_stats = _timeit(
                 lambda: duk.loadings_update_dense_masked_nopattern(
@@ -176,26 +174,24 @@ def _run_kernel_benchmarks(
                 ),
                 reps=reps,
             )
-            rows.append(
-                {
-                    "kernel": "loadings",
-                    "num_cpu": int(num_cpu),
-                    "n_features": int(n_features),
-                    "n_samples": int(n_samples),
-                    "n_components": int(n_components),
-                    "missing_rate": float(missing_rate),
-                    "observed_rate": observed_rate,
-                    "reps": int(reps),
-                    "time_mean_sec": loading_stats["mean"],
-                    "time_median_sec": loading_stats["median"],
-                    "time_min_sec": loading_stats["min"],
-                    "time_max_sec": loading_stats["max"],
-                    "time_std_sec": loading_stats["std"],
-                    "ops_per_sec": loading_stats["ops_per_sec"],
-                    "seed": int(base_seed),
-                    **host,
-                }
-            )
+            rows.append({
+                "kernel": "loadings",
+                "num_cpu": int(num_cpu),
+                "n_features": int(n_features),
+                "n_samples": int(n_samples),
+                "n_components": int(n_components),
+                "missing_rate": float(missing_rate),
+                "observed_rate": observed_rate,
+                "reps": int(reps),
+                "time_mean_sec": loading_stats["mean"],
+                "time_median_sec": loading_stats["median"],
+                "time_min_sec": loading_stats["min"],
+                "time_max_sec": loading_stats["max"],
+                "time_std_sec": loading_stats["std"],
+                "ops_per_sec": loading_stats["ops_per_sec"],
+                "seed": int(base_seed),
+                **host,
+            })
 
     return rows
 
@@ -261,9 +257,10 @@ def main() -> None:
     print("Recorded rows:", len(rows))
     print("Output:", args.out)
     if not frame.empty:
-        grouped = frame.groupby(["kernel", "num_cpu"]).agg(
-            {"time_mean_sec": "mean", "ops_per_sec": "mean"}
-        )
+        grouped = frame.groupby(["kernel", "num_cpu"]).agg({
+            "time_mean_sec": "mean",
+            "ops_per_sec": "mean",
+        })
         print("Mean time (s) / ops_per_sec by kernel,num_cpu:\n", grouped)
 
 

@@ -90,7 +90,9 @@ def _derive_match_from_csv(args: argparse.Namespace) -> dict[str, object] | None
     n_features = int(row["n_features"])
     n_samples = int(row["n_samples"])
     missing_rate = float(row["missing_rate"])
-    n_observed = int(round(float(n_features * n_samples) * max(0.0, 1.0 - missing_rate)))
+    n_observed = int(
+        round(float(n_features * n_samples) * max(0.0, 1.0 - missing_rate))
+    )
     is_sparse = str(row.get("kind", "")).strip().lower() == "sparse"
 
     return {
@@ -134,7 +136,9 @@ def _parse_args() -> argparse.Namespace:
     )
 
     for key in _THREAD_KEYS:
-        parser.add_argument(f"--default-{key.replace('_', '-')}", type=int, default=None)
+        parser.add_argument(
+            f"--default-{key.replace('_', '-')}", type=int, default=None
+        )
         parser.add_argument(f"--rule-{key.replace('_', '-')}", type=int, default=None)
 
     parser.add_argument(
@@ -195,7 +199,11 @@ def main() -> None:
 
     if rule_threads:
         new_rule = {"match": rule_match, "threads": rule_threads}
-        rules = [] if args.replace_workload_rules else list(profile.get("workload_rules", []))
+        rules = (
+            []
+            if args.replace_workload_rules
+            else list(profile.get("workload_rules", []))
+        )
         rules.append(new_rule)
         profile["workload_rules"] = rules
 

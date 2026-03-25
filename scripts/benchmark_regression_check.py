@@ -11,7 +11,6 @@ from __future__ import annotations
 import argparse
 import subprocess
 from pathlib import Path
-from typing import Iterable
 
 import numpy as np
 import pandas as pd
@@ -25,60 +24,56 @@ def _run_command(command: list[str]) -> None:
 
 
 def _run_dense(out_path: Path) -> Path:
-    _run_command(
-        [
-            "python",
-            "scripts/benchmark_dense_runtime.py",
-            "--shapes",
-            "500x500,200x800",
-            "--missing-rates",
-            "0.0,0.1",
-            "--n-components",
-            "6",
-            "--maxiters",
-            "40",
-            "--reps",
-            "2",
-            "--seed",
-            "31415",
-            "--runtime-tuning",
-            "safe",
-            "--compat-mode",
-            "modern",
-            "--out",
-            str(out_path),
-        ]
-    )
+    _run_command([
+        "python",
+        "scripts/benchmark_dense_runtime.py",
+        "--shapes",
+        "500x500,200x800",
+        "--missing-rates",
+        "0.0,0.1",
+        "--n-components",
+        "6",
+        "--maxiters",
+        "40",
+        "--reps",
+        "2",
+        "--seed",
+        "31415",
+        "--runtime-tuning",
+        "safe",
+        "--compat-mode",
+        "modern",
+        "--out",
+        str(out_path),
+    ])
     return out_path
 
 
 def _run_sparse(out_path: Path) -> Path:
-    _run_command(
-        [
-            "python",
-            "scripts/benchmark_sparse_mask_explicit.py",
-            "--shape",
-            "200x400",
-            "--n-components",
-            "6",
-            "--maxiters",
-            "30",
-            "--reps",
-            "3",
-            "--seed",
-            "27182",
-            "--observed-rate",
-            "0.1",
-            "--zero-rate",
-            "0.5",
-            "--runtime-tuning",
-            "safe",
-            "--compat-mode",
-            "modern",
-            "--out",
-            str(out_path),
-        ]
-    )
+    _run_command([
+        "python",
+        "scripts/benchmark_sparse_mask_explicit.py",
+        "--shape",
+        "200x400",
+        "--n-components",
+        "6",
+        "--maxiters",
+        "30",
+        "--reps",
+        "3",
+        "--seed",
+        "27182",
+        "--observed-rate",
+        "0.1",
+        "--zero-rate",
+        "0.5",
+        "--runtime-tuning",
+        "safe",
+        "--compat-mode",
+        "modern",
+        "--out",
+        str(out_path),
+    ])
     return out_path
 
 
@@ -87,7 +82,9 @@ def _filter_comparable_columns(frame: pd.DataFrame) -> pd.DataFrame:
     return frame.loc[:, cols].copy()
 
 
-def _assert_frame_close(left: pd.DataFrame, right: pd.DataFrame, *, atol: float) -> None:
+def _assert_frame_close(
+    left: pd.DataFrame, right: pd.DataFrame, *, atol: float
+) -> None:
     if list(left.columns) != list(right.columns):
         msg = "Column mismatch between benchmark outputs"
         raise AssertionError(msg)

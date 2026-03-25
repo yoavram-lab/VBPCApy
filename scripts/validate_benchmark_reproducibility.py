@@ -23,49 +23,45 @@ def _run_once(out_prefix: Path, n_jobs: int) -> tuple[Path, Path]:
     summary = out_prefix.with_suffix(".summary.csv")
     pairwise = out_prefix.with_suffix(".pairwise.csv")
 
-    _run_command(
-        [
-            "python",
-            "scripts/benchmark_missing_pca.py",
-            "--datasets",
-            "synthetic",
-            "--mechanisms",
-            "MCAR",
-            "--patterns",
-            "random",
-            "--missing-rates",
-            "0.3",
-            "--n-reps",
-            "6",
-            "--n-components",
-            "5",
-            "--n-jobs",
-            str(n_jobs),
-            "--random-seed",
-            "424242",
-            "--synthetic-shape",
-            "300x25",
-            "--vbpca-maxiters",
-            "20",
-            "--mice-max-iter",
-            "5",
-            "--output",
-            str(replicates),
-        ]
-    )
+    _run_command([
+        "python",
+        "scripts/benchmark_missing_pca.py",
+        "--datasets",
+        "synthetic",
+        "--mechanisms",
+        "MCAR",
+        "--patterns",
+        "random",
+        "--missing-rates",
+        "0.3",
+        "--n-reps",
+        "6",
+        "--n-components",
+        "5",
+        "--n-jobs",
+        str(n_jobs),
+        "--random-seed",
+        "424242",
+        "--synthetic-shape",
+        "300x25",
+        "--vbpca-maxiters",
+        "20",
+        "--mice-max-iter",
+        "5",
+        "--output",
+        str(replicates),
+    ])
 
-    _run_command(
-        [
-            "python",
-            "scripts/summarize_missing_pca.py",
-            "--input",
-            str(replicates),
-            "--summary-output",
-            str(summary),
-            "--pairwise-output",
-            str(pairwise),
-        ]
-    )
+    _run_command([
+        "python",
+        "scripts/summarize_missing_pca.py",
+        "--input",
+        str(replicates),
+        "--summary-output",
+        str(summary),
+        "--pairwise-output",
+        str(pairwise),
+    ])
 
     return summary, pairwise
 
@@ -155,7 +151,9 @@ def main() -> None:
     args = _parse_args()
     args.work_dir.mkdir(parents=True, exist_ok=True)
 
-    first_summary, first_pairwise = _run_once(args.work_dir / "run1", n_jobs=args.n_jobs)
+    first_summary, first_pairwise = _run_once(
+        args.work_dir / "run1", n_jobs=args.n_jobs
+    )
     second_summary, second_pairwise = _run_once(
         args.work_dir / "run2", n_jobs=args.n_jobs
     )

@@ -494,7 +494,10 @@ def _run_coverage_grid(  # noqa: C901
 def plot_figure1(
     trials: list[_Trial], output_dir: pathlib.Path, fmt: str = "png"
 ) -> None:
-    """2x4 exact-rate heatmaps: rows=method (VBPCApy cost vs sklearn EVR95), cols=missingness."""
+    """2x4 exact-rate heatmaps.
+
+    Rows = method (VBPCApy cost vs sklearn EVR95), columns = missingness.
+    """
     n_miss = len(MISSINGNESS)
     row_defs = [
         ("cost", "vbpca", "VBPCApy (cost)"),
@@ -849,7 +852,6 @@ def main() -> None:
     if args.plot_only:
         # Load existing results and regenerate figures only
         stab_path = args.output_dir / "stability_results.json"
-        cov_path = args.output_dir / "coverage_results.json"
         if not stab_path.exists():
             LOGGER.error("No %s found; run simulation first.", stab_path)
             return

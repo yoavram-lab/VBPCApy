@@ -160,22 +160,43 @@ ignore = [
     "TRY300",  # try-except-return OK in tests
 ]
 "scripts/**/*" = [
+    "ANN",     # Type annotations not required in scripts
+    "B023",    # Loop variable binding OK in benchmarks
+    "BLE001",  # Blind except OK in scripts
     "C901",    # Complex functions OK in scripts
-    "D103",    # Missing docstrings OK in scripts
+    "D",       # Docstring rules not enforced in scripts
+    "E501",    # Long lines OK in scripts
+    "EM101",   # String literal in exception OK in scripts
+    "EM102",   # f-string in exception OK in scripts
     "EXE001",  # Shebang presence not required
+    "FBT001",  # Boolean positional args OK in scripts
     "INP001",  # Implicit namespace package
+    "PLC0206", # Dict without .items() OK in scripts
+    "PLC0415", # Lazy imports OK in scripts
+    "PLC1901", # Empty string comparison OK in scripts
+    "PLC2701", # Private name import OK in scripts
+    "PLR0913", # Many arguments OK in scripts
     "PLR0914", # Many locals OK in scripts
+    "PLR0917", # Many positional args OK in scripts
+    "PLR1702", # Nested blocks OK in scripts
     "PLR5501", # Collapsible else OK in scripts
+    "PLR6104", # Augmented assignment OK in scripts
     "RUF001",  # Ambiguous unicode OK in scripts
     "RUF003",  # Ambiguous unicode OK in scripts
+    "RUF046",  # Redundant int cast OK in scripts
     "S404",    # subprocess import OK in scripts
     "S603",    # subprocess call OK in scripts
+    "S607",    # Partial executable path OK in scripts
     "SIM102",  # Collapsible if OK in scripts
     "T201",    # print() OK in scripts
+    "TC003",   # Type-checking imports OK in scripts
+    "TRY003",  # Long exception messages OK in scripts
+    "TRY004",  # TypeError preference OK in scripts
 ]
 "analysis/**/*" = [
     "D104",    # Missing docstring in __init__.py OK
     "INP001",  # Implicit namespace package
+    "PLR0914", # Many locals OK in plotting functions
     "T201",    # print() OK in analysis scripts
 ]
 
