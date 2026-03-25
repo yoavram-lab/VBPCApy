@@ -37,9 +37,10 @@ uncertainty quantification. The package provides a scikit-learn-compatible
 estimator (`VBPCA`) with `fit`/`transform`/`inverse_transform` semantics,
 missing-aware preprocessing utilities that preserve NaN structure through
 encode–decode round-trips, and empirical model selection for the number of
-latent components. Performance-critical update equations are implemented as
-C++ extensions via pybind11 [@pybind11], with runtime autotuning for thread
-counts and memory access patterns.
+latent components. The numerical backend builds on NumPy [@Harris2020] and
+SciPy [@Virtanen2020], while performance-critical update equations are
+implemented as C++ extensions via pybind11 [@pybind11] with runtime
+autotuning for thread counts and memory access patterns.
 
 # Statement of Need
 
@@ -56,23 +57,30 @@ estimated only from observed entries. As \autoref{fig:accuracy} demonstrates,
 the built-in model selection of VBPCApy recovers the true latent rank far
 more reliably than the standard impute-then-PCA pipeline across every
 missingness pattern tested, whereas scikit-learn's explained-variance
-threshold collapses under incomplete data. The posterior covariances
-produced by the variational E-step expose per-entry uncertainty in
-reconstructions and scores, enabling downstream analyses—such as the
-posterior predictive eigenvalue tests of @Macdonald2026—to perform
-more principled dimensionality selection than the empirical cost and
-probe-set metrics provided here.
+threshold collapses under incomplete data.
+\autoref{fig:errors} further decomposes these rank-selection errors,
+showing that VBPCApy's cost metric keeps both over- and under-selection
+rates low with a mean absolute error roughly three times smaller than the
+baseline, while \autoref{fig:power} confirms that detection power
+remains above 65\% even at the highest true ranks.
+The posterior covariances produced by the variational E-step expose
+per-entry uncertainty in reconstructions and scores, enabling downstream
+analyses—such as the posterior predictive eigenvalue tests of
+@Macdonald2026—to perform more principled dimensionality selection
+than the empirical cost and probe-set metrics provided here.
 
-Existing implementations of @Ilin2010 are available in MATLAB (the
-authors' reference code) and as isolated scripts, but none provide a
-pip-installable Python package with a stable API, automated model
-selection, or missing-aware preprocessing. R packages such as `pcaMethods`
-[@Stacklies2007] offer probabilistic PCA variants but lack the full
-VB-PCA formulation with hierarchical noise and optional bias estimation.
-The scikit-learn `PCA` class [@Pedregosa2011] does not handle missing
-entries at all. VBPCApy fills this niche by combining the full @Ilin2010
-algorithm with modern Python packaging, type-checked interfaces, and
-compiled kernels.
+@Bishop1999 introduced Bayesian PCA with automatic relevance
+determination; @Ilin2010 extended this to the missing-data setting with
+a full variational treatment. Existing implementations of @Ilin2010 are
+available in MATLAB (the authors' reference code) and as isolated
+scripts, but none provide a pip-installable Python package with a stable
+API, automated model selection, or missing-aware preprocessing.
+R packages such as `pcaMethods` [@Stacklies2007] offer probabilistic PCA
+variants but lack the full VB-PCA formulation with hierarchical noise and
+optional bias estimation. The scikit-learn `PCA` class [@Pedregosa2011]
+does not handle missing entries at all. VBPCApy fills this niche by
+combining the full @Ilin2010 algorithm with modern Python packaging,
+type-checked interfaces, and compiled kernels.
 
 # Key Features
 
@@ -103,6 +111,14 @@ baseline fails.
 dense, sparse, noise, and rotation update kernels, with runtime dispatch
 selecting accessor and threading modes based on data shape and sparsity.
 
+**Project infrastructure.** The repository includes a GitHub Actions CI
+pipeline that runs linting (`ruff`), type checking (`mypy --strict`), and
+the full test suite across Python 3.11–3.13, enforcing a minimum coverage
+threshold.  A `justfile` command runner provides recipes for common
+development tasks (testing, benchmarking, formatting), and a
+`publish.yml` workflow builds platform wheels via `cibuildwheel` and
+publishes to PyPI on tagged releases.
+
 # Example
 
 ```python
@@ -124,28 +140,37 @@ print(f"Selected k={best_k}, final cost={model.cost_:.4f}")
 # Stability of Model Selection
 
 ![Exact rank-recovery rate for VBPCApy (cost metric, top row) versus
-scikit-learn PCA with 95\% explained-variance threshold (EVR95, bottom
-row) across four missingness patterns (complete, MCAR, MNAR-censored,
-block).  Each cell shows the recovery rate for a given combination of
-sample size $n$ and feature count $p$.  VBPCApy maintains moderate
-recovery across all patterns, while the impute-then-PCA baseline
-degrades sharply under incomplete
+scikit-learn PCA with a 95\% explained-variance threshold (EVR95, bottom
+row) across four missingness patterns (Complete, MCAR, MNAR-censored,
+Block).  Each cell shows the fraction of simulations in which the
+selected rank exactly matched the true rank for a given sample size $n$
+and feature count $p$ (3,360 trials total: 4 $n$ $\times$ 5 $p$
+$\times$ 3 ranks $\times$ 4 patterns $\times$ 5 replicates).
+VBPCApy maintains 20–100\% recovery across all patterns, while the
+impute-then-PCA baseline collapses to near-zero under incomplete
 data.\label{fig:accuracy}](figure_accuracy.pdf)
 
-![Error decomposition of rank selection.  Panel A shows over- and
-under-selection rates by missingness pattern.  Panel B reports the mean
-absolute error (MAE) between selected and true rank, split by
-missingness and metric.  Panel C plots the average selected rank
-against the true rank, with error bars indicating one standard
-deviation.\label{fig:errors}](figure_errors.pdf)
+![Error decomposition of rank selection.  (A) Over- and under-selection
+rates by missingness pattern for cost, prms, and EVR95.  (B) Mean
+absolute error (MAE) between selected and true rank, grouped by
+missingness pattern and metric; EVR95 MAE exceeds 5 under MCAR and MNAR
+while cost MAE stays below 2.  (C) Mean selected rank versus true rank
+($k_{\mathrm{true}} \in \{2, 5, 10\}$) with $\pm 1$ standard deviation
+bars; cost and prms track the diagonal closely, whereas EVR95
+systematically over-selects.\label{fig:errors}](figure_errors.pdf)
 
 ![Detection power — the probability of selecting at least the true
-number of components — by true rank (Panel A) and by each combination
-of missingness pattern and metric
-(Panel B).\label{fig:power}](figure_power.pdf)
+number of components.  (A) Power versus true rank for cost and prms,
+showing graceful degradation from near-unity at $k=2$ to roughly 65\%
+at $k=10$.  (B) Power broken down by every combination of missingness
+pattern and metric; EVR95 achieves high nominal power primarily through
+systematic over-selection rather than accurate rank
+recovery.\label{fig:power}](figure_power.pdf)
 
 # Acknowledgements
 
-This work was supported by the Yoav Ram Lab at Tel Aviv University.
+This research was supported in part by the John Templeton Foundation (YR),
+the Minerva Stiftung Center for Lab Evolution (YR), and the Zuckerman
+STEM Leadership Program (JCM).
 
 # References
