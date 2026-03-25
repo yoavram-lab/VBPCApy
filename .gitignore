@@ -106,13 +106,5 @@ pca_f_autosave*
 # Stale historical runs — remove entirely; rerun analysis scripts as needed
 results/
 
-# Paper artifacts: keep text/json/bib, drop generated figures/logs
-paper/figure_*.png
-paper/figure_*.pdf
-paper/figure_*.svg
+# Paper artifacts: keep text/json/bib; figures are tracked for JOSS submission
 paper/*.log
-
-# Generated paper figures (reproducible via just paper-figure)
-paper/figure_stability*.png
-paper/figure_stability*.pdf
-paper/figure_stability*.svg
