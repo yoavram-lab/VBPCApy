@@ -51,7 +51,7 @@ def test_autoencoder_sparse_continuous_supported():
     dense_enc = AutoEncoder().fit(x_dense)
     sparse_enc = AutoEncoder().fit(x_sparse)
 
-    z_dense = dense_enc.transform(x_dense)
+    dense_enc.transform(x_dense)
     z_sparse = sparse_enc.transform(x_sparse)
 
     assert sp.issparse(z_sparse)
@@ -64,7 +64,7 @@ def test_autoencoder_sparse_categorical_supported():
     dense_enc = AutoEncoder(column_types=["categorical", "categorical"]).fit(x_dense)
     sparse_enc = AutoEncoder(column_types=["categorical", "categorical"]).fit(x_sparse)
 
-    z_dense = dense_enc.transform(x_dense)
+    dense_enc.transform(x_dense)
     z_sparse = sparse_enc.transform(x_sparse)
 
     assert sp.issparse(z_sparse)

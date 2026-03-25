@@ -40,8 +40,8 @@ def _ensure_mask(x: np.ndarray, mask: Mask | None) -> Mask:
     """Return a boolean mask where True marks observed entries."""
     if mask is None:
         if np.issubdtype(x.dtype, np.number):
-            return ~np.isnan(x.astype(float))
-        return ~np.not_equal(x, x)
+            return ~np.isnan(x.astype(float))  # type: ignore[no-any-return]
+        return ~np.not_equal(x, x)  # type: ignore[no-any-return]
     return np.asarray(mask, dtype=bool)
 
 
@@ -602,7 +602,7 @@ class MissingAwareStandardScaler(_BaseScaler):
         obs_mask = _ensure_mask(x_arr, mask)
         z = (x_arr - self.mean_) / self.scale_
         z[~obs_mask] = np.nan
-        return z
+        return z  # type: ignore[no-any-return]
 
     def inverse_transform(
         self, z: np.ndarray | sp.spmatrix, mask: Mask | None = None
@@ -620,7 +620,7 @@ class MissingAwareStandardScaler(_BaseScaler):
         obs_mask = _ensure_mask(z_arr, mask)
         x = z_arr * self.scale_ + self.mean_
         x[~obs_mask] = np.nan
-        return x
+        return x  # type: ignore[no-any-return]
 
 
 class MissingAwareMinMaxScaler(_BaseScaler):
@@ -682,7 +682,7 @@ class MissingAwareMinMaxScaler(_BaseScaler):
         obs_mask = _ensure_mask(x_arr, mask)
         z = (x_arr - self.data_min_) / self.data_range_
         z[~obs_mask] = np.nan
-        return z
+        return z  # type: ignore[no-any-return]
 
     def inverse_transform(
         self, z: np.ndarray | sp.spmatrix, mask: Mask | None = None
@@ -700,7 +700,7 @@ class MissingAwareMinMaxScaler(_BaseScaler):
         obs_mask = _ensure_mask(z_arr, mask)
         x = z_arr * self.data_range_ + self.data_min_
         x[~obs_mask] = np.nan
-        return x
+        return x  # type: ignore[no-any-return]
 
 
 @dataclass
@@ -871,7 +871,7 @@ class AutoEncoder:
                 parts_sparse.append(cast("sp.csr_matrix", z_part))
             if not parts_sparse:
                 return sp.csr_matrix((x_csr.shape[0], 0))
-            return sp.hstack(parts_sparse, format="csr")
+            return sp.hstack(parts_sparse, format="csr")  # type: ignore[no-any-return]
 
         x_dense = np.asarray(x)
         obs_mask = _ensure_mask(x_dense, mask)

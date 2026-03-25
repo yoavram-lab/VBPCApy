@@ -40,7 +40,8 @@ def test_memory_helpers_cover_branches() -> None:
     assert big_label.endswith("TB")
 
     over, est = exceeds_budget((10, 10), np.float64, max_bytes=100)
-    assert over is True and est > 100
+    assert over is True
+    assert est > 100
 
     under, _ = exceeds_budget((1, 1), np.float64, max_bytes=None)
     assert under is False
@@ -69,7 +70,8 @@ def test_validate_mask_compatibility_shape_mismatch_with_preflight() -> None:
     preflight: list[dict[str, object]] = []
     with pytest.raises(ValueError):
         validate_mask_compatibility(data, mask, preflight=preflight, context="unit")
-    assert preflight and preflight[0]["context"] == "unit"
+    assert preflight
+    assert preflight[0]["context"] == "unit"
 
 
 def test_validate_sparse_mask_matches_structure_dense_and_sparse_masks() -> None:

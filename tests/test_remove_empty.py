@@ -186,12 +186,10 @@ def test_init_non_dict_is_passed_through_no_empty() -> None:
 def test_init_non_dict_is_passed_through_with_empty() -> None:
     """If init is not a dict and there are empty rows/cols, it is returned unchanged."""
     # Row 0 is all NaN, col 1 is all NaN
-    x = np.array(
-        [
-            [np.nan, np.nan],
-            [1.0, np.nan],
-        ]
-    )
+    x = np.array([
+        [np.nan, np.nan],
+        [1.0, np.nan],
+    ])
     x_probe = None
     init = "not-a-dict"
 
@@ -317,7 +315,7 @@ def test_slice_matrix_like_dense_row_and_col_only_paths() -> None:
     """Directly exercise dense row-only, col-only, and no-slice helper paths."""
     mat = np.arange(12, dtype=float).reshape(3, 4)
 
-    no_slice = rem._slice_matrix_like(  # noqa: SLF001
+    no_slice = rem._slice_matrix_like(
         mat,
         ir=np.array([0, 1, 2]),
         ic=np.array([0, 1, 2, 3]),
@@ -326,7 +324,7 @@ def test_slice_matrix_like_dense_row_and_col_only_paths() -> None:
     )
     assert no_slice is mat
 
-    row_only = rem._slice_matrix_like(  # noqa: SLF001
+    row_only = rem._slice_matrix_like(
         mat,
         ir=np.array([0, 2]),
         ic=np.array([0, 1, 2, 3]),
@@ -335,7 +333,7 @@ def test_slice_matrix_like_dense_row_and_col_only_paths() -> None:
     )
     assert np.array_equal(row_only, mat[[0, 2], :])
 
-    col_only = rem._slice_matrix_like(  # noqa: SLF001
+    col_only = rem._slice_matrix_like(
         mat,
         ir=np.array([0, 1, 2]),
         ic=np.array([0, 2]),
@@ -356,11 +354,14 @@ def test_update_init_dict_row_only_with_ndarray_av() -> None:
 
     ir = np.array([0, 2])
     ic = np.array([0, 1])
-    out = rem._update_init_dict(init, ir, ic, n_rows_orig=3, n_cols_orig=2)  # noqa: SLF001
+    out = rem._update_init_dict(init, ir, ic, n_rows_orig=3, n_cols_orig=2)
 
     assert np.array_equal(out["A"], np.array([[0.0, 1.0], [4.0, 5.0]]))
     assert out["Av"].shape == (2, 2, 2)
-    assert np.array_equal(out["Av"], np.arange(3 * 2 * 2, dtype=float).reshape(3, 2, 2)[ir, :])
+    assert np.array_equal(
+        out["Av"],
+        np.arange(3 * 2 * 2, dtype=float).reshape(3, 2, 2)[ir, :],
+    )
 
 
 def test_remove_empty_raises_when_internal_slice_returns_none(
@@ -368,7 +369,7 @@ def test_remove_empty_raises_when_internal_slice_returns_none(
 ) -> None:
     """Force RuntimeError guard branch when internal slice unexpectedly returns None."""
 
-    def fake_slice(*args: object, **kwargs: object) -> None:  # noqa: ARG001
+    def fake_slice(*args: object, **kwargs: object) -> None:
         return None
 
     monkeypatch.setattr(rem, "_slice_matrix_like", fake_slice)

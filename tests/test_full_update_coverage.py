@@ -72,7 +72,7 @@ def test_observed_indices_and_patterns_modern_dense() -> None:
     x = np.array([[0.0, 5.0], [0.0, 0.0]])
     mask = np.array([[0, 1], [1, 0]], dtype=bool)
     i_idx, j_idx = _observed_indices_with_mode(x, mask, "modern")
-    assert set(zip(i_idx.tolist(), j_idx.tolist())) == {(0, 1), (1, 0)}
+    assert set(zip(i_idx.tolist(), j_idx.tolist(), strict=False)) == {(0, 1), (1, 0)}
 
     opts = {"auto_pattern_masked": True, "compat_mode": "modern"}
     n_patterns, obs_patterns, pattern_index = _missing_patterns_info(
@@ -192,7 +192,7 @@ def test_build_masks_and_counts_with_probe_mask() -> None:
     x = np.array([[1.0, np.nan], [0.0, 2.0]])
     x_probe = np.array([[np.nan, 1.0], [1.0, np.nan]])
     mask_override = np.array([[1, 0], [1, 1]], dtype=bool)
-    x_data, x_probe_out, mask, mask_probe, n_obs_row, n_data, n_probe = (
+    x_data, x_probe_out, _mask, mask_probe, n_obs_row, n_data, n_probe = (
         _build_masks_and_counts(
             x,
             x_probe,
@@ -217,7 +217,7 @@ def test_sparse_normalization_mask_override_and_patterns() -> None:
     assert np.isclose(normalized.data.min(), np.finfo(float).eps)
 
     mask_override = sp.csr_matrix([[1, 0], [1, 1]], dtype=float)
-    x_out, x_probe_out, mask_out, mask_probe = _prepare_sparse_with_optional_mask(
+    _x_out, x_probe_out, mask_out, mask_probe = _prepare_sparse_with_optional_mask(
         x, None, mask_override, "strict_legacy"
     )
     assert mask_probe is None

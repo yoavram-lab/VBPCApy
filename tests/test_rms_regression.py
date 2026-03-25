@@ -4,17 +4,23 @@
 #
 # Requirements satisfied:
 # - Octave available on PATH
-# - errpca_pt MEX compiled into tools/ (optional; skips true sparse-branch test if missing)
+# - errpca_pt MEX compiled into tools/
+#   (optional; skips true sparse-branch test
+#   if missing)
 #
 # Notes:
 # - Dense regression: always-on; recomputes ndata inside Octave.
-# - Sparse regression portable: always-on; forces dense branch in Octave (no MEX needed).
+# - Sparse regression portable: always-on;
+#   forces dense branch in Octave (no MEX needed).
 # - Sparse regression true sparse branch: optional; requires compiled errpca_pt MEX.
 #
-# Adjust imports: `from vbpca_py.rms import RmsConfig, compute_rms` to your actual module.
+# Adjust imports:
+#   `from vbpca_py.rms import RmsConfig, compute_rms`
+#   to your actual module.
 
 from __future__ import annotations
 
+import contextlib
 import shutil
 import subprocess
 from pathlib import Path
@@ -50,10 +56,13 @@ def _mkoctfile_available() -> bool:
     return shutil.which("mkoctfile") is not None
 
 
-pytestmark = pytest.mark.skipif(
-    not _octave_available(),
-    reason="Octave not available on PATH; skipping Octave regression tests.",
-)
+pytestmark = [
+    pytest.mark.octave,
+    pytest.mark.skipif(
+        not _octave_available(),
+        reason="Octave not available on PATH; skipping Octave regression tests.",
+    ),
+]
 
 
 # ----------------------------
@@ -65,17 +74,17 @@ def _run_octave_eval(script: str) -> None:
     proc = subprocess.run(
         ["octave", "--quiet", "--eval", script],
         check=False,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         text=True,
     )
     if proc.returncode != 0:
-        raise RuntimeError(
+        msg = (
             "Octave failed.\n"
             f"--- stdout ---\n{proc.stdout}\n"
             f"--- stderr ---\n{proc.stderr}\n"
             f"--- script ---\n{script}\n"
         )
+        raise RuntimeError(msg)
 
 
 def _run_octave_compute_rms_dense(mat_in: Path, mat_out: Path, num_cpu: int) -> None:
@@ -126,7 +135,8 @@ def _run_octave_compute_rms_sparse_true(
 ) -> None:
     """
     True sparse regression: calls compute_rms.m with sparse X so it uses errpca_pt.
-    Requires that errpca_pt.* (compiled MEX) exists in tools/ and is discoverable via addpath(tools).
+    Requires that errpca_pt.* (compiled MEX) exists
+    in tools/ and is discoverable via addpath(tools).
     """
     tools = _tools_dir()
     script = (
@@ -207,13 +217,11 @@ def _mk_sparse_case(seed: int = 1) -> dict[str, Any]:
 
 def _find_existing_errpca_mex(tools: Path) -> list[Path]:
     # Extensions vary by platform; match anything that starts with errpca_pt.
-    return sorted(
-        [
-            p
-            for p in tools.glob("errpca_pt.*")
-            if p.is_file() and p.suffix not in {".cpp", ".m", ".py", ".pyi"}
-        ]
-    )
+    return sorted([
+        p
+        for p in tools.glob("errpca_pt.*")
+        if p.is_file() and p.suffix not in {".cpp", ".m", ".py", ".pyi"}
+    ])
 
 
 @pytest.fixture(scope="session")
@@ -248,8 +256,7 @@ def octave_errpca_mex_in_tools() -> bool:
         cmd,
         cwd=str(tools),
         check=False,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         text=True,
     )
 
@@ -274,12 +281,12 @@ def octave_errpca_mex_in_tools() -> bool:
     # Register cleanup for created files only
     def _cleanup_created() -> None:
         for p in created:
-            try:
+            with contextlib.suppress(Exception):
                 p.unlink(missing_ok=True)
-            except Exception:
-                pass
 
-    # Pytest doesn't have a built-in session-finalizer here without request; do manual via atexit
+    # Pytest doesn't have a built-in
+    # session-finalizer here without request;
+    # do manual via atexit
     import atexit
 
     atexit.register(_cleanup_created)
@@ -368,8 +375,10 @@ def test_compute_rms_empty_dense_and_sparse_return_nan() -> None:
 
     assert np.isnan(rms_dense)
     assert np.isnan(rms_sparse)
-    assert isinstance(err_dense, np.ndarray) and err_dense.size == 0
-    assert isinstance(err_sparse, np.ndarray) and err_sparse.size == 0
+    assert isinstance(err_dense, np.ndarray)
+    assert err_dense.size == 0
+    assert isinstance(err_sparse, np.ndarray)
+    assert err_sparse.size == 0
 
 
 def test_compute_rms_dense_shape_and_mask_validation() -> None:
@@ -426,7 +435,7 @@ def test_compute_rms_dense_requires_mask_and_accepts_sparse_mask() -> None:
     mask_dense = (rng.random((3, 4)) > 0.25).astype(float)
     n_obs = int(np.count_nonzero(mask_dense))
     cfg_sparse_mask = RmsConfig(n_observed=n_obs, num_cpu=1)
-    rms_dense, err_dense = compute_rms(X, A, S, mask_dense, cfg_sparse_mask)
+    _rms_dense, _err_dense = compute_rms(X, A, S, mask_dense, cfg_sparse_mask)
     with pytest.raises(ValueError, match=r"mask must be dense when data is dense"):
         compute_rms(
             X,
@@ -669,7 +678,9 @@ def test_octave_regression_sparse_true_branch_optional(
     """
     if not octave_errpca_mex_in_tools:
         pytest.skip(
-            "Could not compile/use errpca_pt MEX in tools/; skipping true sparse-branch regression."
+            "Could not compile/use errpca_pt MEX "
+            "in tools/; skipping true "
+            "sparse-branch regression."
         )
 
     case = _mk_sparse_case(seed=321)

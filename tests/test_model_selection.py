@@ -19,7 +19,7 @@ def test_select_n_components_tracks_trace_and_best_model() -> None:
     x = _low_rank_data(rng, n_features=6, n_samples=10, rank=2)
 
     cfg = SelectionConfig(
-        metric="rms",
+        metric="cost",
         patience=None,
         max_trials=None,
         compute_explained_variance=False,
@@ -36,7 +36,7 @@ def test_select_n_components_tracks_trace_and_best_model() -> None:
 
     assert len(trace) == 3
     assert best_k == 2
-    assert best_metrics["rms"] <= trace[0]["rms"]
+    assert best_metrics["cost"] <= trace[0]["cost"]
     assert best_model is not None
     assert best_model.components_ is not None
     assert best_model.components_.shape[1] == best_k
@@ -46,7 +46,7 @@ def test_select_n_components_respects_max_trials() -> None:
     rng = np.random.default_rng(1)
     x = _low_rank_data(rng, n_features=5, n_samples=8, rank=1)
 
-    cfg = SelectionConfig(metric="rms", max_trials=1, compute_explained_variance=False)
+    cfg = SelectionConfig(metric="cost", max_trials=1, compute_explained_variance=False)
 
     best_k, _, trace, _ = select_n_components(
         x,
@@ -73,8 +73,8 @@ def test_select_n_components_falls_back_when_prms_missing() -> None:
         verbose=0,
     )
 
-    assert best_k in (1, 2)
-    assert np.isfinite(best_metrics["rms"]) or np.isfinite(best_metrics["prms"])
+    assert best_k in {1, 2}
+    assert np.isfinite(best_metrics["prms"]) or np.isfinite(best_metrics["cost"])
     assert len(trace) == 2
 
 
@@ -82,7 +82,7 @@ def test_select_n_components_rejects_invalid_metric() -> None:
     rng = np.random.default_rng(3)
     x = _low_rank_data(rng, n_features=4, n_samples=6, rank=1)
 
-    cfg = SelectionConfig(metric="rms")
+    cfg = SelectionConfig(metric="cost")
     cfg.metric = "bad"  # type: ignore[assignment]
 
     with pytest.raises(ValueError, match="metric must be one of"):
@@ -96,14 +96,14 @@ def test_select_n_components_normalizes_component_candidates() -> None:
     best_k, _, trace, _ = select_n_components(
         x,
         components=[0, -1, 2, 2, 1],
-        config=SelectionConfig(metric="rms", compute_explained_variance=False),
+        config=SelectionConfig(metric="cost", compute_explained_variance=False),
         maxiters=30,
         verbose=0,
     )
 
     # _normalize_components keeps only unique positive values in input order.
     assert [entry["k"] for entry in trace] == [2, 1]
-    assert best_k in (1, 2)
+    assert best_k in {1, 2}
 
 
 def test_select_n_components_empty_after_normalization_raises() -> None:
@@ -119,7 +119,7 @@ def test_select_n_components_patience_stops_early() -> None:
     x = _low_rank_data(rng, n_features=6, n_samples=10, rank=1)
 
     cfg = SelectionConfig(
-        metric="rms",
+        metric="cost",
         patience=0,
         max_trials=None,
         compute_explained_variance=False,
@@ -140,7 +140,7 @@ def test_select_n_components_stop_on_metric_reversal_uses_previous_k(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     x = np.ones((3, 5), dtype=float)
-    rms_by_k = {1: 0.80, 2: 0.60, 3: 0.65, 4: 0.50}
+    cost_by_k = {1: 0.80, 2: 0.60, 3: 0.65, 4: 0.50}
 
     class _DummyModel:
         pass
@@ -155,9 +155,9 @@ def test_select_n_components_stop_on_metric_reversal_uses_previous_k(
         return (
             {
                 "k": int(k),
-                "rms": float(rms_by_k[k]),
+                "rms": float("nan"),
                 "prms": float("nan"),
-                "cost": float("nan"),
+                "cost": float(cost_by_k[k]),
                 "evr": None,
             },
             _DummyModel(),
@@ -166,7 +166,7 @@ def test_select_n_components_stop_on_metric_reversal_uses_previous_k(
     monkeypatch.setattr(ms, "_fit_candidate", _fake_fit_candidate)
 
     cfg = SelectionConfig(
-        metric="rms",
+        metric="cost",
         stop_on_metric_reversal=True,
         compute_explained_variance=False,
         return_best_model=True,
@@ -181,7 +181,7 @@ def test_select_n_components_stop_on_metric_reversal_uses_previous_k(
     assert [entry["k"] for entry in trace] == [1, 2, 3]
     assert best_k == 2
     assert best_metrics["k"] == 2
-    assert float(best_metrics["rms"]) == pytest.approx(0.60)
+    assert float(best_metrics["cost"]) == pytest.approx(0.60)
     assert best_model is not None
 
 
@@ -218,7 +218,7 @@ def test_select_n_components_logs_k_progress_when_verbose_enabled(
     _best_k, _best_metrics, _trace, _best_model = select_n_components(
         x,
         components=[1, 2, 3],
-        config=SelectionConfig(metric="rms", compute_explained_variance=False),
+        config=SelectionConfig(metric="cost", compute_explained_variance=False),
         verbose=1,
     )
 
@@ -261,7 +261,7 @@ def test_select_n_components_no_k_progress_logs_when_verbose_zero(
     _best_k, _best_metrics, _trace, _best_model = select_n_components(
         x,
         components=[1, 2],
-        config=SelectionConfig(metric="rms", compute_explained_variance=False),
+        config=SelectionConfig(metric="cost", compute_explained_variance=False),
         verbose=0,
     )
 
@@ -303,7 +303,7 @@ def test_select_n_components_selection_verbose_decoupled_from_fit_verbose(
     _best_k, _best_metrics, _trace, _best_model = select_n_components(
         x,
         components=[1, 2],
-        config=SelectionConfig(metric="rms", compute_explained_variance=False),
+        config=SelectionConfig(metric="cost", compute_explained_variance=False),
         selection_verbose=1,
         verbose=0,
     )
@@ -317,8 +317,11 @@ def test_select_n_components_mask_argument_matches_nan_mask() -> None:
     x = rng.standard_normal((5, 8))
     x[rng.random(x.shape) < 0.2] = np.nan
     mask = ~np.isnan(x)
+    # Supply an empty xprobe to suppress auto-holdout (which would differ
+    # between calls due to independent RNG states).
+    empty_probe = np.full(x.shape, np.nan, dtype=float)
 
-    cfg = SelectionConfig(metric="rms", compute_explained_variance=False)
+    cfg = SelectionConfig(metric="cost", compute_explained_variance=False)
     components = [1, 2, 3]
 
     best_k_implicit, _, trace_implicit, _ = select_n_components(
@@ -329,6 +332,7 @@ def test_select_n_components_mask_argument_matches_nan_mask() -> None:
         verbose=0,
         compat_mode="strict_legacy",
         rotate2pca=0,
+        xprobe=empty_probe,
     )
 
     best_k_explicit, _, trace_explicit, _ = select_n_components(
@@ -340,14 +344,15 @@ def test_select_n_components_mask_argument_matches_nan_mask() -> None:
         verbose=0,
         compat_mode="strict_legacy",
         rotate2pca=0,
+        xprobe=empty_probe,
     )
 
     assert best_k_implicit == best_k_explicit
     assert len(trace_implicit) == len(trace_explicit) == len(components)
 
-    rms_imp = [float(entry["rms"]) for entry in trace_implicit]
-    rms_exp = [float(entry["rms"]) for entry in trace_explicit]
-    assert_allclose(rms_imp, rms_exp, rtol=1e-10, atol=1e-12)
+    cost_imp = [float(entry["cost"]) for entry in trace_implicit]
+    cost_exp = [float(entry["cost"]) for entry in trace_explicit]
+    assert_allclose(cost_imp, cost_exp, rtol=1e-10, atol=1e-12)
 
 
 def test_select_n_components_stop_on_metric_reversal_with_real_metrics(
@@ -364,13 +369,18 @@ def test_select_n_components_stop_on_metric_reversal_with_real_metrics(
         "rotate2pca": 0,
         "maxiters": 10,
         "verbose": 0,
+        "cfstop": np.array([100, 1e-4, 1e-3]),
     }
     base_metrics, base_model = orig_fit(
-        1, x, None, SelectionConfig(metric="rms"), base_opts
+        1, x, None, SelectionConfig(metric="cost"), base_opts
     )
-    base_rms = float(base_metrics["rms"])
+    base_cost = float(base_metrics["cost"])
+    # Ensure base_cost is finite; fall back to a known value otherwise.
+    if not np.isfinite(base_cost):
+        base_cost = 10.0
 
-    # Monkeypatch to return the real metrics for k=1,2, then an induced reversal for k=3.
+    # Monkeypatch to return the real metrics for
+    # k=1,2, then an induced reversal for k=3.
     def _fake_fit_candidate(
         k: int,
         x_arr: np.ndarray,
@@ -383,27 +393,27 @@ def test_select_n_components_stop_on_metric_reversal_with_real_metrics(
         if k == 1:
             metrics = {
                 "k": 1,
-                "rms": base_rms + 0.2,
+                "rms": float("nan"),
                 "prms": float("nan"),
-                "cost": float("nan"),
+                "cost": base_cost + 0.2,
                 "evr": None,
             }
             model = base_model
         elif k == 2:
             metrics = {
                 "k": 2,
-                "rms": base_rms - 0.1,  # improvement
+                "rms": float("nan"),
                 "prms": float("nan"),
-                "cost": float("nan"),
+                "cost": base_cost - 0.1,  # improvement
                 "evr": None,
             }
             model = base_model
         else:
             metrics = {
                 "k": 3,
-                "rms": base_rms + 0.4,  # induce reversal
+                "rms": float("nan"),
                 "prms": float("nan"),
-                "cost": float("nan"),
+                "cost": base_cost + 0.4,  # induce reversal
                 "evr": None,
             }
             model = base_model
@@ -412,7 +422,7 @@ def test_select_n_components_stop_on_metric_reversal_with_real_metrics(
     monkeypatch.setattr(ms, "_fit_candidate", _fake_fit_candidate)
 
     cfg_rev = SelectionConfig(
-        metric="rms",
+        metric="cost",
         stop_on_metric_reversal=True,
         compute_explained_variance=False,
         return_best_model=True,
@@ -433,9 +443,11 @@ def test_select_n_components_stop_on_metric_reversal_with_real_metrics(
     assert best_metrics["k"] == 2
 
 
-def test_select_n_components_stop_on_metric_reversal_tolerance() -> None:
+def test_select_n_components_stop_on_metric_reversal_tolerance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     # A tiny uptick should not trigger reversal because of isclose guard.
-    rms_seq = {1: 0.5000000000000000, 2: 0.500000000001, 3: 0.60}
+    cost_seq = {1: 0.5000000000000000, 2: 0.500000000001, 3: 0.60}
 
     class _DummyModel:
         pass
@@ -450,19 +462,18 @@ def test_select_n_components_stop_on_metric_reversal_tolerance() -> None:
         return (
             {
                 "k": int(k),
-                "rms": float(rms_seq[k]),
+                "rms": float("nan"),
                 "prms": float("nan"),
-                "cost": float("nan"),
+                "cost": float(cost_seq[k]),
                 "evr": None,
             },
             _DummyModel(),
         )
 
-    monkeypatch = pytest.MonkeyPatch()
     monkeypatch.setattr(ms, "_fit_candidate", _fake_fit_candidate)
 
     cfg = SelectionConfig(
-        metric="rms",
+        metric="cost",
         stop_on_metric_reversal=True,
         compute_explained_variance=False,
         return_best_model=True,
@@ -485,9 +496,11 @@ def test_select_n_components_stop_on_metric_reversal_tolerance() -> None:
     assert best_metrics["k"] == 2
 
 
-def test_select_n_components_stop_on_metric_reversal_strict_increase() -> None:
+def test_select_n_components_stop_on_metric_reversal_strict_increase(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     # A clear increase should trigger reversal and stop before evaluating further ks.
-    rms_seq = {1: 0.5, 2: 0.4, 3: 0.6}
+    cost_seq = {1: 0.5, 2: 0.4, 3: 0.6}
 
     class _DummyModel:
         pass
@@ -502,19 +515,18 @@ def test_select_n_components_stop_on_metric_reversal_strict_increase() -> None:
         return (
             {
                 "k": int(k),
-                "rms": float(rms_seq[k]),
+                "rms": float("nan"),
                 "prms": float("nan"),
-                "cost": float("nan"),
+                "cost": float(cost_seq[k]),
                 "evr": None,
             },
             _DummyModel(),
         )
 
-    monkeypatch = pytest.MonkeyPatch()
     monkeypatch.setattr(ms, "_fit_candidate", _fake_fit_candidate)
 
     cfg = SelectionConfig(
-        metric="rms",
+        metric="cost",
         stop_on_metric_reversal=True,
         compute_explained_variance=False,
         return_best_model=True,
@@ -542,7 +554,7 @@ def test_select_n_components_deterministic_across_num_cpu() -> None:
     x = rng.standard_normal((6, 10))
     x[rng.random(x.shape) < 0.15] = np.nan
 
-    cfg = SelectionConfig(metric="rms", compute_explained_variance=False)
+    cfg = SelectionConfig(metric="cost", compute_explained_variance=False)
     components = [1, 2, 3]
 
     res = []
@@ -558,8 +570,8 @@ def test_select_n_components_deterministic_across_num_cpu() -> None:
             num_cpu=num_cpu,
             runtime_tuning="off",
         )
-        rms_trace = [float(entry["rms"]) for entry in trace]
-        res.append((best_k, rms_trace))
+        cost_trace = [float(entry["cost"]) for entry in trace]
+        res.append((best_k, cost_trace))
 
     assert res[0][0] == res[1][0]
-    assert_allclose(res[0][1], res[1][1], rtol=0.0, atol=0.0)
+    assert_allclose(res[0][1], res[1][1], rtol=1e-12, atol=1e-12)

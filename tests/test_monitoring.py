@@ -148,22 +148,27 @@ def test_init_sv_list_paths_and_fallback_empty() -> None:
 
 def test_init_mu_muv_v_shape_and_empty_branches() -> None:
     """Cover Muv empty, invalid-shape, and Mu/Muv default conversion branches."""
-    mu, muv, v = mon._init_mu_muv_v({"Mu": [1, 2, 3], "Muv": [0.1, 0.2, 0.3], "V": 2.0}, 3)  # noqa: SLF001
+    mu, muv, v = mon._init_mu_muv_v(
+        {"Mu": [1, 2, 3], "Muv": [0.1, 0.2, 0.3], "V": 2.0},
+        3,
+    )
     assert np.array_equal(mu, np.array([1.0, 2.0, 3.0]))
     assert muv.shape == (3, 1)
     assert v == pytest.approx(2.0)
 
-    _mu2, muv2, _v2 = mon._init_mu_muv_v({"Muv": np.array([])}, 2)  # noqa: SLF001
+    _mu2, muv2, _v2 = mon._init_mu_muv_v({"Muv": np.array([])}, 2)
     assert np.array_equal(muv2, np.zeros((2, 1)))
 
     with pytest.raises(ValueError, match=re.escape(ERR_MUV_SHAPE)):
-        mon._init_mu_muv_v({"Muv": np.zeros((2, 2))}, 2)  # noqa: SLF001
+        mon._init_mu_muv_v({"Muv": np.zeros((2, 2))}, 2)
 
 
 def test_normalize_init_mapping_fieldnames_and_errors(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Cover _normalize_init branches for random, loadmat, fieldnames, and invalid types."""
+    """Cover _normalize_init branches for random,
+    loadmat, fieldnames, and invalid types.
+    """
 
     class DummyStruct:
         _fieldnames = ["A", "V"]
@@ -172,21 +177,21 @@ def test_normalize_init_mapping_fieldnames_and_errors(
             self.A = np.array([[1.0]])
             self.V = 3.0
 
-    assert mon._normalize_init("random") == {}  # noqa: SLF001
-    assert mon._normalize_init(None) == {}  # noqa: SLF001
+    assert mon._normalize_init("random") == {}
+    assert mon._normalize_init(None) == {}
 
-    struct_out = mon._normalize_init(DummyStruct())  # noqa: SLF001
+    struct_out = mon._normalize_init(DummyStruct())
     assert np.array_equal(struct_out["A"], np.array([[1.0]]))
     assert struct_out["V"] == 3.0
 
     with pytest.raises(ValueError, match=re.escape(ERR_INIT_TYPE)):
-        mon._normalize_init(123)  # type: ignore[arg-type]  # noqa: SLF001
+        mon._normalize_init(123)  # type: ignore[arg-type]
 
     def fake_loadmat_no_init(_path: str) -> dict[str, object]:
         return {"A": np.array([[2.0]]), "V": 4.0}
 
     monkeypatch.setattr(mon, "loadmat", fake_loadmat_no_init)
-    no_init_out = mon._normalize_init("/tmp/fake.mat")  # noqa: SLF001
+    no_init_out = mon._normalize_init("/tmp/fake.mat")
     assert np.array_equal(no_init_out["A"], np.array([[2.0]]))
 
     cell_av = np.empty((1, 2), dtype=object)
@@ -199,20 +204,20 @@ def test_normalize_init_mapping_fieldnames_and_errors(
         return {"init": {"Av": cell_av, "Sv": cell_sv, "V": 5.0}}
 
     monkeypatch.setattr(mon, "loadmat", fake_loadmat_with_init)
-    with_init_out = mon._normalize_init("/tmp/fake2.mat")  # noqa: SLF001
-    coerced = mon._coerce_mat_cells(with_init_out.copy())  # noqa: SLF001
+    with_init_out = mon._normalize_init("/tmp/fake2.mat")
+    coerced = mon._coerce_mat_cells(with_init_out.copy())
     assert isinstance(coerced["Av"], list)
     assert isinstance(coerced["Sv"], list)
 
 
 def test_coerce_int_and_resolve_score_pattern_index_branches() -> None:
     """Cover _coerce_int fallback and Isv length-mismatch branch."""
-    assert mon._coerce_int(None, default=7) == 7  # noqa: SLF001
-    assert mon._coerce_int("11", default=0) == 11  # noqa: SLF001
-    assert mon._coerce_int("bad", default=9) == 9  # noqa: SLF001
+    assert mon._coerce_int(None, default=7) == 7
+    assert mon._coerce_int("11", default=0) == 11
+    assert mon._coerce_int("bad", default=9) == 9
 
     isv_bad = np.array([0, 1, 0], dtype=int)
-    assert mon._resolve_score_pattern_index(None, isv_bad, n_samples=4) is None  # noqa: SLF001
+    assert mon._resolve_score_pattern_index(None, isv_bad, n_samples=4) is None
 
 
 def test_log_helpers_non_verbose_and_empty_lc_noop(
@@ -353,6 +358,7 @@ def test_initial_monitoring_with_probe(
         x_data=x_data,
         x_probe=x_probe,
         mask=mask,
+        mask_probe=np.ones_like(x_probe),
         n_data=float(x_data.size),
         n_probe=int(x_probe.size),
         a=np.eye(2),
@@ -360,7 +366,7 @@ def test_initial_monitoring_with_probe(
         opts={"display": 1, "verbose": 2, "num_cpu": 3},
     )
 
-    rms, err_matrix, prms, lc, dsph = mon._initial_monitoring(inputs)  # noqa: SLF001
+    rms, err_matrix, prms, lc, dsph = mon._initial_monitoring(inputs)
 
     # Data path results
     assert rms == pytest.approx(1.0)
@@ -454,6 +460,7 @@ def test_initial_monitoring_without_probe(
         x_data=x_data,
         x_probe=None,
         mask=mask,
+        mask_probe=None,
         n_data=float(x_data.size),
         n_probe=0,
         a=np.eye(2),
@@ -461,7 +468,7 @@ def test_initial_monitoring_without_probe(
         opts={"display": 1, "verbose": 1},
     )
 
-    rms, err_matrix, prms, lc, dsph = mon._initial_monitoring(inputs)  # noqa: SLF001
+    rms, err_matrix, prms, lc, dsph = mon._initial_monitoring(inputs)
 
     assert rms == pytest.approx(1.5)
     assert err_matrix == "err_data_only"

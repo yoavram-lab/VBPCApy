@@ -50,8 +50,7 @@ def _run_octave_eval(cmd: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["octave", "--quiet", "--eval", cmd],
         check=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         text=True,
     )
 
@@ -109,9 +108,12 @@ def _build_subtract_mu_mex_octave() -> None:
 
     # Re-check
     if not _octave_can_call_subtract_mu_mex():
-        raise RuntimeError(
-            "Octave mex build completed but subtract_mu is still not visible on tools path."
+        msg = (
+            "Octave mex build completed but"
+            " subtract_mu is still not visible"
+            " on tools path."
         )
+        raise RuntimeError(msg)
 
 
 @pytest.fixture(scope="session")
@@ -278,6 +280,7 @@ def test_subtract_mu_sparse_probe_empty_by_shape_is_skipped_sharp_edge() -> None
 # ======================================================================================
 
 
+@pytest.mark.octave
 @pytest.mark.skipif(not _octave_available(), reason="Octave not available on PATH.")
 def test_subtract_mu_regression_dense_full_mask_octave(tmp_path: Path) -> None:
     rng = np.random.default_rng(0)
@@ -302,6 +305,7 @@ def test_subtract_mu_regression_dense_full_mask_octave(tmp_path: Path) -> None:
     assert_allclose(np.asarray(X_py), _as_dense(X_oc), rtol=1e-12, atol=1e-12)
 
 
+@pytest.mark.octave
 @pytest.mark.skipif(not _octave_available(), reason="Octave not available on PATH.")
 def test_subtract_mu_regression_dense_partial_mask_octave(tmp_path: Path) -> None:
     rng = np.random.default_rng(1)
@@ -325,6 +329,7 @@ def test_subtract_mu_regression_dense_partial_mask_octave(tmp_path: Path) -> Non
     assert_allclose(np.asarray(X_py), _as_dense(X_oc), rtol=1e-12, atol=1e-12)
 
 
+@pytest.mark.octave
 @pytest.mark.skipif(not _octave_available(), reason="Octave not available on PATH.")
 def test_subtract_mu_regression_dense_with_probe_octave(tmp_path: Path) -> None:
     """
@@ -359,6 +364,7 @@ def test_subtract_mu_regression_dense_with_probe_octave(tmp_path: Path) -> None:
     assert_allclose(np.asarray(Xp_py), _as_dense(Xp_oc), rtol=1e-12, atol=1e-12)
 
 
+@pytest.mark.octave
 @pytest.mark.skipif(not _octave_available(), reason="Octave not available on PATH.")
 def test_subtract_mu_regression_sparse_basic_octave(
     tmp_path: Path, _ensure_mex_built
@@ -389,6 +395,7 @@ def test_subtract_mu_regression_sparse_basic_octave(
     assert_allclose(X_py.toarray(), _as_dense(X_oc), rtol=1e-12, atol=1e-14)
 
 
+@pytest.mark.octave
 @pytest.mark.skipif(not _octave_available(), reason="Octave not available on PATH.")
 def test_subtract_mu_regression_sparse_with_probe_octave(
     tmp_path: Path, _ensure_mex_built
@@ -429,6 +436,7 @@ def test_subtract_mu_regression_sparse_with_probe_octave(
     assert_allclose(Xp_py.toarray(), _as_dense(Xp_oc), rtol=1e-12, atol=1e-14)
 
 
+@pytest.mark.octave
 @pytest.mark.skipif(not _octave_available(), reason="Octave not available on PATH.")
 @pytest.mark.parametrize(
     ("seed", "n_rows", "n_cols", "mask_keep_prob", "update_bias"),
@@ -482,6 +490,7 @@ def test_subtract_mu_regression_dense_expanded_matrix_octave(
     assert_allclose(np.asarray(Xp_py), _as_dense(Xp_oc), rtol=1e-12, atol=1e-12)
 
 
+@pytest.mark.octave
 @pytest.mark.skipif(not _octave_available(), reason="Octave not available on PATH.")
 def test_subtract_mu_regression_sparse_expanded_matrix_octave(
     tmp_path: Path, _ensure_mex_built

@@ -34,6 +34,7 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3 :: Only",
     "Programming Language :: C++",
     "Topic :: Scientific/Engineering",
@@ -42,7 +43,6 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 dependencies = [
-    "matplotlib>=3.7",
     "numpy>=1.24",
     "scipy>=1.10",
 ]
@@ -55,6 +55,7 @@ Changelog = "https://github.com/yoavram-lab/VBPCApy/releases"
 
 [project.optional-dependencies]
 dev = [
+    "hypothesis>=6.100",
     "pytest>=8.0",
     "pytest-benchmark>=4.0",
     "pytest-cov>=4.0",
@@ -62,6 +63,7 @@ dev = [
     "mypy>=1.8.0",
     "scipy-stubs>=1.17.1.0",
 ]
+plot = ["matplotlib>=3.7"]
 data = ["pandas>=1.5"]
 # For running legacy Octave/Matlab-based helpers or tests; requires Octave installed.
 octave = ["oct2py>=5.6"]
@@ -78,15 +80,21 @@ where = ["src"]
 include = ["vbpca_py*"]
 exclude = ["tests*"]
 
+[tool.coverage.run]
+omit = [
+    "src/vbpca_py/plotting.py",  # optional-dependency module (matplotlib)
+]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = """
     -ra
     --strict-markers
-    -m "not perf"
+    -m "not perf and not octave"
 """
 markers = [
     "perf: performance benchmarks (run explicitly with -m perf)",
+    "octave: Octave/Matlab parity tests (run explicitly with -m octave)",
 ]
 
 [tool.ruff.format]
@@ -105,13 +113,70 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*" = [
+    "ANN",     # Type annotations not required in tests
+    "ARG001",  # Unused arguments (fixtures, parametrize)
+    "ARG005",  # Unused lambda arguments
+    "B017",    # assertRaises without match OK in tests
+    "BLE001",  # Blind except OK for robustness tests
+    "D",       # Docstring rules not enforced in tests
+    "DOC201",  # Missing return in docstring OK in tests
+    "DOC501",  # Missing raises in docstring OK in tests
+    "E741",    # Ambiguous variable names (l, I) OK in tests
+    "EM101",   # String literal in exception OK in tests
+    "EM102",   # f-string in exception OK in tests
+    "ERA001",  # Commented-out code OK in tests
+    "FBT001",  # Boolean positional args OK in tests
+    "FBT002",  # Boolean default args OK in tests
     "INP001",  # Implicit namespace package
-    "S101",    # Use of assert in tests
-    "PLC2701", # Importing private modules is OK in tests
-    "N806",    # Uppercase matrix-style symbols in tests
     "N803",    # Uppercase argument names in tests
-    "D103",    # Test functions don't need docstrings
+    "N806",    # Uppercase matrix-style symbols in tests
+    "PLC0415", # Lazy imports OK in tests
+    "PLC1901", # Empty string comparison OK in tests
+    "PLC2701", # Importing private modules is OK in tests
+    "PLR0913", # Many arguments in test helpers
     "PLR0914", # Many locals in test scaffolding
+    "PLR0915", # Too many statements in test functions
+    "PLR0917", # Too many positional arguments
+    "PLR6301", # Method could be function (test class methods)
+    "PLW2901", # Redefining loop variable OK in tests
+    "PT011",   # pytest.raises match= not required
+    "PT019",   # Fixture without value OK for setup
+    "RUF001",  # Ambiguous unicode OK (test data)
+    "RUF002",  # Ambiguous unicode OK (test data)
+    "RUF003",  # Ambiguous unicode OK (test data)
+    "RUF012",  # Mutable class variable annotations
+    "RUF034",  # Useless if-else OK in test clarity
+    "RUF069",  # Float equality OK in tests (intentional)
+    "S101",    # Use of assert in tests
+    "S108",    # Temp file paths OK in tests
+    "S110",    # try-except-pass OK in robustness tests
+    "S301",    # pickle OK in tests
+    "S403",    # pickle import OK in tests
+    "S404",    # subprocess import OK in tests
+    "S603",    # subprocess call OK in tests
+    "S607",    # Partial executable path OK in tests
+    "SLF001",  # Private member access OK in tests
+    "TRY003",  # Long exception messages OK in tests
+    "TRY300",  # try-except-return OK in tests
+]
+"scripts/**/*" = [
+    "C901",    # Complex functions OK in scripts
+    "D103",    # Missing docstrings OK in scripts
+    "EXE001",  # Shebang presence not required
+    "INP001",  # Implicit namespace package
+    "PLR0914", # Many locals OK in scripts
+    "PLR5501", # Collapsible else OK in scripts
+    "RUF001",  # Ambiguous unicode OK in scripts
+    "RUF003",  # Ambiguous unicode OK in scripts
+    "S404",    # subprocess import OK in scripts
+    "S603",    # subprocess call OK in scripts
+    "SIM102",  # Collapsible if OK in scripts
+    "T201",    # print() OK in scripts
+]
+"analysis/**/*" = [
+    "D104",    # Missing docstring in __init__.py OK
+    "INP001",  # Implicit namespace package
+    "T201",    # print() OK in analysis scripts
 ]
 
 [tool.ruff.lint.pydocstyle]

@@ -7,7 +7,6 @@ def congruence_transform_stack(
     right: npt.NDArray[np.float64],
     num_cpu: int = ...,
 ) -> npt.NDArray[np.float64]: ...
-
 def weighted_cov_eigh_psd(
     base: npt.NDArray[np.float64],
     cov_stack: npt.NDArray[np.float64],

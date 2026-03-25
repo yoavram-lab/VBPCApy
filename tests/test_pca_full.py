@@ -250,12 +250,10 @@ def test_pca_full_mask_argument_matches_implicit_mask() -> None:
 
 def test_pca_full_mask_argument_respects_eps_for_zeros_strict_legacy() -> None:
     # Explicit mask should still treat observed zeros as eps in strict_legacy.
-    x = np.array(
-        [
-            [0.0, 1.0, np.nan, 0.0],
-            [2.0, 0.0, 3.0, np.nan],
-        ]
-    )
+    x = np.array([
+        [0.0, 1.0, np.nan, 0.0],
+        [2.0, 0.0, 3.0, np.nan],
+    ])
     mask = ~np.isnan(x)
 
     out_implicit = pca_full(
@@ -420,14 +418,12 @@ def test_pca_full_hyperprior_warmup_delays_va_update() -> None:
 
 
 def test_pca_full_uniquesv_pattern_sharing_matches_no_uniquesv() -> None:
-    x = np.array(
-        [
-            [1.0, np.nan, 3.0, np.nan],
-            [2.0, np.nan, 4.0, np.nan],
-            [np.nan, 5.0, np.nan, 7.0],
-            [np.nan, 6.0, np.nan, 8.0],
-        ]
-    )
+    x = np.array([
+        [1.0, np.nan, 3.0, np.nan],
+        [2.0, np.nan, 4.0, np.nan],
+        [np.nan, 5.0, np.nan, 7.0],
+        [np.nan, 6.0, np.nan, 8.0],
+    ])
 
     out_no = pca_full(
         x,
@@ -521,13 +517,11 @@ def test_pca_full_noise_variance_matches_masked_residual() -> None:
 
 
 def test_pca_full_auto_pattern_masked_aligns_with_uniquesv() -> None:
-    x = np.array(
-        [
-            [1.0, np.nan, 5.0, np.nan],
-            [2.0, np.nan, 6.0, np.nan],
-            [np.nan, 3.0, np.nan, 7.0],
-        ]
-    )
+    x = np.array([
+        [1.0, np.nan, 5.0, np.nan],
+        [2.0, np.nan, 6.0, np.nan],
+        [np.nan, 3.0, np.nan, 7.0],
+    ])
 
     out_auto = pca_full(
         x,
@@ -562,7 +556,7 @@ def test_pca_full_auto_pattern_masked_aligns_with_uniquesv() -> None:
 def test_pca_full_rotate2pca_bias_toggle_parity_on_zero_mean() -> None:
     rng = np.random.default_rng(5757)
     x = rng.standard_normal((5, 7))
-    x = x - x.mean(axis=1, keepdims=True)
+    x -= x.mean(axis=1, keepdims=True)
 
     out_bias = pca_full(
         x,
@@ -784,14 +778,12 @@ def test_pca_full_ppca_no_posterior_variances() -> None:
 
 def test_pca_full_uniquesv_pattern_mode() -> None:
     # Columns 0 and 2 share pattern; columns 1 and 3 share another.
-    x = np.array(
-        [
-            [1.0, np.nan, 3.0, np.nan],
-            [2.0, np.nan, 4.0, np.nan],
-            [np.nan, 5.0, np.nan, 7.0],
-            [np.nan, 6.0, np.nan, 8.0],
-        ]
-    )
+    x = np.array([
+        [1.0, np.nan, 3.0, np.nan],
+        [2.0, np.nan, 4.0, np.nan],
+        [np.nan, 5.0, np.nan, 7.0],
+        [np.nan, 6.0, np.nan, 8.0],
+    ])
 
     result = pca_full(
         x,

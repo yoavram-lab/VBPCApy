@@ -404,11 +404,11 @@ def _expand_row_covs_array(
 
 def _add_m_rows(
     rows: np.ndarray,
-    row_covs: list[np.ndarray] | np.ndarray | list | None,
+    row_covs: list[np.ndarray] | np.ndarray | None,
     kept_rows: np.ndarray | list[int],
     n_total_rows: int,
     row_variances: np.ndarray | list[float] | float | None = None,
-) -> tuple[np.ndarray, list[np.ndarray] | np.ndarray | list]:
+) -> tuple[np.ndarray, list[np.ndarray] | np.ndarray]:
     """Expand rows and associated covariances to the original number of rows.
 
     This mirrors ``_add_m_cols`` but for rows, and is used at the end of

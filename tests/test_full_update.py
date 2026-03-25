@@ -5,8 +5,11 @@ This suite covers:
 - Init: parameter initialization + centering
 - Core updates: bias, scores, loadings, hyperpriors, noise variance
 - Rotation: final PCA rotation wiring
-- Diagnostics: equivalence tests between fast/general branches and pattern/expanded branches
-- Semantics checks: observed-index definition consistency (mask vs nonzero), dense vs sparse behavior
+- Diagnostics: equivalence tests between
+  fast/general branches and pattern/expanded branches
+- Semantics checks: observed-index definition
+  consistency (mask vs nonzero),
+  dense vs sparse behavior
 
 Important diagnostic note
 -------------------------
@@ -423,29 +426,33 @@ def test_score_update_patterns_batched_matches_serial() -> None:
     loadings = rng.standard_normal((n_features, n_components))
     scores = rng.standard_normal((n_components, n_samples))
 
-    common_kwargs = dict(
-        x_data=x,
-        mask=mask,
-        loadings=loadings.copy(),
-        scores=scores.copy(),
-        loading_covariances=[],
-        score_covariances=[np.eye(n_components) for _ in range(len(obs_patterns))],
-        pattern_index=pattern_index,
-        obs_patterns=obs_patterns,
-        noise_var=0.5,
-        eye_components=np.eye(n_components),
-        verbose=0,
-        x_csr=None,
-        x_csc=None,
-        sparse_num_cpu=0,
-    )
+    common_kwargs = {
+        "x_data": x,
+        "mask": mask,
+        "loadings": loadings.copy(),
+        "scores": scores.copy(),
+        "loading_covariances": [],
+        "score_covariances": [np.eye(n_components) for _ in range(len(obs_patterns))],
+        "pattern_index": pattern_index,
+        "obs_patterns": obs_patterns,
+        "noise_var": 0.5,
+        "eye_components": np.eye(n_components),
+        "verbose": 0,
+        "x_csr": None,
+        "x_csc": None,
+        "sparse_num_cpu": 0,
+    }
 
     state_serial = _update_scores(ScoreState(**common_kwargs, pattern_batch_size=0))
     state_batched = _update_scores(ScoreState(**common_kwargs, pattern_batch_size=3))
 
     np.testing.assert_allclose(state_batched.scores, state_serial.scores, atol=1e-10)
     assert len(state_batched.score_covariances) == len(state_serial.score_covariances)
-    for cov_b, cov_s in zip(state_batched.score_covariances, state_serial.score_covariances):
+    for cov_b, cov_s in zip(
+        state_batched.score_covariances,
+        state_serial.score_covariances,
+        strict=False,
+    ):
         np.testing.assert_allclose(cov_b, cov_s, atol=1e-10)
 
 
@@ -482,16 +489,14 @@ def test_iteration_order_scores_rotate_loadings(
         "V": 1.0,
     }
 
-    opts = pca_mod._build_options(
-        {
-            "init": init,
-            "maxiters": 1,
-            "bias": 1,
-            "verbose": 0,
-            "autosave": 0,
-            "rotate2pca": 1,
-        }
-    )
+    opts = pca_mod._build_options({
+        "init": init,
+        "maxiters": 1,
+        "bias": 1,
+        "verbose": 0,
+        "autosave": 0,
+        "rotate2pca": 1,
+    })
 
     prepared = pca_mod._prepare_problem(x, opts)
     training = pca_mod._initialize_model(
@@ -609,7 +614,7 @@ def test_dense_mask_and_observed_indices_agree_after_normalization() -> None:
 
     # Note: remove_empty_entries may drop rows/cols with no observations.
     # Our construction ensures every row/col has at least one observed entry.
-    x_data, x_probe, _mask, _n1x, _n2x, row_idx, col_idx = _prepare_data(x, opts)
+    x_data, x_probe, _mask, _n1x, _n2x, _row_idx, _col_idx = _prepare_data(x, opts)
     assert x_probe is None
 
     x_norm, _x_probe2, mask, _mask_probe, _n_obs_row, _n_data, _n_probe = (
@@ -791,16 +796,14 @@ def test_initialize_model_centers_prepared_data_once() -> None:
         "V": 1.0,
     }
 
-    opts = pca_mod._build_options(
-        {
-            "init": init,
-            "maxiters": 1,
-            "bias": 1,
-            "verbose": 0,
-            "autosave": 0,
-            "rotate2pca": 0,
-        }
-    )
+    opts = pca_mod._build_options({
+        "init": init,
+        "maxiters": 1,
+        "bias": 1,
+        "verbose": 0,
+        "autosave": 0,
+        "rotate2pca": 0,
+    })
 
     prepared = pca_mod._prepare_problem(x, opts)
     x_uncentered = np.array(prepared.x_data, copy=True)
@@ -1223,7 +1226,9 @@ def test_update_loadings_dense_full_observed_matches_closed_form() -> None:
 
 
 def test_scores_fast_path_equals_general_path_fully_observed_no_av() -> None:
-    """Fast score update should equal general update when fully observed and Av empty."""
+    """Fast score update should equal general
+    update when fully observed and Av empty.
+    """
     rng = np.random.default_rng(300)
     n_features, n_samples, n_components = 5, 7, 3
 
@@ -1629,7 +1634,6 @@ def test_loadings_pattern_mode_equals_expanded_mode() -> None:
     mask[[0, 3, 4, 5], 1] = 1.0
     mask[[0, 3, 4, 5], 3] = 1.0
 
-    obs_patterns = [[0, 2], [1, 3]]
     pattern_index = np.array([0, 1, 0, 1], dtype=int)
 
     scores = rng.standard_normal((n_components, n_samples))
@@ -1675,7 +1679,9 @@ def test_loadings_pattern_mode_equals_expanded_mode() -> None:
 
 
 def test_sparse_vs_dense_semantics_differ_when_zeros_present() -> None:
-    """Informational: sparse treats zeros as missing, dense (mask-all-ones) treats them observed."""
+    """Informational: sparse treats zeros as missing,
+    dense (mask-all-ones) treats them observed.
+    """
     rng = np.random.default_rng(500)
     n_features, n_samples, n_components = 5, 6, 2
 
@@ -1685,7 +1691,8 @@ def test_sparse_vs_dense_semantics_differ_when_zeros_present() -> None:
     # Dense path: treat all entries as observed
     mask_dense = np.ones_like(x_dense, dtype=float)
 
-    # Sparse path: structural zeros are absent -> treated missing by sparse mask (x != 0)
+    # Sparse path: structural zeros are absent ->
+    # treated missing by sparse mask (x != 0)
     x_sparse = sp.csr_matrix(x_dense)
 
     loadings = rng.standard_normal((n_features, n_components))

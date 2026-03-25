@@ -789,7 +789,7 @@ def _row_sums(err_mx: np.ndarray | sp.spmatrix) -> np.ndarray:
             else sp.csr_matrix(cast("Any", err_mx))
         )
         return np.asarray(err_sparse.sum(axis=1)).ravel()
-    return np.sum(np.asarray(err_mx, dtype=float), axis=1)
+    return np.sum(np.asarray(err_mx, dtype=float), axis=1)  # type: ignore[no-any-return]
 
 
 # ---------------------------------------------------------------------------
@@ -937,7 +937,7 @@ def _score_update_fast_dense_no_av(state: ScoreState) -> ScoreState:
 
 
 def _symmetrize(mat: np.ndarray) -> np.ndarray:
-    return 0.5 * (mat + mat.T)
+    return 0.5 * (mat + mat.T)  # type: ignore[no-any-return]
 
 
 def _safe_cholesky(mat: np.ndarray, eye: np.ndarray) -> ChoFactor:

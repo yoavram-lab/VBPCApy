@@ -340,16 +340,14 @@ def _validate_dense_mask_budget(
     over, est_bytes = exceeds_budget(np.shape(mask_override), np.bool_, max_dense_bytes)
     preflight_obj = opts.setdefault("_runtime_preflight", [])
     preflight = cast("list[dict[str, object]]", preflight_obj)
-    preflight.append(
-        {
-            "check": "dense_mask_budget",
-            "is_sparse_input": True,
-            "mask_sparse": False,
-            "estimate_bytes": int(est_bytes),
-            "max_dense_bytes": max_dense_bytes,
-            "over_budget": bool(over),
-        }
-    )
+    preflight.append({
+        "check": "dense_mask_budget",
+        "is_sparse_input": True,
+        "mask_sparse": False,
+        "estimate_bytes": int(est_bytes),
+        "max_dense_bytes": max_dense_bytes,
+        "over_budget": bool(over),
+    })
     if not over:
         return
 
@@ -510,6 +508,7 @@ def _initialize_model(
             x_data=init_params[9],
             x_probe=init_params[10],
             mask=prepared.mask,
+            mask_probe=prepared.mask_probe,
             n_data=float(prepared.n_data),
             n_probe=int(prepared.n_probe),
             a=init_params[0],
@@ -1714,7 +1713,7 @@ def _reconstruct_data(a: np.ndarray, s: np.ndarray, mu: np.ndarray) -> np.ndarra
     recon = np.asarray(a, dtype=float) @ np.asarray(s, dtype=float)
     if mu_arr.size:
         recon += mu_arr
-    return recon
+    return recon  # type: ignore[no-any-return]
 
 
 def _marginal_variance(final: FinalState) -> np.ndarray:
@@ -1760,7 +1759,7 @@ def _marginal_variance(final: FinalState) -> np.ndarray:
     elif mu_var.ndim == 1:
         mu_var = mu_var[:, None]
 
-    return term_loadings + term_scores + term_cross + mu_var
+    return term_loadings + term_scores + term_cross + mu_var  # type: ignore[no-any-return]
 
 
 def _explained_variance(

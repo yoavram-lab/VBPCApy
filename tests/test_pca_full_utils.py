@@ -41,13 +41,11 @@ def test_auto_masked_batch_size_branches() -> None:
     opts: dict[str, object] = {}
     assert pf._auto_masked_batch_size(prepared_small, opts) == 0
 
-    prepared_large = pf.PreparedProblem(
-        **{
-            **prepared_small.__dict__,
-            "n_patterns": 300,
-            "n_data": 250_000,
-        }
-    )
+    prepared_large = pf.PreparedProblem(**{
+        **prepared_small.__dict__,
+        "n_patterns": 300,
+        "n_data": 250_000,
+    })
     auto_batch = pf._auto_masked_batch_size(prepared_large, opts)
     assert auto_batch in {192, 256}
 
@@ -91,7 +89,8 @@ def test_build_options_and_select_algorithm_errors() -> None:
 def test_explained_variance_paths() -> None:
     xrec = np.array([[1.0, 2.0], [3.0, 4.0]])
     ev, evr = pf._explained_variance(xrec, 1, solver="unknown")
-    assert ev.size == 1 and evr.size == 1
+    assert ev.size == 1
+    assert evr.size == 1
 
     tall = np.arange(12, dtype=float).reshape(3, 4)
     ev_tall = pf._explained_variance_tall(

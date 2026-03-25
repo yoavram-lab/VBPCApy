@@ -7,7 +7,9 @@ Includes:
 
 Octave regression:
 - Dense regression: requires octave on PATH.
-- Sparse regression: optional; auto-compiles errpca_pt + subtract_mu MEX into tools/ using mkoctfile.
+- Sparse regression: optional; auto-compiles
+  errpca_pt + subtract_mu MEX into tools/
+  using mkoctfile.
 
 Repo assumptions:
 - tools/cf_full.m exists
@@ -19,6 +21,7 @@ Repo assumptions:
 from __future__ import annotations
 
 import atexit
+import contextlib
 import shutil
 import subprocess
 from pathlib import Path
@@ -310,14 +313,14 @@ def test_cost_loading_covariances_validation() -> None:
 
 def test_cost_private_mu_and_mask_helpers() -> None:
     mu_col = np.array([[1.0], [2.0], [3.0]])
-    mu_flat = cost_mod._normalize_mu(mu_col, 3)  # noqa: SLF001
+    mu_flat = cost_mod._normalize_mu(mu_col, 3)
     assert np.array_equal(mu_flat, np.array([1.0, 2.0, 3.0]))
 
     with pytest.raises(ValueError, match=r"mu must be a 1D array"):
-        cost_mod._normalize_mu(np.array([[1.0, 2.0]]), 2)  # noqa: SLF001
+        cost_mod._normalize_mu(np.array([[1.0, 2.0]]), 2)
 
     dense_mask = np.array([[1, 0], [2, 0]], dtype=int)
-    as_bool = cost_mod._coerce_dense_mask_to_bool(dense_mask)  # noqa: SLF001
+    as_bool = cost_mod._coerce_dense_mask_to_bool(dense_mask)
     assert as_bool.dtype == bool
     assert np.array_equal(as_bool, np.array([[True, False], [True, False]]))
 
@@ -328,13 +331,13 @@ def test_cost_private_nan_checks_and_sparse_mask_paths() -> None:
     mask_sparse.data[:] = 1.0
 
     with pytest.raises(ValueError, match=r"contains NaN on observed"):
-        cost_mod._build_mask_and_clean_x(x_sparse, mask_sparse)  # noqa: SLF001
+        cost_mod._build_mask_and_clean_x(x_sparse, mask_sparse)
 
     x_dense = np.array([[1.0, np.nan], [2.0, 3.0]], dtype=float)
     mask_sparse_obs = sp.csr_matrix(np.array([[1, 1], [0, 0]], dtype=int))
     rows, cols = mask_sparse_obs.nonzero()
     with pytest.raises(ValueError, match=r"contains NaN on observed"):
-        cost_mod._ensure_no_nan_on_observed(  # noqa: SLF001
+        cost_mod._ensure_no_nan_on_observed(
             mask_sparse_obs,
             x_dense,
             mask_sparse_obs,
@@ -346,7 +349,7 @@ def test_cost_private_nan_checks_and_sparse_mask_paths() -> None:
 def test_cost_private_mu_loading_and_score_inf_det_branches() -> None:
     mu = np.array([1.0, -1.0])
 
-    cost_mu = cost_mod._compute_mu_cost(  # noqa: SLF001
+    cost_mu = cost_mod._compute_mu_cost(
         mu=mu,
         mu_variances=None,
         n_features=2,
@@ -356,10 +359,10 @@ def test_cost_private_mu_loading_and_score_inf_det_branches() -> None:
     assert np.isfinite(cost_mu)
 
     singular_cov = [np.array([[1.0, 0.0], [0.0, 0.0]]) for _ in range(2)]
-    no_prior = cost_mod._loading_cost_no_prior(singular_cov, 2, 2)  # noqa: SLF001
+    no_prior = cost_mod._loading_cost_no_prior(singular_cov, 2, 2)
     assert np.isinf(no_prior)
 
-    with_prior = cost_mod._loading_cost_with_prior(  # noqa: SLF001
+    with_prior = cost_mod._loading_cost_with_prior(
         a=np.eye(2),
         loading_covariances=singular_cov,
         va_arr=np.array([1.0, 1.0]),
@@ -370,7 +373,7 @@ def test_cost_private_mu_loading_and_score_inf_det_branches() -> None:
 
     s = np.ones((2, 3), dtype=float)
     sv = [np.array([[1.0, 0.0], [0.0, 0.0]]) for _ in range(3)]
-    score_cost = cost_mod._compute_score_cost(  # noqa: SLF001
+    score_cost = cost_mod._compute_score_cost(
         s=s,
         score_covariances=sv,
         score_pattern_index=None,
@@ -384,7 +387,7 @@ def test_cost_private_compute_loading_cost_shape_errors() -> None:
     a = np.eye(2)
 
     with pytest.raises(ValueError, match=r"length must equal number of features"):
-        cost_mod._compute_loading_cost(  # noqa: SLF001
+        cost_mod._compute_loading_cost(
             a=a,
             loading_covariances=[np.eye(2)],
             loading_priors=np.array([1.0, 1.0]),
@@ -393,7 +396,7 @@ def test_cost_private_compute_loading_cost_shape_errors() -> None:
         )
 
     with pytest.raises(ValueError, match=r"shape \(n_components, n_components\)"):
-        cost_mod._compute_loading_cost(  # noqa: SLF001
+        cost_mod._compute_loading_cost(
             a=a,
             loading_covariances=[np.eye(2), np.ones((2, 1))],
             loading_priors=np.array([1.0, 1.0]),
@@ -509,7 +512,9 @@ def test_cost_loading_nondiagonal_covariances() -> None:
 
 
 def test_cost_mask_ignores_unobserved_entries() -> None:
-    """Changing X outside the mask should not affect the data term (with mu-centering)."""
+    """Changing X outside the mask should not affect
+    the data term (with mu-centering).
+    """
     rng = np.random.default_rng(42)
 
     x = rng.standard_normal((3, 4))
@@ -732,7 +737,8 @@ def test_cost_sparse_num_cpu_invariance() -> None:
     mu = np.zeros(2)
     noise_variance = 1.0
 
-    # For sparse, the canonical observed set is the structure of X; pass a matching mask.
+    # For sparse, the canonical observed set is
+    # the structure of X; pass a matching mask.
     mask = x.copy()
     mask.data[:] = 1.0
 
@@ -785,7 +791,8 @@ def test_cost_mu_affects_only_observed_entries_dense() -> None:
     x0c = x - mu0[:, None] * m_bool
     x1c = x - mu1[:, None] * m_bool
 
-    # With A=S=0, residual == x_centered on observed set, and rms is over observed entries.
+    # With A=S=0, residual == x_centered on observed
+    # set, and rms is over observed entries.
     # s_xv = sum( (x_centered ⊙ M)^2 ) + Sv=I term (but A=0 => Sv term is 0)
     err0 = x0c * m_bool
     err1 = x1c * m_bool
@@ -805,7 +812,10 @@ def test_cost_mu_affects_only_observed_entries_dense() -> None:
 
 
 def test_cost_nan_mask_inference_dense_matches_explicit_mask() -> None:
-    """When mask is None and X has NaNs, inferred mask should match explicit and centering should match."""
+    """When mask is None and X has NaNs, inferred
+    mask should match explicit and centering
+    should match.
+    """
     rng = np.random.default_rng(7)
     x = rng.standard_normal((4, 5))
     nan_mask = rng.random(x.shape) < 0.3
@@ -918,34 +928,34 @@ def _run_octave_eval(script: str) -> None:
     proc = subprocess.run(
         ["octave", "--quiet", "--eval", script],
         check=False,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         text=True,
     )
     if proc.returncode != 0:
-        raise RuntimeError(
+        msg = (
             "Octave failed.\n"
             f"--- stdout ---\n{proc.stdout}\n"
             f"--- stderr ---\n{proc.stderr}\n"
             f"--- script ---\n{script}\n"
         )
+        raise RuntimeError(msg)
 
 
 def _find_mex(tools: Path, stem: str) -> list[Path]:
-    return sorted(
-        [
-            p
-            for p in tools.glob(f"{stem}.*")
-            if p.is_file() and p.suffix not in {".cpp", ".m", ".py", ".pyi"}
-        ]
-    )
+    return sorted([
+        p
+        for p in tools.glob(f"{stem}.*")
+        if p.is_file() and p.suffix not in {".cpp", ".m", ".py", ".pyi"}
+    ])
 
 
 @pytest.fixture(scope="session")
 def octave_mex_errpca_and_subtract_mu_in_tools() -> bool:
     """
-    Best-effort: compile tools/errpca_pt.cpp and tools/subtract_mu.cpp into MEX placed in tools/.
-    Returns True if both are available to Octave, else False.
+    Best-effort: compile tools/errpca_pt.cpp and
+    tools/subtract_mu.cpp into MEX placed in tools/.
+    Returns True if both are available to Octave,
+    else False.
     """
     if not _octave_available() or not _mkoctfile_available():
         return False
@@ -974,8 +984,7 @@ def octave_mex_errpca_and_subtract_mu_in_tools() -> bool:
         cmd_err,
         cwd=str(tools),
         check=False,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         text=True,
     )
 
@@ -985,8 +994,7 @@ def octave_mex_errpca_and_subtract_mu_in_tools() -> bool:
         cmd_sub,
         cwd=str(tools),
         check=False,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         text=True,
     )
 
@@ -1020,10 +1028,8 @@ def octave_mex_errpca_and_subtract_mu_in_tools() -> bool:
 
     def _cleanup() -> None:
         for p in created_err + created_sub:
-            try:
+            with contextlib.suppress(Exception):
                 p.unlink(missing_ok=True)
-            except Exception:
-                pass
 
     atexit.register(_cleanup)
     return True
@@ -1080,7 +1086,9 @@ def _run_octave_cf_full_sparse_fullargs(mat_in: Path, mat_out: Path) -> None:
     """
     Sparse regression using full argument list:
     - We pre-center X via subtract_mu(X, Mu) MEX (stored-entry semantics).
-    - Then call cf_full with explicit M = spones(X_original), sXv=[], ndata=nnz(X_original).
+    - Then call cf_full with explicit
+      M = spones(X_original), sXv=[],
+      ndata=nnz(X_original).
 
     Signature:
       cf_full( Xc, A, S, Mu, V, Av, Sv, Isv, Muv, Va, Vmu, M, sXv, ndata )
@@ -1092,9 +1100,12 @@ def _run_octave_cf_full_sparse_fullargs(mat_in: Path, mat_out: Path) -> None:
         "M = spones(X);"
         "ndata = nnz(X);"
         "Xc = subtract_mu(X, Mu);"  # stored-entry subtraction (MEX)
-        "% sXv empty so it recomputes using compute_rms (sparse branch uses errpca_pt)\n"
+        "% sXv empty so it recomputes using "
+        "compute_rms (sparse branch uses errpca_pt)\n"
         "sXv = [];"
-        "[cost,cost_x,cost_a,cost_mu,cost_s] = cf_full(Xc, A, S, Mu, V, Av, Sv, Isv, Muv, Va, Vmu, M, sXv, ndata);"
+        "[cost,cost_x,cost_a,cost_mu,cost_s] = "
+        "cf_full(Xc, A, S, Mu, V, Av, Sv, Isv,"
+        " Muv, Va, Vmu, M, sXv, ndata);"
         "save('-mat','{outfile}','cost','cost_x','cost_a','cost_mu','cost_s');"
     ).format(
         tools=str(tools).replace("'", "''"),
@@ -1118,10 +1129,13 @@ def _load_cost_mat(mat_out: Path) -> tuple[float, float, float, float, float]:
 # Octave regression tests
 # ======================================================================================
 
-pytestmark = pytest.mark.skipif(
-    not _octave_available(),
-    reason="Octave not available on PATH; skipping Octave regression tests.",
-)
+pytestmark = [
+    pytest.mark.octave,
+    pytest.mark.skipif(
+        not _octave_available(),
+        reason="Octave not available on PATH; skipping Octave regression tests.",
+    ),
+]
 
 
 def test_cost_regression_dense_cf_full_octave(tmp_path: Path) -> None:
@@ -1219,7 +1233,8 @@ def test_cost_regression_dense_patterned_sv_cf_full_octave(tmp_path: Path) -> No
     """
     Dense regression with patterned Sv + Isv (pattern index mapping).
     Confirms:
-    - Python 0-based score_pattern_index matches Octave 1-based Isv in regression fixture
+    - Python 0-based score_pattern_index matches
+      Octave 1-based Isv in regression fixture
     - cost_s and sXv Sv contributions align
     """
     rng = np.random.default_rng(5)
@@ -1300,7 +1315,9 @@ def test_cost_regression_sparse_cf_full_octave_optional(
     """
     if not octave_mex_errpca_and_subtract_mu_in_tools:
         pytest.skip(
-            "Could not compile/use errpca_pt and subtract_mu MEX in tools/; skipping sparse regression."
+            "Could not compile/use errpca_pt and "
+            "subtract_mu MEX in tools/; "
+            "skipping sparse regression."
         )
 
     rng = np.random.default_rng(99)

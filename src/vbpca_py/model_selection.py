@@ -27,7 +27,7 @@ __all__ = ["SelectionConfig", "select_n_components"]
 
 logger = logging.getLogger(__name__)
 
-_Metric = Literal["prms", "rms", "cost"]
+_Metric = Literal["prms", "cost"]
 _AllowedFloat = (
     SupportsFloat
     | SupportsIndex
@@ -49,6 +49,13 @@ class SelectionConfig:
     max_trials: int | None = None
     compute_explained_variance: bool = True
     return_best_model: bool = False
+
+
+_CFSTOP_DEFAULT = np.array([100, 1e-4, 1e-3])
+"""Sensible default for cfstop=[window, abs_tol, rel_tol]."""
+
+_PROBE_FRACTION = 0.1
+"""Fraction of observed entries held out for the probe set."""
 
 
 @dataclass
@@ -87,12 +94,10 @@ def _to_float(val: object | None) -> float:
         return float("nan")
 
 
-def _metric_value(metric: _Metric, rms: float, prms: float, cost: float) -> float:
+def _metric_value(metric: _Metric, rms: float, prms: float, cost: float) -> float:  # noqa: ARG001
     if metric == "prms":
-        return prms if np.isfinite(prms) else rms if np.isfinite(rms) else cost
-    if metric == "rms":
-        return rms if np.isfinite(rms) else prms if np.isfinite(prms) else cost
-    return cost if np.isfinite(cost) else rms
+        return prms if np.isfinite(prms) else cost
+    return cost if np.isfinite(cost) else prms
 
 
 def _metric_value_from_entry(metric: _Metric, entry: dict[str, object]) -> float:
@@ -204,18 +209,90 @@ def _normalize_mask_for_selection(
     preflight = cast(
         "list[dict[str, object]]", opts.setdefault("_runtime_preflight", [])
     )
-    preflight.append(
-        {
-            "check": "dense_mask_budget",
-            "is_sparse_input": True,
-            "mask_sparse": False,
-            "estimate_bytes": int(est_bytes),
-            "max_dense_bytes": max_dense_bytes,
-            "over_budget": bool(over),
-            "context": "model_selection",
-        }
-    )
+    preflight.append({
+        "check": "dense_mask_budget",
+        "is_sparse_input": True,
+        "mask_sparse": False,
+        "estimate_bytes": int(est_bytes),
+        "max_dense_bytes": max_dense_bytes,
+        "over_budget": bool(over),
+        "context": "model_selection",
+    })
     return np.asarray(mask, dtype=bool)
+
+
+def _ensure_metric_opts(  # noqa: PLR0914
+    fit_opts: dict[str, object],
+    x_arr: np.ndarray | sp.csr_matrix,
+    mask: Matrix | None,
+    cfg: SelectionConfig,  # noqa: ARG001
+    seed: int = 0,
+) -> None:
+    """Enable VBPCA options required by the chosen selection metric.
+
+    Mutates *fit_opts* in place:
+
+    * **cfstop** — always enabled so the cost learning-curve is populated.
+    * **xprobe** — when the metric is ``"prms"`` and no probe set has been
+      supplied, a random 10 % hold-out of observed entries is created.
+      The corresponding entries are set to NaN in *x_arr* (dense) or
+      removed from the CSR structure (sparse) so the main fit never sees
+      them.
+    """
+    # --- cost: ensure cfstop is non-empty -----------------------------------
+    cfstop_raw = fit_opts.get("cfstop")
+    if cfstop_raw is None or np.size(np.asarray(cfstop_raw)) == 0:
+        fit_opts["cfstop"] = _CFSTOP_DEFAULT
+
+    # --- prms: ensure xprobe is populated -----------------------------------
+    if fit_opts.get("xprobe") is not None:
+        return  # user already supplied a probe set
+
+    rng = np.random.default_rng(seed)
+
+    if sp.issparse(x_arr):
+        x_csr = sp.csr_matrix(x_arr)
+        n_probe = max(1, round(x_csr.nnz * _PROBE_FRACTION))
+        probe_idx = rng.choice(x_csr.nnz, size=n_probe, replace=False)
+
+        # Build xprobe as a copy, then zero-out non-probe in probe
+        # and zero-out probe in data.
+        rows, cols = x_csr.nonzero()
+        sp_rows = rows[probe_idx]
+        sp_cols = cols[probe_idx]
+        sp_vals = np.array(x_csr[sp_rows, sp_cols]).ravel()
+
+        xprobe_sp = sp.lil_matrix(x_csr.shape, dtype=float)
+        for r, c, v in zip(sp_rows, sp_cols, sp_vals, strict=True):
+            xprobe_sp[r, c] = v
+        fit_opts["xprobe"] = sp.csr_matrix(xprobe_sp)
+
+        # Remove probe entries from training data
+        for r, c in zip(sp_rows, sp_cols, strict=True):
+            x_csr[r, c] = 0.0
+        x_csr.eliminate_zeros()
+        # Update x_arr in place (callers hold a reference to x_arr)
+        x_csr.sort_indices()
+    else:
+        x_dense = np.asarray(x_arr)
+        if mask is not None:
+            obs_mask = np.asarray(mask, dtype=bool)
+        else:
+            obs_mask = ~np.isnan(x_dense)
+
+        obs_rows, obs_cols = np.nonzero(obs_mask)
+        n_probe = max(1, round(len(obs_rows) * _PROBE_FRACTION))
+        probe_idx = rng.choice(len(obs_rows), size=n_probe, replace=False)
+
+        probe_rows: np.ndarray = obs_rows[probe_idx]
+        probe_cols: np.ndarray = obs_cols[probe_idx]
+
+        xprobe_dense = np.full(x_dense.shape, np.nan, dtype=float)
+        xprobe_dense[probe_rows, probe_cols] = x_dense[probe_rows, probe_cols]
+        fit_opts["xprobe"] = xprobe_dense
+
+        # Mark probe entries as missing in the training data
+        x_dense[probe_rows, probe_cols] = np.nan
 
 
 @dataclass(frozen=True)
@@ -392,10 +469,12 @@ def select_n_components(
         ValueError: If ``metric`` is invalid or no valid ``components`` are provided.
     """
     cfg = config or SelectionConfig()
-    if cfg.metric not in {"prms", "rms", "cost"}:
-        msg = f"metric must be one of prms, rms, cost (got {cfg.metric!r})"
+    if cfg.metric not in {"prms", "cost"}:
+        msg = f"metric must be one of prms, cost (got {cfg.metric!r})"
         raise ValueError(msg)
-    x_arr = sp.csr_matrix(x) if sp.issparse(x) else np.asarray(x)
+    x_arr: np.ndarray | sp.csr_matrix = (
+        sp.csr_matrix(x, copy=True) if sp.issparse(x) else np.array(x, dtype=float)
+    )
     mask_arg = _normalize_mask_for_selection(
         x,
         mask,
@@ -409,6 +488,10 @@ def select_n_components(
         fit_opts.pop("selection_verbose", fit_opts.get("verbose", 0))
     )
     fit_opts.setdefault("return_diagnostics", False)
+
+    # Enable cfstop / xprobe so that cost and prms metrics are populated.
+    _ensure_metric_opts(fit_opts, x_arr, mask_arg, cfg)
+
     sweep_inputs = SweepInputs(
         cfg=cfg,
         fit_opts=fit_opts,

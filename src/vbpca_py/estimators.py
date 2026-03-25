@@ -222,11 +222,11 @@ class VBPCA:
     def inverse_transform(self, scores: np.ndarray | None = None) -> np.ndarray:
         """Reconstruct data from scores using fitted loadings and mean.
 
-        Raises:
-            RuntimeError: If the model is not fitted.
-
         Returns:
             Reconstructed data matrix with shape (n_features, n_samples).
+
+        Raises:
+            RuntimeError: If the model is not fitted.
         """
         if self.components_ is None or self.mean_ is None:
             msg = "Model not fitted"
@@ -235,7 +235,7 @@ class VBPCA:
         recon = self.components_ @ scores_arr
         if self.bias:
             recon += self.mean_
-        return recon
+        return recon  # type: ignore[no-any-return]
 
     def select_n_components(
         self,

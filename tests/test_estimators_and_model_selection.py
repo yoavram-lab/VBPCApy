@@ -144,7 +144,7 @@ def test_select_n_components_metric_reversal_and_patience(
     monkeypatch.setattr(ms, "_compute_evr_for_best", lambda est, **kwargs: evr)
 
     cfg = SelectionConfig(
-        metric="rms",
+        metric="cost",
         stop_on_metric_reversal=True,
         patience=0,
         return_best_model=True,
@@ -195,7 +195,7 @@ def test_compute_evr_for_best_returns_none_and_patience_logging(
 
     monkeypatch.setattr(ms, "_fit_candidate", fixed_fit_candidate)
     cfg = SelectionConfig(
-        metric="rms",
+        metric="cost",
         patience=0,
         stop_on_metric_reversal=False,
         return_best_model=False,

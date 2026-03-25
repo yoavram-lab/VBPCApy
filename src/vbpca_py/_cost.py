@@ -155,7 +155,7 @@ def _coerce_dense_mask_to_bool(mask: np.ndarray) -> np.ndarray:
     if m.dtype == bool:
         return m
     # MATLAB uses numeric 0/1 masks frequently; treat nonzero as observed.
-    return m != 0
+    return m != 0  # type: ignore[no-any-return]
 
 
 def _ensure_no_nan_on_observed(
@@ -389,7 +389,7 @@ def _center_x_by_mu(
     m_bool = mask_out if isinstance(mask_out, np.ndarray) else np.asarray(mask_out)
     m_bool = _coerce_dense_mask_to_bool(np.asarray(m_bool))
     x_arr = np.asarray(x_clean, dtype=float)
-    return x_arr - (mu[:, None] * m_bool)
+    return x_arr - (mu[:, None] * m_bool)  # type: ignore[no-any-return]
 
 
 def _sxv_identity_contrib(
@@ -681,7 +681,7 @@ def _loading_cost_no_prior(
             cost_a -= 0.5 * logdet
         else:
             cost_a -= 0.5 * (-np.inf)
-    return cost_a
+    return cost_a  # type: ignore[no-any-return]
 
 
 def _loading_cost_with_prior(

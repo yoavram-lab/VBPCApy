@@ -101,7 +101,11 @@ def test_sparse_score_accessors_buffered_equivalence() -> None:
     buffered = _score_update_general_no_patterns(_state("buffered"))
 
     assert np.allclose(legacy.scores, buffered.scores)
-    for l_cov, b_cov in zip(legacy.score_covariances, buffered.score_covariances):
+    for l_cov, b_cov in zip(
+        legacy.score_covariances,
+        buffered.score_covariances,
+        strict=False,
+    ):
         assert np.allclose(l_cov, b_cov)
 
 
@@ -223,7 +227,7 @@ def test_sparse_score_bulk_cov_writeback_parity_and_type() -> None:
 
 
 def test_dense_loadings_bulk_cov_writeback_parity_and_type() -> None:
-    x_data, mask, _loadings, scores, _av, sv, prior_prec = _fixture()
+    x_data, mask, _loadings, scores, _av, sv, _prior_prec = _fixture()
     n_components = scores.shape[0]
     n_features = x_data.shape[0]
 

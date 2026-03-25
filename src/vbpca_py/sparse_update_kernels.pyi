@@ -11,7 +11,6 @@ def score_update_sparse_nopattern(
     return_covariances: bool = ...,
     num_cpu: int = ...,
 ) -> dict[str, np.ndarray]: ...
-
 def loadings_update_sparse_nopattern(
     x_data: npt.NDArray[np.float64],
     x_indices: npt.NDArray[np.int32],

@@ -19,7 +19,6 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, SupportsIndex, SupportsInt
 
-import matplotlib.pyplot as plt
 import numpy as np
 from scipy.io import loadmat
 from scipy.linalg import orth
@@ -521,6 +520,8 @@ def display_init(display: int, lc: Mapping[str, Sequence[float]]) -> dict[str, A
     if not dsph["display"]:
         return dsph
 
+    import matplotlib.pyplot as plt  # noqa: PLC0415
+
     rms_values = np.asarray(lc.get("rms", []), dtype=float)
     prms_values = np.asarray(lc.get("prms", []), dtype=float)
 
@@ -581,6 +582,8 @@ def display_progress(
     ax2.relim()
     ax2.autoscale_view()
 
+    import matplotlib.pyplot as plt  # noqa: PLC0415
+
     plt.draw()
 
 
@@ -596,6 +599,7 @@ class InitialMonitoringInputs:
     x_data: Any  # Matrix type alias is defined elsewhere in the package
     x_probe: Any | None
     mask: Any
+    mask_probe: Any | None
     n_data: float
     n_probe: int
     a: np.ndarray
@@ -630,12 +634,13 @@ def _initial_monitoring(
     )
 
     if inputs.n_probe > 0 and inputs.x_probe is not None:
+        probe_mask = inputs.mask_probe if inputs.mask_probe is not None else inputs.mask
         cfg_probe = RmsConfig(n_observed=int(inputs.n_probe), num_cpu=num_cpu)
         prms, _ = compute_rms(
             inputs.x_probe,
             inputs.a,
             inputs.s,
-            inputs.mask,
+            probe_mask,
             cfg_probe,
         )
     else:

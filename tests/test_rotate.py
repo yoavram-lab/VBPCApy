@@ -100,15 +100,15 @@ def _run_octave_rotatetopca(mat_in: Path, mat_out: Path) -> None:
     cmd = (
         f"addpath('{addpath}');"
         f"load('{in_path}');"
-        "[dMu, A1, Av1, S1, Sv1] = RotateToPCA(A0, Av0, S0, Sv0, Isv, obscombj, update_bias);"
+        "[dMu, A1, Av1, S1, Sv1] = RotateToPCA("
+        "A0, Av0, S0, Sv0, Isv, obscombj, update_bias);"
         f"save('-mat','{out_path}','dMu','A1','Av1','S1','Sv1');"
     )
 
     subprocess.run(
         ["octave", "--quiet", "--eval", cmd],
         check=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         text=True,
     )
 
@@ -118,10 +118,9 @@ def _cov_a_from_outputs(A: np.ndarray, Av: list[np.ndarray]) -> np.ndarray:
     n_features = A.shape[0]
     cov_a = A.T @ A
     for av_i in Av:
-        cov_a = cov_a + np.asarray(av_i, dtype=float)
-    cov_a = cov_a / float(n_features)
-    cov_a = 0.5 * (cov_a + cov_a.T)
-    return cov_a
+        cov_a += np.asarray(av_i, dtype=float)
+    cov_a /= float(n_features)
+    return 0.5 * (cov_a + cov_a.T)
 
 
 def _diag_offdiag_norms(M: np.ndarray) -> tuple[float, float]:
@@ -309,6 +308,7 @@ def _python_rotate(
 # --------------------------------------------------------------------------------------
 
 
+@pytest.mark.octave
 @pytest.mark.skipif(not _octave_available(), reason="Octave not available on PATH.")
 @pytest.mark.parametrize("case_factory", [_mk_case_per_sample, _mk_case_pattern])
 def test_rotate_to_pca_matches_octave(tmp_path: Path, case_factory) -> None:
@@ -387,7 +387,8 @@ def test_rotate_to_pca_matches_octave(tmp_path: Path, case_factory) -> None:
     # covA_final should be ~ diagonal, with descending diagonal entries
     # covA_final = (A' A + sum_i Av[i]) / n_features
     if len(Av1_oc) > 0:
-        assert Av1_py is not None and isinstance(Av1_py, list)
+        assert Av1_py is not None
+        assert isinstance(Av1_py, list)
         cova_py = _cov_a_from_outputs(A1_py, [np.asarray(x, float) for x in Av1_py])
         cova_oc = _cov_a_from_outputs(A1_oc, [np.asarray(x, float) for x in Av1_oc])
 
@@ -414,7 +415,8 @@ def test_rotate_to_pca_matches_octave(tmp_path: Path, case_factory) -> None:
 
     # Compare scalar contributions s_j^T Av_i s_j for a few samples j.
     if len(Av1_oc) > 0:
-        assert Av1_py is not None and isinstance(Av1_py, list)
+        assert Av1_py is not None
+        assert isinstance(Av1_py, list)
         js = [0, min(1, S1_py.shape[1] - 1), S1_py.shape[1] // 2, S1_py.shape[1] - 1]
         js = sorted(set(js))
 
@@ -621,7 +623,7 @@ def test_rotate_rejects_invalid_inputs() -> None:
         rotate_to_pca(
             A.copy(),
             S.copy(),
-            RotateParams(None, sv + [np.eye(k)], isv=isv, obscombj=obscombj),
+            RotateParams(None, [*sv, np.eye(k)], isv=isv, obscombj=obscombj),
         )
 
     # Pattern-mode: coverage error / duplicates
@@ -696,7 +698,7 @@ def test_rotate_pattern_mode_python_only() -> None:
 
     if Av1:
         cova = _cov_a_from_outputs(A1, Av1)
-        d_norm, off_norm = _diag_offdiag_norms(cova)
+        _d_norm, off_norm = _diag_offdiag_norms(cova)
         assert off_norm <= 1e-7 * np.linalg.norm(cova, ord="fro") + 1e-10
         d = np.diag(cova)
         assert np.all(d[:-1] >= d[1:] - 1e-10)
@@ -836,19 +838,19 @@ def test_rotate_regression_python_only_fixture() -> None:
 
 def test_rotate_private_validation_helpers_cover_error_paths() -> None:
     with pytest.raises(ValueError, match=r"index array must be 1-D"):
-        rot._as_int_array(np.array([[1, 2]], dtype=int))  # noqa: SLF001
+        rot._as_int_array(np.array([[1, 2]], dtype=int))
 
     with pytest.raises(ValueError, match=r"loadings \(A\) must be a 2D"):
-        rot._validate_a_s_shapes(np.array([1.0, 2.0]), np.zeros((2, 3)))  # noqa: SLF001
+        rot._validate_a_s_shapes(np.array([1.0, 2.0]), np.zeros((2, 3)))
 
     with pytest.raises(ValueError, match=r"scores \(S\) must be a 2D"):
-        rot._validate_a_s_shapes(np.zeros((2, 2)), np.array([1.0, 2.0, 3.0]))  # noqa: SLF001
+        rot._validate_a_s_shapes(np.zeros((2, 2)), np.array([1.0, 2.0, 3.0]))
 
     with pytest.raises(ValueError, match=r"n_components=2"):
-        rot._validate_a_s_shapes(np.zeros((3, 2)), np.zeros((3, 4)))  # noqa: SLF001
+        rot._validate_a_s_shapes(np.zeros((3, 2)), np.zeros((3, 4)))
 
     with pytest.raises(ValueError, match=r"must be a non-empty list"):
-        rot._validate_sv_shapes(tuple([np.eye(2)]), 2)  # type: ignore[arg-type]  # noqa: SLF001
+        rot._validate_sv_shapes((np.eye(2),), 2)  # type: ignore[arg-type]
 
 
 def test_rotate_build_cov_s_validation_branches() -> None:
@@ -856,20 +858,20 @@ def test_rotate_build_cov_s_validation_branches() -> None:
     sv = [np.eye(2) for _ in range(3)]
 
     with pytest.raises(ValueError, match=r"isv must have length"):
-        rot._build_cov_s(scores, sv, np.array([0, 1], dtype=int), None)  # noqa: SLF001
+        rot._build_cov_s(scores, sv, np.array([0, 1], dtype=int), None)
 
     with pytest.raises(ValueError, match=r"must have length equal to n_samples"):
-        rot._build_cov_s(scores, sv[:2], np.array([], dtype=int), None)  # noqa: SLF001
+        rot._build_cov_s(scores, sv[:2], np.array([], dtype=int), None)
 
     isv = np.array([0, 0, 1], dtype=int)
     with pytest.raises(ValueError, match=r"obscombj must be provided"):
-        rot._build_cov_s(scores, [np.eye(2), np.eye(2)], isv, None)  # noqa: SLF001
+        rot._build_cov_s(scores, [np.eye(2), np.eye(2)], isv, None)
 
     with pytest.raises(ValueError, match=r"length must match len\(obscombj\)"):
-        rot._build_cov_s(scores, [np.eye(2)], isv, [[0, 1], [2]])  # noqa: SLF001
+        rot._build_cov_s(scores, [np.eye(2)], isv, [[0, 1], [2]])
 
     with pytest.raises(ValueError, match=r"cover all sample indices"):
-        rot._build_cov_s(  # noqa: SLF001
+        rot._build_cov_s(
             scores,
             [np.eye(2), np.eye(2)],
             isv,
@@ -881,16 +883,16 @@ def test_rotate_transform_and_weighted_cov_ext_path() -> None:
     left = np.array([[2.0, 0.0], [0.0, 3.0]])
     right = np.array([[1.0, 0.0], [0.0, 4.0]])
 
-    empty_out = rot._transform_covariances([], left, right)  # noqa: SLF001
+    empty_out = rot._transform_covariances([], left, right)
     assert empty_out == []
 
     covs = [np.eye(2), np.array([[2.0, 1.0], [1.0, 2.0]])]
-    transformed = rot._transform_covariances(covs, left, right)  # noqa: SLF001
+    transformed = rot._transform_covariances(covs, left, right)
     assert len(transformed) == 2
     assert_allclose(transformed[0], left @ covs[0] @ right)
 
     base = np.array([[2.0, 1.0], [1.0, 2.0]], dtype=float)
-    cov, eigvals, eigvecs = rot._weighted_cov_eigh(  # noqa: SLF001
+    cov, eigvals, eigvecs = rot._weighted_cov_eigh(
         base,
         covs,
         np.array([1.0, 0.5], dtype=float),

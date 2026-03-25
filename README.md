@@ -70,7 +70,7 @@ Preprocessing interfaces are first-class public APIs:
 - **Python**: >= 3.11
 - **C++ Compiler**: C++14 compatible compiler (gcc, clang, MSVC)
 - **Eigen**: Linear algebra library (version 3.x)
-- **Matplotlib**: required runtime dependency for monitoring/plot helpers
+- **Matplotlib** *(optional)*: install via `pip install vbpca_py[plot]` for monitoring displays and plotting utilities
 
 ### Install Eigen (required for building)
 
@@ -110,6 +110,8 @@ pip install .
 ```bash
 # Development tools (pytest, ruff, mypy, just)
 pip install .[dev]
+# Plotting utilities (matplotlib)
+pip install .[plot]
 # Optional data utilities (pandas)
 pip install .[data]
 # Benchmark + plotting stack (joblib, pandas, scikit-learn, seaborn)
@@ -117,7 +119,7 @@ pip install .[benchmark]
 # Optional Octave bridge (only needed to run MATLAB/Octave helpers/tests)
 pip install .[octave]
 # Install everything
-pip install .[dev,data,benchmark,octave]
+pip install .[dev,plot,data,benchmark,octave]
 ```
 
 **Using uv (recommended for Python env management):**
@@ -318,69 +320,13 @@ just bench-scale
 just bench-octave
 ```
 
-Run the script-based comparison study (mean+PCA vs MICE+PCA vs KNN+PCA vs VBPCA):
+Validate deterministic reproducibility for a fixed-seed pilot setting:
 ```bash
-# quick pilot end-to-end (replicates + summaries + paper artifacts)
-just bench-study-pipeline
-
-# full sweep + aggregation + paper outputs
-just bench-study-full
-just bench-study-summary
-just bench-study-paper
-
-# deterministic reproducibility check for a fixed-seed pilot setting
 just bench-study-repro
-```
-
-For runtime-policy calibration on core workloads:
-```bash
-# staged runtime profiling baselines
-just core-perf-baseline
-just core-perf-baseline-confirm
-just core-perf-genetics
-
-# generate/update runtime profile JSON
-just runtime-profile-helper
 ```
 
 `pca_full(..., runtime_report=1)` can be used to include a `RuntimeReport`
 diagnostic block showing resolved per-kernel thread values and their sources.
-
-### Reproducible benchmark protocol (locked study settings)
-
-The benchmark configuration used for manuscript artifacts is locked to:
-
-- datasets: `synthetic,diabetes,wine,genomics_like`
-- replicates: `400` per setting (`just bench-study-full`)
-- VBPCA iterations: `--vbpca-maxiters 80 --vbpca-maxiters-genomics 80`
-- model-selection behavior:
-  - dataset-level anchor selection: full candidate range (`1..rank`)
-  - selected `k` is fully empirical (no floor from requested `n_components`)
-  - no hard trial cap in full runs (`--vbpca-selection-max-trials 0`)
-  - replicate-level robustness search in local window (`--vbpca-local-window 3`)
-- preprocessing: observed-only `MissingAwareStandardScaler`
-
-To regenerate paper artifacts reproducibly:
-
-```bash
-just bench-study-full
-just bench-study-summary
-just bench-study-paper
-```
-
-Generated outputs (not versioned in git; regenerate via `just` recipes):
-
-- `results/replicates.csv` (per-replicate records; includes `vbpca_mean_variance` and `vbpca_median_variance`)
-- `results/summary.csv`
-- `results/pairwise_summary.csv`
-- `results/paper/figure1_runtime_scaling.png`
-- `results/paper/figure2_vbpca_uncertainty.png` (one panel per dataset; paired box plots of median marginal variance for observed vs held-out entries across missingness settings)
-- `results/paper/tableS0_setting_key.csv` (setting ID legend; `setting_id_dataset` gives A/B/C/... within each dataset)
-- `results/paper/tableS5_vbpca_uncertainty_robust_by_setting.csv`
-- `results/paper/tableS6_vbpca_uncertainty_robust_by_dataset.csv`
-- `results/paper/tableS7_vbpca_uncertainty_replicate_long.csv`
-
-The study writes `results/replicates*.csv`, summary tables, and paper-ready artifacts under `results/paper/`. See `scripts/benchmark_study.md` for details.
 
 
 ### Full legacy parity test requirements

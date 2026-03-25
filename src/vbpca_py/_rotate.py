@@ -244,7 +244,7 @@ def _build_cov_s(
             cov_s += len(cols) * np.asarray(sv_k, dtype=float)
 
     cov_s /= float(n_samples)
-    return cov_s
+    return cov_s  # type: ignore[no-any-return]
 
 
 def _eigh_psd(matrix: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -265,7 +265,7 @@ def _build_ra(eigvals: np.ndarray, eigvecs: np.ndarray) -> np.ndarray:
         Matrix ``RA`` for rotating loadings.
     """
     sqrt_eig = np.sqrt(np.clip(eigvals, 0.0, None))
-    return eigvecs * sqrt_eig[np.newaxis, :]
+    return eigvecs * sqrt_eig[np.newaxis, :]  # type: ignore[no-any-return]
 
 
 def _build_r(eigvals_s: np.ndarray, v_s: np.ndarray, v_a: np.ndarray) -> np.ndarray:
@@ -277,7 +277,7 @@ def _build_r(eigvals_s: np.ndarray, v_s: np.ndarray, v_a: np.ndarray) -> np.ndar
     sqrt_eig = np.sqrt(np.clip(eigvals_s, 0.0, None))
     inv_sqrt = 1.0 / np.maximum(sqrt_eig, _EPS_EIG)
     # Equivalent to v_a.T @ diag(inv_sqrt) @ v_s.T, but avoids building diag().
-    return (v_a.T * inv_sqrt[np.newaxis, :]) @ v_s.T
+    return (v_a.T * inv_sqrt[np.newaxis, :]) @ v_s.T  # type: ignore[no-any-return]
 
 
 def _transform_covariances(

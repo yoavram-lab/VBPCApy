@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+      - name: Install Eigen
+        run: sudo apt-get install -y libeigen3-dev
+      - name: Sync environment
+        run: uv sync --extra dev --extra plot
+      - name: Format check
+        run: uv run ruff format --preview --check src tests scripts analysis
+      - name: Lint
+        run: uv run --with scipy-stubs ruff check --preview src tests scripts analysis
+      - name: Type check (strict)
+        run: uv run --with scipy-stubs mypy --strict src
+
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+      - name: Install Eigen
+        run: sudo apt-get install -y libeigen3-dev
+      - name: Sync environment
+        run: uv sync --extra dev --extra plot --python ${{ matrix.python-version }}
+      - name: Run tests with coverage
+        run: >-
+          uv run pytest -q
+          --cov=src/vbpca_py
+          --cov-report=term-missing
+          --cov-fail-under=89

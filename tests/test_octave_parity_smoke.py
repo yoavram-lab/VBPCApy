@@ -10,6 +10,8 @@ import scipy.sparse as sp
 
 from vbpca_py._rms import RmsConfig, compute_rms
 
+pytestmark = pytest.mark.octave
+
 
 def _run_octave_eval(cmd: str) -> float:
     result = subprocess.run(
@@ -39,10 +41,10 @@ def test_compute_rms_matches_octave_dense():
     s_expr = "[1,0;0,1]"
     m_expr = "[1,1;1,1]"
 
-    with tempfile.TemporaryDirectory() as tmpdir:
+    with tempfile.TemporaryDirectory():
         octave_cmd = (
-                "format long g;"
-                f"addpath('{tools_dir.as_posix()}');"
+            "format long g;"
+            f"addpath('{tools_dir.as_posix()}');"
             f"X={x_expr};A={a_expr};S={s_expr};M={m_expr};"
             f"[rms,errMx]=compute_rms(X,A,S,M,sum(M(:)));"
             f"disp(rms);"
@@ -68,10 +70,10 @@ def test_compute_rms_matches_octave_dense_masked():
     s_expr = "[1,0;0,1]"
     m_expr = "[1,0;0,1]"
 
-    with tempfile.TemporaryDirectory() as tmpdir:
+    with tempfile.TemporaryDirectory():
         octave_cmd = (
-                "format long g;"
-                f"addpath('{tools_dir.as_posix()}');"
+            "format long g;"
+            f"addpath('{tools_dir.as_posix()}');"
             f"X={x_expr};A={a_expr};S={s_expr};M={m_expr};"
             f"[rms,errMx]=compute_rms(X,A,S,M,sum(M(:)));"
             f"disp(rms);"
@@ -96,10 +98,10 @@ def test_compute_rms_matches_octave_sparse_masked():
     a_expr = "[1,0;0,1]"
     s_expr = "[1,0;0,1]"
 
-    with tempfile.TemporaryDirectory() as tmpdir:
+    with tempfile.TemporaryDirectory():
         octave_cmd = (
-                "format long g;"
-                f"addpath('{tools_dir.as_posix()}');"
+            "format long g;"
+            f"addpath('{tools_dir.as_posix()}');"
             "X=sparse([1,2],[1,2],[1,2],2,2);"
             "M=spones(X);"
             f"A={a_expr};S={s_expr};"

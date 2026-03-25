@@ -54,7 +54,8 @@ def test_select_n_components_delegates(monkeypatch: pytest.MonkeyPatch) -> None:
 
     assert best_k == 2
     assert best_metrics["best"] is True
-    assert trace and trace[0]["k"] == 1
+    assert trace
+    assert trace[0]["k"] == 1
     assert best_model == "model"
     assert captured["components"] == [1, 2]
     assert captured["opts"].get("bias") is False

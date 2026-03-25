@@ -122,7 +122,7 @@ def _subtract_dense(mu_col: np.ndarray, x: np.ndarray, mask: np.ndarray) -> np.n
     Returns:
         Dense matrix with mean subtracted on observed entries.
     """
-    return x - mu_col * mask
+    return x - mu_col * mask  # type: ignore[no-any-return]
 
 
 def _subtract_sparse(mu_col: np.ndarray, x: Sparse) -> Sparse:
@@ -158,7 +158,7 @@ def _is_matlab_empty_matrix(mat: Matrix) -> bool:
     """
     # Works for both dense and sparse (SciPy sparse has .shape).
     n_rows, n_cols = mat.shape
-    return n_rows == 0 or n_cols == 0
+    return n_rows == 0 or n_cols == 0  # type: ignore[no-any-return]
 
 
 def _subtract_sparse_branch(

@@ -1,3 +1,5 @@
+# Tooling lockfiles not under version control
+uv.lock
 ########################################
 # Python build / cache artifacts
 ########################################
@@ -46,6 +48,9 @@ dist/
 venv/
 env/
 
+# Hypothesis cache
+.hypothesis/
+
 # IDE/project settings
 .vscode/
 .idea/
@@ -68,16 +73,16 @@ tests/**/eigen/
 # Project-specific exclusions
 ########################################
 
-# Remove stray notebook
-src/Untitled.ipynb
+# Retire stale paths (no longer present)
+# (previously: src/Untitled.ipynb, legacy Full_Tests fixtures, parquet placeholders)
 
-# Local dataset sources
-tools/datasets/*.parquet
-
-# Heavy full tests
-tests/Full_Tests/OHT.py
-tests/Full_Tests/OHspecial_transformed_iso_data.parquet
-tests/Full_Tests/OHspecial_transformed_iso_data1.parquet
+# Large local datasets and cultural reference data (keep out of git)
+tools/datasets/**/*.npz
+tools/datasets/**/*.zip
+tools/datasets/**/*.vcf*
+tools/datasets/**/*.bcf*
+tools/datasets/**/*.csv
+tools/datasets/**/*.txt
 
 ########################################
 # Benchmark artifacts (if any)
@@ -98,4 +103,16 @@ pca_f_autosave
 pca_f_autosave*
 
 # Generated benchmark outputs (reproducible from justfile workflow)
+# Stale historical runs — remove entirely; rerun analysis scripts as needed
 results/
+
+# Paper artifacts: keep text/json/bib, drop generated figures/logs
+paper/figure_*.png
+paper/figure_*.pdf
+paper/figure_*.svg
+paper/*.log
+
+# Generated paper figures (reproducible via just paper-figure)
+paper/figure_stability*.png
+paper/figure_stability*.pdf
+paper/figure_stability*.svg
