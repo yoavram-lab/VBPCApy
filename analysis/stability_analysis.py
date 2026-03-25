@@ -7,7 +7,7 @@ missingness patterns (complete, mcar, mnar_censored, block).
 Produces three figures for the JOSS paper:
 
 1. **Figure 1 -- Model Selection Accuracy**: 2x4 exact-rate heatmaps
-   (metric x missingness), each cell an (n x p) heatmap.
+   comparing VBPCApy (cost) vs sklearn PCA (EVR95) across missingness.
 2. **Figure 2 -- Error Structure**: over/under rates, MAE, selected vs true.
 3. **Figure 3 -- Detection Power**: power_rate vs true_rank + overall bars.
 
@@ -184,7 +184,7 @@ def _apply_missingness(
 # ---------------------------------------------------------------------------
 
 
-def _run_grid(grid: dict[str, list[int]], reps: int, seed: int = 42) -> list[_Trial]:  # noqa: PLR0914
+def _run_grid(grid: dict[str, list[int]], reps: int, seed: int = 42) -> list[_Trial]:
     """Run select_n_components across the full parameter grid.
 
     Returns:
@@ -383,7 +383,7 @@ class _CoverageTrial:
     holdout_rmse: float
 
 
-def _run_coverage_grid(  # noqa: PLR0914, C901
+def _run_coverage_grid(  # noqa: C901
     grid: dict[str, list[int]], reps: int, seed: int = 42
 ) -> list[_CoverageTrial]:
     """Fit VBPCA at true_rank, compute posterior coverage on held-out entries.
@@ -494,27 +494,31 @@ def _run_coverage_grid(  # noqa: PLR0914, C901
 def plot_figure1(
     trials: list[_Trial], output_dir: pathlib.Path, fmt: str = "png"
 ) -> None:
-    """2x4 exact-rate heatmaps: rows=metric, cols=missingness."""
+    """2x4 exact-rate heatmaps: rows=method (VBPCApy cost vs sklearn EVR95), cols=missingness."""
     n_miss = len(MISSINGNESS)
-    n_met = len(METRICS)
+    row_defs = [
+        ("cost", "vbpca", "VBPCApy (cost)"),
+        ("evr95", "sklearn_pca", "sklearn PCA (EVR95)"),
+    ]
+    n_rows = len(row_defs)
     fig, axes = plt.subplots(
-        n_met, n_miss, figsize=(4.0 * n_miss + 1.2, 3.2 * n_met), squeeze=False
+        n_rows, n_miss, figsize=(4.0 * n_miss + 1.2, 3.2 * n_rows), squeeze=False
     )
 
     im = None
-    for row, metric in enumerate(METRICS):
+    for row, (metric, method, row_label) in enumerate(row_defs):
         for col, miss in enumerate(MISSINGNESS):
             ax = axes[row, col]
-            mat, ns, ps = _rate_matrix(trials, "exact", metric, miss)
+            mat, ns, ps = _rate_matrix(trials, "exact", metric, miss, method=method)
             im = ax.imshow(mat, aspect="auto", cmap="RdYlGn", vmin=0, vmax=1)
             ax.set_xticks(range(len(ps)))
             ax.set_xticklabels(ps)
             ax.set_yticks(range(len(ns)))
             ax.set_yticklabels(ns)
-            if row == n_met - 1:
+            if row == n_rows - 1:
                 ax.set_xlabel("p (features)")
             if col == 0:
-                ax.set_ylabel(f"{metric}\nn (samples)")
+                ax.set_ylabel(f"{row_label}\nn (samples)")
             ax.set_title(_MISS_LABEL.get(miss, miss) if row == 0 else "")
             for i in range(len(ns)):
                 for j in range(len(ps)):
@@ -534,9 +538,7 @@ def plot_figure1(
     if im is not None:
         cax = fig.add_axes([0.90, 0.15, 0.015, 0.7])
         fig.colorbar(im, cax=cax, label="Exact rate")
-    fig.suptitle(
-        "Model selection accuracy by metric and missingness pattern", fontsize=12
-    )
+    fig.suptitle("Model selection accuracy: VBPCApy vs sklearn PCA", fontsize=12)
     out = output_dir / f"figure_accuracy.{fmt}"
     fig.savefig(out, dpi=300, bbox_inches="tight")
     plt.close(fig)
@@ -548,7 +550,7 @@ def plot_figure1(
 # ---------------------------------------------------------------------------
 
 
-def plot_figure2(  # noqa: PLR0914
+def plot_figure2(
     trials: list[_Trial], output_dir: pathlib.Path, fmt: str = "png"
 ) -> None:
     """3-panel error decomposition: over/under bars, MAE bars, selected line."""
@@ -638,7 +640,7 @@ def plot_figure2(  # noqa: PLR0914
 # ---------------------------------------------------------------------------
 
 
-def plot_figure3(  # noqa: PLR0914
+def plot_figure3(
     trials: list[_Trial], output_dir: pathlib.Path, fmt: str = "png"
 ) -> None:
     """2-panel detection: power vs true_rank + overall power bars."""
@@ -698,7 +700,7 @@ def plot_figure3(  # noqa: PLR0914
 # ---------------------------------------------------------------------------
 
 
-def plot_figure4(  # noqa: C901, PLR0914
+def plot_figure4(  # noqa: C901
     cov_results: list[_CoverageTrial], output_dir: pathlib.Path, fmt: str = "png"
 ) -> None:
     """2-panel coverage: calibration curves + per-(n,p) heatmap."""
@@ -857,13 +859,6 @@ def main() -> None:
         plot_figure1(trials, args.output_dir, args.fmt)
         plot_figure2(trials, args.output_dir, args.fmt)
         plot_figure3(trials, args.output_dir, args.fmt)
-        if cov_path.exists():
-            with cov_path.open(encoding="utf-8") as f:
-                cov_results = [_CoverageTrial(**r) for r in json.load(f)]
-            LOGGER.info(
-                "Loaded %d coverage results from %s", len(cov_results), cov_path
-            )
-            plot_figure4(cov_results, args.output_dir, args.fmt)
         LOGGER.info("Done. Figures written to %s/", args.output_dir)
         return
 
@@ -880,16 +875,6 @@ def main() -> None:
     plot_figure1(trials, args.output_dir, args.fmt)
     plot_figure2(trials, args.output_dir, args.fmt)
     plot_figure3(trials, args.output_dir, args.fmt)
-
-    # Coverage sweep
-    cov_results = _run_coverage_grid(grid, reps=reps, seed=args.seed + 1)
-    if cov_results:
-        cov_records = [asdict(r) for r in cov_results]
-        cov_path = args.output_dir / "coverage_results.json"
-        with cov_path.open("w", encoding="utf-8") as f:
-            json.dump(cov_records, f, indent=2)
-        LOGGER.info("Wrote %s (%d results)", cov_path, len(cov_records))
-        plot_figure4(cov_results, args.output_dir, args.fmt)
 
     LOGGER.info("Done. Figures written to %s/", args.output_dir)
 

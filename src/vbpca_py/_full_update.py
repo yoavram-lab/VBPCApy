@@ -66,7 +66,7 @@ def _covariances_stack(covariances: CovarianceStore) -> np.ndarray:
         if covariances.ndim != 3:
             msg = "covariances array must be 3-D when provided as ndarray"
             raise ValueError(msg)
-        return np.asarray(covariances, dtype=np.float64, copy=False)
+        return np.asarray(covariances, dtype=np.float64)
 
     return np.stack(covariances, axis=0).astype(np.float64, copy=False)
 
@@ -77,7 +77,7 @@ def _covariances_stack_cached(
     key: str,
 ) -> np.ndarray:
     if isinstance(covariances, np.ndarray):
-        return np.asarray(covariances, dtype=np.float64, copy=False)
+        return np.asarray(covariances, dtype=np.float64)
 
     cached = cache.get(key)
     if cached is not None:

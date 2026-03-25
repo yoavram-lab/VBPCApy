@@ -52,11 +52,16 @@ where incomplete observations are the norm rather than the exception.
 
 VBPCApy addresses this gap by modelling missingness directly within the
 variational inference loop, so that latent factors and noise parameters are
-estimated only from observed entries. The posterior covariances produced by
-the variational E-step expose per-entry uncertainty in reconstructions and
-scores, enabling downstream analyses—such as the posterior predictive
-eigenvalue tests of @Macdonald2026—to propagate uncertainty without
-external imputation.
+estimated only from observed entries. As \autoref{fig:accuracy} demonstrates,
+the built-in model selection of VBPCApy recovers the true latent rank far
+more reliably than the standard impute-then-PCA pipeline across every
+missingness pattern tested, whereas scikit-learn's explained-variance
+threshold collapses under incomplete data. The posterior covariances
+produced by the variational E-step expose per-entry uncertainty in
+reconstructions and scores, enabling downstream analyses—such as the
+posterior predictive eigenvalue tests of @Macdonald2026—to perform
+more principled dimensionality selection than the empirical cost and
+probe-set metrics provided here.
 
 Existing implementations of @Ilin2010 are available in MATLAB (the
 authors' reference code) and as isolated scripts, but none provide a
@@ -89,9 +94,10 @@ component counts, fitting VBPCA at each candidate and selecting the
 number of components that minimises a user-chosen convergence metric
 (probe-set prediction RMS or variational cost). A
 `SelectionConfig` dataclass controls patience, early stopping, and
-metric-reversal detection. \autoref{fig:accuracy} demonstrates that
-this selection procedure is stable across the two available metrics
-and four missingness patterns.
+metric-reversal detection. \autoref{fig:accuracy} shows that this
+procedure substantially outperforms the standard impute-then-PCA
+baseline, and remains stable across missingness patterns where the
+baseline fails.
 
 **C++ acceleration.** Six pybind11 extension modules implement the
 dense, sparse, noise, and rotation update kernels, with runtime dispatch
@@ -117,12 +123,14 @@ print(f"Selected k={best_k}, final cost={model.cost_:.4f}")
 
 # Stability of Model Selection
 
-![Exact rank-recovery rate by stopping metric (cost, prms) and
-missingness pattern (complete, MCAR, MNAR-censored, block) over a grid
-of sample sizes and feature dimensions.  Both metrics recover the true
-rank at comparable rates, confirming that model selection is robust to
-the choice of convergence
-diagnostic.\label{fig:accuracy}](figure_accuracy.pdf)
+![Exact rank-recovery rate for VBPCApy (cost metric, top row) versus
+scikit-learn PCA with 95\% explained-variance threshold (EVR95, bottom
+row) across four missingness patterns (complete, MCAR, MNAR-censored,
+block).  Each cell shows the recovery rate for a given combination of
+sample size $n$ and feature count $p$.  VBPCApy maintains moderate
+recovery across all patterns, while the impute-then-PCA baseline
+degrades sharply under incomplete
+data.\label{fig:accuracy}](figure_accuracy.pdf)
 
 ![Error decomposition of rank selection.  Panel A shows over- and
 under-selection rates by missingness pattern.  Panel B reports the mean
@@ -135,13 +143,6 @@ deviation.\label{fig:errors}](figure_errors.pdf)
 number of components — by true rank (Panel A) and by each combination
 of missingness pattern and metric
 (Panel B).\label{fig:power}](figure_power.pdf)
-
-![Posterior predictive coverage on held-out entries.  Panel A shows
-empirical coverage versus nominal level for each missingness pattern;
-well-calibrated posteriors fall on the diagonal.  Panel B displays the
-empirical 95\% coverage rate across $(n, p)$ settings, demonstrating
-that VBPCApy's per-entry marginal variances produce reliable credible
-intervals.\label{fig:coverage}](figure_coverage.pdf)
 
 # Acknowledgements
 
