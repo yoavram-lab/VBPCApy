@@ -9,7 +9,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "vbpca_py"
 version = "0.1.0"
-description = "Variational Bayesian PCA (Illin & Raiko 2010) with support for missing data and missing entries."
+description = "Variational Bayesian PCA (Ilin & Raiko 2010) with support for missing data and missing entries."
 readme = "README.md"
 license = "MIT"
 authors = [
@@ -35,6 +35,7 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Programming Language :: Python :: 3 :: Only",
     "Programming Language :: C++",
     "Topic :: Scientific/Engineering",
@@ -146,7 +147,6 @@ ignore = [
     "RUF003",  # Ambiguous unicode OK (test data)
     "RUF012",  # Mutable class variable annotations
     "RUF034",  # Useless if-else OK in test clarity
-    "RUF069",  # Float equality OK in tests (intentional)
     "S101",    # Use of assert in tests
     "S108",    # Temp file paths OK in tests
     "S110",    # try-except-pass OK in robustness tests

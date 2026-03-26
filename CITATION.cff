@@ -20,7 +20,7 @@ authors:
 repository-code: "https://github.com/yoavram-lab/VBPCApy"
 url: "https://github.com/yoavram-lab/VBPCApy"
 abstract: >
-  Variational Bayesian PCA (Illin and Raiko, 2010) with support for missing data,
+  Variational Bayesian PCA (Ilin and Raiko, 2010) with support for missing data,
   sparse masks, optional bias terms, and an orthogonal post-rotation to a PCA basis.
   The implementation follows the original MATLAB reference while adding Python-native
   APIs and fast C++ extensions for heavy routines.

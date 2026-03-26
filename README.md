@@ -4,7 +4,7 @@
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
 
-Variational Bayesian PCA (Illin and Raiko, 2010) with support for missing data, sparse masks, optional bias terms, and an orthogonal post-rotation to a PCA basis. The implementation follows the original MATLAB reference while adding Python-native APIs, fast C++ extensions for heavy routines, and runtime autotuning for thread/accessor/covariance writeback modes.
+Variational Bayesian PCA (Ilin and Raiko, 2010) with support for missing data, sparse masks, optional bias terms, and an orthogonal post-rotation to a PCA basis. The implementation follows the original MATLAB reference while adding Python-native APIs, fast C++ extensions for heavy routines, and runtime autotuning for thread/accessor/covariance writeback modes.
 
 ## Statement of need
 
@@ -17,7 +17,7 @@ This package targets researchers and practitioners who need:
 
 ## Scope and reference behavior
 
-VBPCApy implements the Illin & Raiko (2010) VB-PCA formulation with modern Python ergonomics. The default `compat_mode="strict_legacy"` preserves historical behavior; `compat_mode="modern"` is available for updated semantics in selected preprocessing/masking cases.
+VBPCApy implements the Ilin & Raiko (2010) VB-PCA formulation with modern Python ergonomics. The default `compat_mode="strict_legacy"` preserves historical behavior; `compat_mode="modern"` is available for updated semantics in selected preprocessing/masking cases.
 
 ## Runtime backend selection
 
@@ -52,6 +52,7 @@ from vbpca_py import (
   SelectionConfig,
   AutoEncoder,
   MissingAwareOneHotEncoder,
+  MissingAwareSparseOneHotEncoder,
   MissingAwareStandardScaler,
   MissingAwareMinMaxScaler,
 )
@@ -267,6 +268,67 @@ scores = model.fit_transform(z, mask=np.ones_like(z, dtype=bool))
 z_recon = model.inverse_transform()
 x_recon = auto.inverse_transform(z_recon)     # decode back to original space
 ```
+
+## Choosing sparse vs dense input
+
+| Scenario | Format | Why |
+|---|---|---|
+| High-dimensional data with structural zeros (genomics count matrices, one-hot-encoded surveys) | **Sparse CSR/CSC** | The CSR sparsity pattern acts as an implicit observation mask; sparse kernels avoid materialising the full matrix. |
+| Moderate dimensions with random missingness (NaN-masked tabular data) | **Dense + explicit mask** | Pass a boolean mask of observed entries; dense kernels benefit from BLAS. |
+
+Key API difference:
+- **Sparse:** observation mask is inferred from stored entries — `mask = spones(X)`.
+- **Dense:** observation mask must be provided explicitly — `mask = ~np.isnan(X)`.
+
+## Plotting utilities
+
+Install the optional plotting extra:
+```bash
+pip install vbpca_py[plot]
+# or
+uv sync --extra plot
+```
+
+Three convenience functions are provided:
+```python
+from vbpca_py.plotting import scree_plot, loadings_barplot, variance_explained_plot
+
+model = VBPCA(n_components=5, maxiters=100)
+model.fit(x, mask=mask)
+
+scree_plot(model, cumulative=True)           # explained variance per component
+loadings_barplot(model, component=0, top_n=10)  # feature importance for one PC
+variance_explained_plot(model)               # absolute variance per component
+```
+
+## Benchmarking
+
+The project includes several benchmarking recipes via `just`:
+
+| Recipe | Description |
+|---|---|
+| `just bench` | Kernel-level timing via pytest-benchmark |
+| `just bench-scale` | Timing across increasing matrix sizes |
+| `just bench-octave` | Python vs Octave comparison (requires `octave` and `uv sync --extra octave`) |
+| `just bench-save` / `just bench-compare` | Save and compare baselines |
+| `just bench-study-repro` | Validate deterministic reproducibility |
+
+For Octave benchmarks, install Octave first:
+```bash
+# Ubuntu/Debian
+sudo apt-get install octave octave-dev
+# macOS
+brew install octave
+```
+
+Then sync the Octave extra: `uv sync --extra octave`.
+
+## Known limitations
+
+- **`transform(new_data)` is not implemented.** Only training scores are returned. To project new data, refit on the combined dataset.
+- **`inverse_transform()` always returns dense output**, even when the input was sparse CSR/CSC.
+- **`MissingAwareSparseOneHotEncoder` requires numeric categories.** String categories cannot survive the CSR round-trip.
+- **Data convention:** `AutoEncoder` expects samples × features; `VBPCA` expects features × samples. Transpose as needed.
 
 ## Testing and development
 Install in developer mode:

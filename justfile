@@ -82,6 +82,10 @@ mex-build: check-octave mex-clean
 test-all: check-octave mex-build
 	uv run pytest -q tests
 
+# Validate deterministic reproducibility for a fixed-seed pilot setting.
+bench-study-repro:
+	uv run python scripts/validate_benchmark_reproducibility.py
+
 # Run format check, lint, strict typecheck, and tests in sequence.
 ci: format-check lint typecheck test-cov
 

@@ -6,6 +6,7 @@ from vbpca_py.preprocessing import (
     AutoEncoder,
     MissingAwareMinMaxScaler,
     MissingAwareOneHotEncoder,
+    MissingAwareSparseOneHotEncoder,
     MissingAwareStandardScaler,
 )
 
@@ -14,6 +15,7 @@ __all__ = [
     "AutoEncoder",
     "MissingAwareMinMaxScaler",
     "MissingAwareOneHotEncoder",
+    "MissingAwareSparseOneHotEncoder",
     "MissingAwareStandardScaler",
     "SelectionConfig",
     "select_n_components",

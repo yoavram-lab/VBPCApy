@@ -52,3 +52,24 @@ jobs:
           --cov=src/vbpca_py
           --cov-report=term-missing
           --cov-fail-under=89
+
+  octave-parity:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+          cache-dependency-glob: "**/pyproject.toml"
+      - name: Install system dependencies
+        run: sudo apt-get install -y libeigen3-dev octave octave-dev
+      - name: Sync environment
+        run: uv sync --extra dev --extra plot --extra octave
+      - name: Build MEX helpers
+        run: |
+          cd tools
+          mkoctfile --mex -O -DNOTHREADS -o errpca_pt errpca_pt.cpp || true
+          mkoctfile --mex -O -o subtract_mu subtract_mu.cpp || true
+      - name: Run Octave parity tests
+        run: uv run pytest -q -m octave

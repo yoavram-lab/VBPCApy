@@ -66,58 +66,74 @@ remains above 65\% even at the highest true ranks.
 The posterior covariances produced by the variational E-step expose
 per-entry uncertainty in reconstructions and scores, enabling downstream
 analyses—such as the posterior predictive eigenvalue tests of
-@Macdonald2026—to perform more principled dimensionality selection
+@Macdonald2024a—to perform more principled dimensionality selection
 than the empirical cost and probe-set metrics provided here.
+
+# State of the Field
 
 @Bishop1999 introduced Bayesian PCA with automatic relevance
 determination; @Ilin2010 extended this to the missing-data setting with
-a full variational treatment. Existing implementations of @Ilin2010 are
-available in MATLAB (the authors' reference code) and as isolated
-scripts, but none provide a pip-installable Python package with a stable
-API, automated model selection, or missing-aware preprocessing.
-R packages such as `pcaMethods` [@Stacklies2007] offer probabilistic PCA
-variants but lack the full VB-PCA formulation with hierarchical noise and
-optional bias estimation. The scikit-learn `PCA` class [@Pedregosa2011]
-does not handle missing entries at all. VBPCApy fills this niche by
-combining the full @Ilin2010 algorithm with modern Python packaging,
-type-checked interfaces, and compiled kernels.
+a full variational treatment and released a MATLAB reference
+implementation. However, that code is not pip-installable, lacks a stable
+API, and ships without automated model selection or missing-aware
+preprocessing. The R/Bioconductor package `pcaMethods`
+[@Stacklies2007] provides probabilistic PCA variants but omits the full
+VB-PCA formulation with hierarchical noise, optional bias estimation, and
+posterior covariances on both scores and loadings. The scikit-learn `PCA`
+class [@Pedregosa2011] does not handle missing entries at all, forcing
+users into impute-then-analyze workflows. VBPCApy fills this gap by
+combining the complete @Ilin2010 algorithm with modern Python packaging,
+type-checked interfaces, compiled C++ kernels, and an empirical
+model-selection layer with early stopping.
 
 # Key Features
 
 **Scikit-learn-compatible estimator.** The `VBPCA` class exposes
-`fit`, `transform`, and `inverse_transform` methods. Users access
-reconstructions via `model.reconstruction_`, marginal variances via
-`model.variance_`, and convergence diagnostics (`model.rms_`,
-`model.prms_`, `model.cost_`).
+`fit`, `transform`, and `inverse_transform` methods with access to
+reconstructions (`reconstruction_`), marginal variances (`variance_`),
+and convergence diagnostics (`rms_`, `prms_`, `cost_`).
 
 **Missing-aware preprocessing.** `AutoEncoder` routes mixed-type columns
 through `MissingAwareOneHotEncoder`, `MissingAwareStandardScaler`, and
-`MissingAwareMinMaxScaler`, each of which operates only on observed entries
-and preserves NaN masks through `inverse_transform`. A sparse variant,
-`MissingAwareSparseOneHotEncoder`, keeps CSR structure end-to-end for
-high-cardinality categoricals.
+`MissingAwareMinMaxScaler`, each operating only on observed entries and
+preserving NaN masks through `inverse_transform`.
 
 **Empirical model selection.** `select_n_components` sweeps candidate
-component counts, fitting VBPCA at each candidate and selecting the
-number of components that minimises a user-chosen convergence metric
-(probe-set prediction RMS or variational cost). A
-`SelectionConfig` dataclass controls patience, early stopping, and
-metric-reversal detection. \autoref{fig:accuracy} shows that this
-procedure substantially outperforms the standard impute-then-PCA
-baseline, and remains stable across missingness patterns where the
-baseline fails.
+component counts, selecting the rank that minimises a user-chosen
+metric (probe-set RMS or variational cost). `SelectionConfig` controls
+patience, early stopping, and metric-reversal detection.
+\autoref{fig:accuracy} shows that this procedure substantially
+outperforms the impute-then-PCA baseline.
 
 **C++ acceleration.** Six pybind11 extension modules implement the
 dense, sparse, noise, and rotation update kernels, with runtime dispatch
 selecting accessor and threading modes based on data shape and sparsity.
 
-**Project infrastructure.** The repository includes a GitHub Actions CI
-pipeline that runs linting (`ruff`), type checking (`mypy --strict`), and
-the full test suite across Python 3.11–3.13, enforcing a minimum coverage
-threshold.  A `justfile` command runner provides recipes for common
-development tasks (testing, benchmarking, formatting), and a
-`publish.yml` workflow builds platform wheels via `cibuildwheel` and
-publishes to PyPI on tagged releases.
+# Software Design
+
+VBPCApy follows a features × samples data convention matching the
+@Ilin2010 MATLAB reference, enabling bit-for-bit parity verification
+via an optional Octave bridge (`compat_mode="strict_legacy"`).
+Performance-critical update equations are implemented in C++ using
+pybind11 [@pybind11] and Eigen for direct access to BLAS-level matrix
+operations; this provides a 5–10× speedup over equivalent pure-NumPy
+loops while keeping the build portable across Linux, macOS, and Windows.
+A runtime autotuning probe selects per-problem thread counts, memory
+accessor modes (legacy scalar vs. buffered), and covariance writeback
+strategies based on measured wall-clock time.
+
+Preprocessing utilities (`AutoEncoder`, `MissingAwareOneHotEncoder`,
+`MissingAwareStandardScaler`, `MissingAwareMinMaxScaler`) route
+mixed-type columns through encode and decode paths that preserve NaN
+mask structure, so that generative reconstructions can be mapped back to
+the original feature space. A sparse variant,
+`MissingAwareSparseOneHotEncoder`, keeps CSR structure end-to-end for
+high-cardinality categoricals.
+
+The project ships with a GitHub Actions CI pipeline (lint, type check,
+test across Python 3.11–3.13), a `justfile` command runner with
+benchmark and Octave-parity recipes, and a `cibuildwheel` workflow
+for platform wheel publication.
 
 # Example
 
@@ -136,6 +152,32 @@ model = VBPCA(n_components=best_k, maxiters=200)
 model.fit(x, mask=mask)
 print(f"Selected k={best_k}, final cost={model.cost_:.4f}")
 ```
+
+Sparse CSR data with structural missingness can be handled directly:
+
+```python
+import scipy.sparse as sp
+from vbpca_py import VBPCA
+
+x_sparse = sp.random(80, 300, density=0.6, format="csr", random_state=0)
+model = VBPCA(n_components=4, maxiters=150)
+scores = model.fit_transform(x_sparse)  # mask inferred from sparsity
+x_hat = model.inverse_transform()       # dense reconstruction
+```
+
+# Research Impact
+
+The legacy MATLAB implementation of VB-PCA was used by @Macdonald2024 to
+analyse cultural-transmission networks among Austronesian-speaking
+peoples, where incomplete ethnographic records make standard PCA
+inapplicable. VBPCApy is the Python successor to that codebase and was
+developed to support the posterior predictive eigenvalue tests of
+@Macdonald2024a, which require posterior covariances produced by the
+variational E-step. The 3,360-trial stability study presented below
+demonstrates that VBPCApy's built-in model selection achieves roughly
+three times lower mean absolute error than the standard impute-then-PCA
+pipeline. The scikit-learn-compatible API is designed to integrate
+directly into existing analysis pipelines.
 
 # Stability of Model Selection
 
@@ -166,6 +208,14 @@ at $k=10$.  (B) Power broken down by every combination of missingness
 pattern and metric; EVR95 achieves high nominal power primarily through
 systematic over-selection rather than accurate rank
 recovery.\label{fig:power}](figure_power.pdf)
+
+# AI Usage Disclosure
+
+Development of VBPCApy was assisted by GitHub Copilot, which provided code
+formatting suggestions and implementation scaffolding powered by Claude
+Opus 4.6 (Anthropic) and GPT-5.1/5.3 Codex (OpenAI). All generated code
+was reviewed, edited, and validated by the authors, who made all core
+algorithmic and architectural design decisions.
 
 # Acknowledgements
 
