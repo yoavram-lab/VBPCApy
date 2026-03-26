@@ -63,7 +63,9 @@ jobs:
           enable-cache: true
           cache-dependency-glob: "**/pyproject.toml"
       - name: Install system dependencies
-        run: sudo apt-get install -y libeigen3-dev octave octave-dev
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libeigen3-dev octave octave-dev
       - name: Sync environment
         run: uv sync --extra dev --extra plot --extra octave
       - name: Build MEX helpers
