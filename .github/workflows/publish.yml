@@ -62,7 +62,11 @@ jobs:
             yum install -y eigen3-devel 2>/dev/null ||
             dnf install -y eigen3-devel 2>/dev/null ||
             apt-get install -y libeigen3-dev 2>/dev/null || true
-          CIBW_TEST_REQUIRES: pytest numpy scipy
+          CIBW_BEFORE_TEST_LINUX: >-
+            yum install -y openblas-devel 2>/dev/null ||
+            dnf install -y openblas-devel 2>/dev/null ||
+            apt-get install -y libopenblas-dev 2>/dev/null || true
+          CIBW_TEST_REQUIRES: pytest pytest-benchmark numpy scipy
           CIBW_TEST_COMMAND: python -m pytest {project}/tests -q -x -m "not perf and not octave" --ignore={project}/tests/test_octave_parity_smoke.py --ignore={project}/tests/test_rms_regression.py --ignore={project}/tests/test_cost.py --ignore={project}/tests/test_mean.py --ignore={project}/tests/test_rotate.py
 
       - uses: actions/upload-artifact@v4

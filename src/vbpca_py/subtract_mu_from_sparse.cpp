@@ -110,7 +110,7 @@ py::array_t<double> subtract_mu_from_sparse(
     const std::size_t nnz = static_cast<std::size_t>(data_buf.size);
 
     // Basic consistency checks
-    if (indices_buf.size != static_cast<ssize_t>(nnz)) {
+    if (indices_buf.size != static_cast<py::ssize_t>(nnz)) {
         throw std::invalid_argument(
             "SUBTRACT_MU: X_data and X_indices must have the same length (nnz)."
         );
@@ -132,7 +132,7 @@ py::array_t<double> subtract_mu_from_sparse(
         return py::array_t<double>(0);
     }
 
-    if (indptr_buf.size != static_cast<ssize_t>(n_rows + 1)) {
+    if (indptr_buf.size != static_cast<py::ssize_t>(n_rows + 1)) {
         throw std::invalid_argument(
             "SUBTRACT_MU: indptr size must be n_rows + 1."
         );
