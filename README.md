@@ -208,7 +208,6 @@ scores = model.fit_transform(x_sparse, mask=mask)
 - Default runtime behavior uses `runtime_tuning="safe"` to measure and choose `num_cpu`, accessor mode, and covariance writeback mode; you can still pin `num_cpu` explicitly or override with env vars.
 - `runtime_tuning="aggressive"` expands the search if you want maximum throughput and can tolerate a slightly longer probe.
 - Fast sweep preset: use `runtime_tuning="safe"`, `SelectionConfig(compute_explained_variance=False, patience=2, max_trials=5)`, and cap the k sweep to a modest window (e.g., 25–45 for tall/wide matrices).
-- The cultural replay script exposes `--fast-mode`, `--runtime-tuning`, and `--num-cpu` to apply these defaults without code changes.
 
 ### Public API policy
 - Stable public imports are those re-exported from `vbpca_py` in [src/vbpca_py/__init__.py](src/vbpca_py/__init__.py).
@@ -445,7 +444,7 @@ If you use this package in your research, please cite:
 **For the implementation:**
 ```bibtex
 @software{vbpca_py2026,
-  author = {Naim, Shany and Macdonald, Joshua and Ram, Yoav},
+  author = {Macdonald, Joshua, Naim, Shany and Ram, Yoav},
   title = {{VBPCApy}: Variational Bayesian PCA with Missing Data Support},
   year = {2026},
   url = {https://github.com/yoavram-lab/VBPCApy},
