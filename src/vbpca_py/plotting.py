@@ -5,7 +5,7 @@ All functions require ``matplotlib`` (install via ``pip install vbpca_py[plot]``
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
@@ -80,9 +80,10 @@ def scree_plot(
     indices = np.arange(1, n_comp + 1)
 
     if ax is None:
-        fig, ax = plt.subplots(figsize=(6, 4))
+        fig_raw, ax = plt.subplots(figsize=(6, 4))
+        fig = cast("Figure", fig_raw)
     else:
-        fig = ax.get_figure()
+        fig = cast("Figure", ax.get_figure())
 
     ax.bar(indices, evr, color="steelblue", alpha=0.8, label="Individual")
     if cumulative:
@@ -99,7 +100,7 @@ def scree_plot(
     ax.legend()
     ax.set_xticks(indices)
     fig.tight_layout()
-    return fig  # type: ignore[no-any-return]
+    return fig
 
 
 def loadings_barplot(
@@ -144,9 +145,10 @@ def loadings_barplot(
 
     if ax is None:
         width = max(6, len(feature_names) * 0.35)
-        fig, ax = plt.subplots(figsize=(width, 4))
+        fig_raw, ax = plt.subplots(figsize=(width, 4))
+        fig = cast("Figure", fig_raw)
     else:
-        fig = ax.get_figure()
+        fig = cast("Figure", ax.get_figure())
 
     colours = ["steelblue" if v >= 0 else "coral" for v in loadings]
     ax.bar(range(len(loadings)), loadings, color=colours, alpha=0.85)
@@ -156,7 +158,7 @@ def loadings_barplot(
     ax.set_title(f"Component {component} loadings")
     ax.axhline(0, color="grey", linewidth=0.5)
     fig.tight_layout()
-    return fig  # type: ignore[no-any-return]
+    return fig
 
 
 def variance_explained_plot(
@@ -192,9 +194,10 @@ def variance_explained_plot(
     indices = np.arange(1, n_comp + 1)
 
     if ax is None:
-        fig, ax = plt.subplots(figsize=(6, 4))
+        fig_raw, ax = plt.subplots(figsize=(6, 4))
+        fig = cast("Figure", fig_raw)
     else:
-        fig = ax.get_figure()
+        fig = cast("Figure", ax.get_figure())
 
     ax.bar(indices, ev, color="steelblue", alpha=0.8)
     ax.set_xlabel("Component")
@@ -202,4 +205,4 @@ def variance_explained_plot(
     ax.set_title("Variance explained per component")
     ax.set_xticks(indices)
     fig.tight_layout()
-    return fig  # type: ignore[no-any-return]
+    return fig

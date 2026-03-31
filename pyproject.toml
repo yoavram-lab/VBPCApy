@@ -153,7 +153,7 @@ ignore = [
     "RUF003",  # Ambiguous unicode OK (test data)
     "RUF012",  # Mutable class variable annotations
     "RUF034",  # Useless if-else OK in test clarity
-    "RUF069",  # Float equality OK in tests (exact comparisons on known values)
+    "RUF069",  # Float equality — tracked in issue; fix with pytest.approx / np.testing
     "S101",    # Use of assert in tests
     "S108",    # Temp file paths OK in tests
     "S110",    # try-except-pass OK in robustness tests
