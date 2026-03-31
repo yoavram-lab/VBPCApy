@@ -64,7 +64,7 @@ jobs:
           CIBW_BEFORE_BUILD_LINUX: >-
             dnf install -y eigen3-devel 2>/dev/null ||
             apt-get install -y libeigen3-dev 2>/dev/null || true
-          CIBW_TEST_REQUIRES: pytest pytest-benchmark hypothesis numpy scipy
+          CIBW_TEST_REQUIRES: pytest pytest-benchmark hypothesis numpy scipy matplotlib
           CIBW_TEST_COMMAND: python -m pytest {project}/tests -q -x -m "not perf and not octave" --ignore={project}/tests/test_octave_parity_smoke.py --ignore={project}/tests/test_rms_regression.py --ignore={project}/tests/test_cost.py --ignore={project}/tests/test_mean.py --ignore={project}/tests/test_rotate.py
 
       - uses: actions/upload-artifact@v4
