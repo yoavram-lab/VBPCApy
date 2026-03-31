@@ -1,5 +1,7 @@
 """Core package for the variational Bayesian PCA implementation."""
 
+from importlib.metadata import version
+
 from vbpca_py.estimators import VBPCA
 from vbpca_py.model_selection import SelectionConfig, select_n_components
 from vbpca_py.preprocessing import (
@@ -21,4 +23,4 @@ __all__ = [
     "select_n_components",
 ]
 
-__version__ = "0.1.0"
+__version__ = version("vbpca_py")
