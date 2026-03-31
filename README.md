@@ -49,7 +49,7 @@ In short: backend selection affects runtime, not model semantics.
 - **Eigen**: Linear algebra library (version 3.x)
 - **Matplotlib** *(optional)*: install via `pip install vbpca_py[plot]` for monitoring displays and plotting utilities
 
-### Install Eigen (required for building)
+### Install Eigen (only needed for building from source)
 
 **Ubuntu/Debian:**
 ```bash
@@ -76,14 +76,24 @@ Eigen is located automatically via `EIGEN_INCLUDE_DIR`, `$CONDA_PREFIX/include/e
 
 ### Install VBPCApy
 
-**From source:**
+**From PyPI** (recommended — pre-built wheels for Python 3.11–3.14, Linux/macOS/Windows):
+```bash
+pip install vbpca-py
+```
+
+**With plotting support:**
+```bash
+pip install vbpca-py[plot]
+```
+
+**From source** (requires Eigen and a C++14 compiler):
 ```bash
 git clone https://github.com/yoavram-lab/VBPCApy.git
 cd VBPCApy
 pip install .
 ```
 
-**With optional dependencies:**
+**With optional dependencies (from source):**
 ```bash
 # Development tools (pytest, ruff, mypy, just)
 pip install .[dev]
