@@ -10,20 +10,25 @@ Thank you for your interest in contributing to VBPCApy! We welcome contributions
    git clone https://github.com/YOUR-USERNAME/VBPCApy.git
    cd VBPCApy
    ```
-3. **Install development dependencies**:
+3. **Install [uv](https://docs.astral.sh/uv/)** (recommended Python project manager):
    ```bash
-   pip install -e .[dev]
+   # macOS / Linux
+   curl -LsSf https://astral.sh/uv/install.sh | sh
    ```
-4. **Install just** (command runner):
+4. **Install [just](https://just.systems/)** (command runner):
    ```bash
    # macOS
    brew install just
-   
    # Linux
    curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh | bash -s -- --to ~/bin
-   
-   # Or via cargo
-   cargo install just
+   ```
+5. **Sync the development environment**:
+   ```bash
+   uv sync --extra dev --extra data
+   ```
+   Or, without uv:
+   ```bash
+   pip install -e .[dev,data]
    ```
 
 ## Development Workflow
@@ -48,7 +53,7 @@ Thank you for your interest in contributing to VBPCApy! We welcome contributions
 
 ### Code Quality
 
-Run these commands before committing:
+Run these commands before committing (all recipes use `uv run` under the hood):
 
 ```bash
 # Lint your code
