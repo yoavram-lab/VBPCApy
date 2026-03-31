@@ -8,7 +8,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vbpca_py"
-version = "0.1.0"
+version = "0.1.1"
 description = "Variational Bayesian PCA (Ilin & Raiko 2010) with support for missing data and missing entries."
 readme = "README.md"
 license = "MIT"
