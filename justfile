@@ -26,7 +26,7 @@ format:
 
 # Type-check library code (strict mode).
 typecheck:
-	uv run --with scipy-stubs mypy --strict src
+	uv run --with scipy-stubs --with matplotlib mypy --strict src
 
 # Run the test suite quietly.
 test:
@@ -94,6 +94,36 @@ ci-smoke: lint typecheck test-smoke
 
 # Run full CI including Octave parity coverage.
 ci-all: format-check lint typecheck test-all
+
+# ── Build & publish helpers ──────────────────────────────────────────
+
+# Build sdist + wheel locally and check with twine.
+build-check:
+	rm -rf dist
+	uv build
+	uvx twine check --strict dist/*
+
+# Clean-room install test: fresh venv, install wheel + test deps, run test suite.
+build-test:
+	#!/usr/bin/env bash
+	set -euo pipefail
+	CLEANROOM=$(mktemp -d)
+	trap 'rm -rf "$CLEANROOM"' EXIT
+	uv venv "$CLEANROOM/venv"
+	source "$CLEANROOM/venv/bin/activate"
+	uv build --wheel --out-dir "$CLEANROOM/dist"
+	uv pip install --no-cache "$CLEANROOM"/dist/*.whl
+	uv pip install pytest pytest-benchmark hypothesis numpy scipy matplotlib
+	python -m pytest tests -q -x -m 'not perf and not octave' \
+		--ignore=tests/test_octave_parity_smoke.py \
+		--ignore=tests/test_rms_regression.py \
+		--ignore=tests/test_cost.py \
+		--ignore=tests/test_mean.py \
+		--ignore=tests/test_rotate.py
+	echo "Clean-room test passed."
+
+# Build, test, and check — full pre-publish dry run.
+build-all: build-check build-test
 
 # Generate the JOSS paper stability figure (full grid, ~10-20 min).
 paper-figure:

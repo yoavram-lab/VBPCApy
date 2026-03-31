@@ -12,6 +12,7 @@ authors:
   - name: Joshua Macdonald
     orcid: 0000-0002-3643-6266
     email: jmacdo16@jh.edu
+    corresponding: true
     affiliation: "1,2"
   - name: Shany Naim
     affiliation: 1

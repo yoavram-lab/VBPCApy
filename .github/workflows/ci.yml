@@ -28,7 +28,7 @@ jobs:
       - name: Lint
         run: uv run --with scipy-stubs ruff check --preview src tests scripts analysis
       - name: Type check (strict)
-        run: uv run --with scipy-stubs mypy --strict src
+        run: uv run --with scipy-stubs --with matplotlib mypy --strict src
 
   test:
     runs-on: ubuntu-latest

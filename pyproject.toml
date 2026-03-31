@@ -13,8 +13,9 @@ description = "Variational Bayesian PCA (Ilin & Raiko 2010) with support for mis
 readme = "README.md"
 license = "MIT"
 authors = [
-    { name = "Shany", email = "shany215.sn@gmail.com" },
     { name = "Joshua Macdonald", email = "jmacdo16@jh.edu" },
+    { name = "Shany Naim", email = "shany215.sn@gmail.com" },
+    { name = "Yoav Ram", email = "yoav@yoavram.com" },
 ]
 maintainers = [
     { name = "Yoav Ram Lab", email = "yoav@yoavram.com" },
@@ -63,6 +64,11 @@ dev = [
     "ruff>=0.3.0",
     "mypy>=1.8.0",
     "scipy-stubs>=1.17.1.0",
+]
+publish = [
+    "build>=1.0",
+    "twine>=5.0",
+    "cibuildwheel>=2.22",
 ]
 plot = ["matplotlib>=3.7"]
 data = ["pandas>=1.5"]
@@ -147,7 +153,7 @@ ignore = [
     "RUF003",  # Ambiguous unicode OK (test data)
     "RUF012",  # Mutable class variable annotations
     "RUF034",  # Useless if-else OK in test clarity
-    "RUF069",  # Float equality OK in tests (exact comparisons on known values)
+    "RUF069",  # Float equality — tracked in issue; fix with pytest.approx / np.testing
     "S101",    # Use of assert in tests
     "S108",    # Temp file paths OK in tests
     "S110",    # try-except-pass OK in robustness tests

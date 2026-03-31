@@ -555,6 +555,7 @@ def test_normalize_profile_option_auto_blank_and_expanduser(
     fake_home.mkdir()
     monkeypatch.setattr("vbpca_py._runtime_policy.Path.home", lambda: fake_home)
     monkeypatch.setenv("HOME", str(fake_home))
+    monkeypatch.setenv("USERPROFILE", str(fake_home))
 
     assert _normalize_profile_option(None) is None
     assert _normalize_profile_option("   ") is None

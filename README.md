@@ -38,32 +38,8 @@ In short: backend selection affects runtime, not model semantics.
 - Direct access to reconstructions and per-entry marginal variances from the sklearn-like `VBPCA` estimator.
 - C++ extensions via pybind11 for performance-critical routines; runtime autotune selects thread counts, buffered accessors, and covariance writeback modes.
 - Missing-aware preprocessing utilities (one-hot encode, standardize, min-max, auto-routing) that preserve NaNs/masks for generative reconstruction.
-- `VBPCA` sklearn-like wrapper (fit/transform/inverse_transform) with mask support.
-- Empirical risk minimization based model selector for number of PCs which best reconstruct the empirical data.
-
-## Public API at a glance
-
-Stable user-facing APIs are imported from `vbpca_py`:
-
-```python
-from vbpca_py import (
-  VBPCA,
-  select_n_components,
-  SelectionConfig,
-  AutoEncoder,
-  MissingAwareOneHotEncoder,
-  MissingAwareSparseOneHotEncoder,
-  MissingAwareStandardScaler,
-  MissingAwareMinMaxScaler,
-)
-```
-
-Preprocessing interfaces are first-class public APIs:
-
-- `MissingAwareOneHotEncoder`: categorical encoding with NaN/mask-aware behavior.
-- `MissingAwareSparseOneHotEncoder`: sparse categorical encoder (CSR input, numeric categories) that preserves sparsity end-to-end and round-trips via sparse inverse transform.
-- `MissingAwareStandardScaler` / `MissingAwareMinMaxScaler`: continuous scaling on observed entries.
-- `AutoEncoder`: mixed-type routing layer with `fit/transform/inverse_transform`.
+- scikit-learn-compatible `VBPCA` estimator (`fit`/`transform`/`inverse_transform`) with mask support.
+- Empirical model selection for the number of latent components via `select_n_components`.
 
 ## Installation
 
@@ -237,6 +213,7 @@ from vbpca_py import (
     SelectionConfig,
     AutoEncoder,
     MissingAwareOneHotEncoder,
+    MissingAwareSparseOneHotEncoder,
     MissingAwareStandardScaler,
     MissingAwareMinMaxScaler,
 )
@@ -252,21 +229,6 @@ from vbpca_py import (
   - `AutoEncoder`: column-wise router that applies the above per column with `cardinality_threshold` (integer columns with uniques <= threshold are treated as categorical), `continuous_scaler` (`"standard"` or `"minmax"`), `handle_unknown` (ignore vs raise unseen categories), `mean_center_ohe` (center one-hot columns), optional `column_types` override (force categorical/continuous per column), and `fit/transform/inverse_transform` for round-tripping mixed data with masks.
 
 All options are consumed via the `VBPCA` estimator. Call `model.get_options()` after construction to view the merged defaults and your overrides. The canonical reference list lives in [src/vbpca_py/_pca_full.py](src/vbpca_py/_pca_full.py). See [src/vbpca_py/estimators.py](src/vbpca_py/estimators.py), [src/vbpca_py/model_selection.py](src/vbpca_py/model_selection.py), and [src/vbpca_py/preprocessing.py](src/vbpca_py/preprocessing.py) for the stable public APIs.
-
-### Autoencoding workflow 
-
-The package includes missing-aware preprocessing and an autoencoder-style inverse transform to map back to the original feature space:
-
-```python
-from vbpca_py import AutoEncoder, VBPCA
-
-auto = AutoEncoder(cardinality_threshold=10, continuous_scaler="standard")
-z = auto.fit_transform(x, mask=mask)          # encodes continuous + categorical
-model = VBPCA(n_components=5, maxiters=100)
-scores = model.fit_transform(z, mask=np.ones_like(z, dtype=bool))
-z_recon = model.inverse_transform()
-x_recon = auto.inverse_transform(z_recon)     # decode back to original space
-```
 
 ## Choosing sparse vs dense input
 
@@ -444,7 +406,7 @@ If you use this package in your research, please cite:
 **For the implementation:**
 ```bibtex
 @software{vbpca_py2026,
-  author = {Macdonald, Joshua, Naim, Shany and Ram, Yoav},
+  author = {Macdonald, Joshua and Naim, Shany and Ram, Yoav},
   title = {{VBPCApy}: Variational Bayesian PCA with Missing Data Support},
   year = {2026},
   url = {https://github.com/yoavram-lab/VBPCApy},
