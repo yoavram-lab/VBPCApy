@@ -69,6 +69,22 @@ per-entry uncertainty in reconstructions and scores, enabling downstream
 analyses—such as the posterior predictive eigenvalue tests of
 @Macdonald2024a—to perform more principled dimensionality selection
 than the empirical cost and probe-set metrics provided here.
+The layered posterior predictive bootstrap methodology of
+@Macdonald2024a extends this foundation by testing whether observed
+eigenvalues exceed a model-implied null envelope, offering formal
+statistical calibration where the empirical sweep metrics in VBPCApy
+provide only heuristic selection.
+\autoref{fig:rmse} shows that VBPCApy's held-out reconstruction error
+is 37--44\% lower than the impute-then-PCA baseline across all
+missingness patterns.
+\autoref{fig:coverage} evaluates the posterior predictive intervals:
+empirical coverage reaches roughly 63--64\% at the 95\% nominal level,
+a calibration gap that is characteristic of variational approximations
+whose factored posterior underestimates marginal variance
+[@Bishop1999; @Ilin2010]. Despite this under-coverage, VBPCApy is the
+only method in this comparison that provides any uncertainty estimate;
+the impute-then-PCA pipeline yields point predictions with no
+accompanying variance.
 
 # State of the Field
 
@@ -101,8 +117,14 @@ preserving NaN masks through `inverse_transform`.
 
 **Empirical model selection.** `select_n_components` sweeps candidate
 component counts, selecting the rank that minimises a user-chosen
-metric (probe-set RMS or variational cost). `SelectionConfig` controls
-patience, early stopping, and metric-reversal detection.
+metric (probe-set RMS or variational cost). The cost criterion is
+regularised by per-component automatic relevance determination (ARD)
+priors [@Bishop1999]: each additional component must reduce the
+data-fit term enough to offset the KL penalty from its
+component-specific precision prior, preventing the monotonic cost
+decrease that would otherwise make the minimum uninformative.
+`SelectionConfig` controls patience, early stopping, and
+metric-reversal detection.
 \autoref{fig:accuracy} shows that this procedure substantially
 outperforms the impute-then-PCA baseline.
 
@@ -182,6 +204,17 @@ directly into existing analysis pipelines.
 
 # Stability of Model Selection
 
+The stability study evaluates model selection across a factorial grid of
+4 sample sizes ($n \in \{20, 50, 100, 200\}$), 5 feature counts
+($p \in \{10, 20, 50, 100, 200\}$), 3 true latent ranks
+($k_{\mathrm{true}} \in \{2, 5, 10\}$), 4 missingness patterns
+(Complete, MCAR at 15\%, MNAR-censored at 15\%, and Block at 15\%),
+and 5 independent replicates per setting, yielding 3,360 trials in
+total.  Each trial generates a low-rank-plus-noise matrix
+($\sigma_{\mathrm{noise}} = 0.5$) and compares VBPCApy's cost and
+probe-set RMS metrics against scikit-learn's 95\% explained-variance
+threshold (EVR95) applied after mean imputation.
+
 ![Exact rank-recovery rate for VBPCApy (cost metric, top row) versus
 scikit-learn PCA with a 95\% explained-variance threshold (EVR95, bottom
 row) across four missingness patterns (Complete, MCAR, MNAR-censored,
@@ -191,7 +224,7 @@ and feature count $p$ (3,360 trials total: 4 $n$ $\times$ 5 $p$
 $\times$ 3 ranks $\times$ 4 patterns $\times$ 5 replicates).
 VBPCApy maintains 20–100\% recovery across all patterns, while the
 impute-then-PCA baseline collapses to near-zero under incomplete
-data.\label{fig:accuracy}](figure_accuracy.pdf)
+data.\label{fig:accuracy}](figure_accuracy.png)
 
 ![Error decomposition of rank selection.  (A) Over- and under-selection
 rates by missingness pattern for cost, prms, and EVR95.  (B) Mean
@@ -200,7 +233,7 @@ missingness pattern and metric; EVR95 MAE exceeds 5 under MCAR and MNAR
 while cost MAE stays below 2.  (C) Mean selected rank versus true rank
 ($k_{\mathrm{true}} \in \{2, 5, 10\}$) with $\pm 1$ standard deviation
 bars; cost and prms track the diagonal closely, whereas EVR95
-systematically over-selects.\label{fig:errors}](figure_errors.pdf)
+systematically over-selects.\label{fig:errors}](figure_errors.png)
 
 ![Detection power — the probability of selecting at least the true
 number of components.  (A) Power versus true rank for cost and prms,
@@ -208,7 +241,23 @@ showing graceful degradation from near-unity at $k=2$ to roughly 65\%
 at $k=10$.  (B) Power broken down by every combination of missingness
 pattern and metric; EVR95 achieves high nominal power primarily through
 systematic over-selection rather than accurate rank
-recovery.\label{fig:power}](figure_power.pdf)
+recovery.\label{fig:power}](figure_power.png)
+
+![Posterior predictive coverage on held-out entries.  (A) Empirical
+coverage versus nominal level for each missingness pattern; the dashed
+line marks ideal calibration.  All patterns show under-coverage
+characteristic of variational approximations.  (B) Mean coverage at
+the 95\% nominal level for each $(n, p)$ combination, aggregated
+across ranks and replicates.  (C) Mean interval width versus nominal
+level; narrow intervals confirm that under-coverage reflects
+underestimated posterior variance rather than uninformative wide
+bands.\label{fig:coverage}](figure_coverage.png)
+
+![Holdout reconstruction RMSE for VBPCApy versus impute-then-PCA,
+grouped by missingness pattern.  VBPCApy achieves 37--44\% lower
+reconstruction error across all patterns, with the largest gains under
+MNAR and block missingness where mean imputation is most
+biased.\label{fig:rmse}](figure_rmse.png)
 
 # AI Usage Disclosure
 

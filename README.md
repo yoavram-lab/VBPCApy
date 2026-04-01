@@ -101,6 +101,8 @@ pip install .[dev]
 pip install .[plot]
 # Optional data utilities (pandas)
 pip install .[data]
+# Analysis dependencies (matplotlib, pandas, scikit-learn)
+pip install .[analysis]
 # Benchmark + plotting stack (joblib, pandas, scikit-learn, seaborn)
 pip install .[benchmark]
 # Optional Octave bridge (only needed to run MATLAB/Octave helpers/tests)
@@ -283,6 +285,10 @@ The project includes several benchmarking recipes via `just`:
 | `just bench-octave` | Python vs Octave comparison (requires `octave` and `uv sync --extra octave`) |
 | `just bench-save` / `just bench-compare` | Save and compare baselines |
 | `just bench-study-repro` | Validate deterministic reproducibility |
+| `just paper-figure` | Full stability + coverage analysis (~10-20 min) |
+| `just paper-coverage` | Rerun coverage sweep only; reuse existing stability JSON |
+| `just paper-plot` | Regenerate figures from existing JSON (no simulation) |
+| `just paper-figure-smoke` | Quick smoke run of the stability analysis |
 
 For Octave benchmarks, install Octave first:
 ```bash
@@ -420,7 +426,7 @@ If you use this package in your research, please cite:
   title = {{VBPCApy}: Variational Bayesian PCA with Missing Data Support},
   year = {2026},
   url = {https://github.com/yoavram-lab/VBPCApy},
-  version = {0.1.0},
+  version = {0.1.1},
 }
 ```
 

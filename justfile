@@ -84,7 +84,7 @@ test-all: check-octave mex-build
 
 # Validate deterministic reproducibility for a fixed-seed pilot setting.
 bench-study-repro:
-	uv run python scripts/validate_benchmark_reproducibility.py
+	uv run --extra data python scripts/validate_benchmark_reproducibility.py
 
 # Run format check, lint, strict typecheck, and tests in sequence.
 ci: format-check lint typecheck test-cov
@@ -127,8 +127,16 @@ build-all: build-check build-test
 
 # Generate the JOSS paper stability figure (full grid, ~10-20 min).
 paper-figure:
-	uv run python analysis/stability_analysis.py --fmt pdf
+	uv run --extra analysis python analysis/stability_analysis.py --fmt png
+
+# Rerun only the coverage sweep (coverage + RMSE figures); reuse existing stability JSON.
+paper-coverage:
+	uv run --extra analysis python analysis/stability_analysis.py --coverage-only --fmt png
+
+# Regenerate all figures from existing JSON results (no simulation).
+paper-plot:
+	uv run --extra analysis python analysis/stability_analysis.py --plot-only --fmt png
 
 # Quick smoke run of the stability analysis (~1-2 min).
 paper-figure-smoke:
-	uv run python analysis/stability_analysis.py --smoke --fmt png
+	uv run --extra analysis python analysis/stability_analysis.py --smoke --fmt png
