@@ -32,8 +32,12 @@ keywords:
   - variational inference
   - machine learning
 license: MIT
-version: "0.1.0"
-date-released: "2026-02-08"
+version: "0.1.1"
+date-released: "2026-04-02"
+identifiers:
+  - type: doi
+    value: "10.5281/zenodo.19389250"
+    description: "Zenodo archive"
 references:
   - type: article
     title: "Practical Approaches to Principal Component Analysis in the Presence of Missing Values"
