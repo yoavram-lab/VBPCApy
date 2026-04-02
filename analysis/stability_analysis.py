@@ -4,14 +4,19 @@ Generates synthetic low-rank data and runs ``select_n_components`` with each
 metric (cost, prms) over a grid of (n, p, true_rank) settings under four
 missingness patterns (complete, mcar, mnar_censored, block).
 
-Produces five figures for the JOSS paper:
+Produces nine figures for the JOSS paper:
 
 1. **Figure 1 -- Model Selection Accuracy**: 2x4 exact-rate heatmaps
    comparing VBPCApy (cost) vs sklearn PCA (EVR95) across missingness.
 2. **Figure 2 -- Error Structure**: over/under rates, MAE, selected vs true.
 3. **Figure 3 -- Detection Power**: power_rate vs true_rank + overall bars.
-4. **Figure 4 -- Posterior Predictive Coverage**: calibration curves + heatmap.
+4. **Figure 4 -- Posterior Predictive Coverage**: calibration curves + heatmap
+   + interval width.
 5. **Figure 5 -- Holdout RMSE**: VBPCApy vs impute+PCA reconstruction error.
+6. **Figure 6 -- RMSE Improvement Heatmap**: % improvement by (n, p).
+7. **Figure 7 -- Accuracy-Coverage Pareto Front**: tradeoff by (n, p).
+8. **Figure 8 -- MAE Heatmap**: VBPCApy cost MAE by (n, p).
+9. **Figure 9 -- ∆MAE Heatmap**: MAE advantage of VBPCApy over EVR95.
 
 Results are also saved as JSON (and Parquet when pandas is available).
 
@@ -49,8 +54,8 @@ LOGGER = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 FULL_GRID: dict[str, list[int]] = {
-    "n": [20, 50, 100, 200],
-    "p": [10, 20, 50, 100, 200],
+    "n": [20, 30, 50, 70, 100, 150, 200],
+    "p": [10, 20, 30, 50, 70, 100, 200],
     "true_rank": [2, 5, 10],
 }
 SMOKE_GRID: dict[str, list[int]] = {
@@ -62,7 +67,7 @@ METRICS: list[str] = ["cost", "prms"]
 MISSINGNESS: list[str] = ["complete", "mcar", "mnar_censored", "block"]
 MISS_FRACTION = 0.15
 NOISE_STD = 0.5
-REPS_FULL = 5
+REPS_FULL = 10
 REPS_SMOKE = 1
 MAXITERS = 200
 
@@ -911,6 +916,292 @@ def plot_figure5(
 
 
 # ---------------------------------------------------------------------------
+# Figure 6 — RMSE improvement heatmap by (n, p)
+# ---------------------------------------------------------------------------
+
+
+def plot_figure6(
+    cov_results: list[_CoverageTrial], output_dir: pathlib.Path, fmt: str = "png"
+) -> None:
+    """Heatmap of % RMSE improvement (VBPCApy vs impute+PCA) by (n, p)."""
+    # Deduplicate: one RMSE pair per (n, p, rank, miss, rep)
+    seen: set[tuple[int, int, int, str, int]] = set()
+    rmse_by: dict[tuple[int, int], list[float]] = defaultdict(list)
+    base_by: dict[tuple[int, int], list[float]] = defaultdict(list)
+    for r in cov_results:
+        key = (r.n, r.p, r.true_rank, r.missingness, r.rep)
+        if key in seen:
+            continue
+        seen.add(key)
+        rmse_by[r.n, r.p].append(r.holdout_rmse)
+        base_by[r.n, r.p].append(r.baseline_rmse)
+
+    ns = sorted({k[0] for k in rmse_by})
+    ps = sorted({k[1] for k in rmse_by})
+    mat = np.full((len(ns), len(ps)), np.nan)
+    for i, n in enumerate(ns):
+        for j, p in enumerate(ps):
+            vb = rmse_by.get((n, p), [])
+            bl = base_by.get((n, p), [])
+            if vb and bl:
+                mv = float(np.mean(vb))
+                mb = float(np.mean(bl))
+                mat[i, j] = (mb - mv) / mb * 100 if mb > 0 else 0
+
+    fig, ax = plt.subplots(figsize=(6, 4.5))
+    im = ax.imshow(mat, aspect="auto", cmap="YlGn", vmin=0, vmax=60)
+    ax.set_xticks(range(len(ps)))
+    ax.set_xticklabels(ps)
+    ax.set_yticks(range(len(ns)))
+    ax.set_yticklabels(ns)
+    ax.set_xlabel("p (features)")
+    ax.set_ylabel("n (samples)")
+    ax.set_title("RMSE improvement over impute+PCA (%)")
+    for i in range(len(ns)):
+        for j in range(len(ps)):
+            val = mat[i, j]
+            if not np.isnan(val):
+                ax.text(
+                    j,
+                    i,
+                    f"{val:.0f}%",
+                    ha="center",
+                    va="center",
+                    fontsize=9,
+                    color="white" if val < 30 else "black",
+                )
+    fig.colorbar(im, ax=ax, shrink=0.8, label="Improvement (%)")
+    fig.tight_layout()
+    out = output_dir / f"figure_rmse_heatmap.{fmt}"
+    fig.savefig(out, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+    LOGGER.info("Wrote %s", out)
+
+
+# ---------------------------------------------------------------------------
+# Figure 7 — Accuracy vs Coverage Pareto front
+# ---------------------------------------------------------------------------
+
+
+def plot_figure7(
+    trials: list[_Trial],
+    cov_results: list[_CoverageTrial],
+    output_dir: pathlib.Path,
+    fmt: str = "png",
+) -> None:
+    """Scatter of model selection accuracy vs coverage at 95% nominal by (n, p)."""
+    # Model selection accuracy: vbpca cost, averaged over missingness and ranks
+    acc_by: dict[tuple[int, int], list[float]] = defaultdict(list)
+    for t in trials:
+        if t.method == "vbpca" and t.metric == "cost":
+            acc_by[t.n, t.p].append(t.exact)
+
+    # Coverage at 95%: averaged over missingness and ranks
+    cov_by: dict[tuple[int, int], list[float]] = defaultdict(list)
+    for r in cov_results:
+        if abs(r.nominal - 0.95) < 1e-9:
+            cov_by[r.n, r.p].append(r.coverage)
+
+    # Build scatter data
+    points = []
+    for key in sorted(acc_by.keys()):
+        if key in cov_by:
+            a = float(np.mean(acc_by[key]))
+            c = float(np.mean(cov_by[key]))
+            points.append((a, c, key[0], key[1]))
+
+    if not points:
+        LOGGER.warning("No overlapping (n, p) keys for Pareto plot; skipping.")
+        return
+
+    accs = [pt[0] for pt in points]
+    covs = [pt[1] for pt in points]
+    ps_vals = [pt[3] for pt in points]
+
+    fig, ax = plt.subplots(figsize=(6, 5))
+    sc = ax.scatter(
+        accs,
+        covs,
+        c=ps_vals,
+        cmap="viridis",
+        s=100,
+        edgecolors="black",
+        linewidths=0.5,
+        norm=plt.matplotlib.colors.LogNorm(vmin=min(ps_vals), vmax=max(ps_vals)),
+    )
+
+    # Annotate each point with (n, p)
+    for a, c, n, p in points:
+        ax.annotate(
+            f"({n},{p})",
+            (a, c),
+            textcoords="offset points",
+            xytext=(5, 5),
+            fontsize=6,
+            alpha=0.8,
+        )
+
+    # Draw Pareto front
+    sorted_pts = sorted(points, key=lambda x: x[0])
+    front_a, front_c = [], []
+    best_c = -1.0
+    for a, c, _, _ in sorted_pts:
+        if c > best_c:
+            front_a.append(a)
+            front_c.append(c)
+            best_c = c
+    # Also walk from right to find dominated-from-right
+    # Use proper Pareto: non-dominated in (accuracy↑, coverage↑)
+    pareto_pts = []
+    for a, c, n, p in points:
+        dominated = False
+        for a2, c2, _, _ in points:
+            if a2 >= a and c2 >= c and (a2 > a or c2 > c):
+                dominated = True
+                break
+        if not dominated:
+            pareto_pts.append((a, c))
+    pareto_pts.sort()
+    if pareto_pts:
+        pa, pc = zip(*pareto_pts)
+        ax.plot(pa, pc, "r--", alpha=0.7, linewidth=1.5, label="Pareto front")
+
+    ax.set_xlabel("Model selection accuracy (exact match rate)")
+    ax.set_ylabel("Posterior coverage at 95% nominal")
+    ax.set_title("Accuracy–coverage tradeoff by (n, p)")
+    ax.legend(fontsize=8, loc="lower left")
+    fig.colorbar(sc, ax=ax, label="p (features)", shrink=0.8)
+    fig.tight_layout()
+    out = output_dir / f"figure_pareto.{fmt}"
+    fig.savefig(out, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+    LOGGER.info("Wrote %s", out)
+
+
+# ---------------------------------------------------------------------------
+# Figure 8 — MAE heatmap by (n, p)
+# ---------------------------------------------------------------------------
+
+
+def plot_figure8(
+    trials: list[_Trial], output_dir: pathlib.Path, fmt: str = "png"
+) -> None:
+    """Heatmap of VBPCApy cost MAE by (n, p), averaged over missingness and ranks."""
+    mat, ns, ps = _rate_matrix(trials, "abs_error", "cost", missingness="", method="")
+    # _rate_matrix filters; build manually for grand average
+    vals: dict[tuple[int, int], list[float]] = defaultdict(list)
+    for t in trials:
+        if t.method == "vbpca" and t.metric == "cost":
+            vals[t.n, t.p].append(t.abs_error)
+
+    ns = sorted({k[0] for k in vals})
+    ps = sorted({k[1] for k in vals})
+    mat = np.full((len(ns), len(ps)), np.nan)
+    for i, n in enumerate(ns):
+        for j, p in enumerate(ps):
+            v = vals.get((n, p), [])
+            if v:
+                mat[i, j] = float(np.mean(v))
+
+    fig, ax = plt.subplots(figsize=(6, 4.5))
+    vmax = max(3.0, float(np.nanmax(mat)))
+    im = ax.imshow(mat, aspect="auto", cmap="YlOrRd", vmin=0, vmax=vmax)
+    ax.set_xticks(range(len(ps)))
+    ax.set_xticklabels(ps)
+    ax.set_yticks(range(len(ns)))
+    ax.set_yticklabels(ns)
+    ax.set_xlabel("p (features)")
+    ax.set_ylabel("n (samples)")
+    ax.set_title("VBPCApy rank-selection MAE by (n, p)")
+    for i in range(len(ns)):
+        for j in range(len(ps)):
+            val = mat[i, j]
+            if not np.isnan(val):
+                ax.text(
+                    j,
+                    i,
+                    f"{val:.1f}",
+                    ha="center",
+                    va="center",
+                    fontsize=8,
+                    color="white" if val > vmax * 0.6 else "black",
+                )
+    fig.colorbar(im, ax=ax, shrink=0.8, label="Mean absolute error")
+    fig.tight_layout()
+    out = output_dir / f"figure_mae_heatmap.{fmt}"
+    fig.savefig(out, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+    LOGGER.info("Wrote %s", out)
+
+
+# ---------------------------------------------------------------------------
+# Figure 9 — ΔMAE heatmap: VBPCApy cost vs EVR95
+# ---------------------------------------------------------------------------
+
+
+def plot_figure9(
+    trials: list[_Trial], output_dir: pathlib.Path, fmt: str = "png"
+) -> None:
+    """Heatmap of MAE difference (EVR95 − VBPCApy cost) by (n, p).
+
+    Positive values (green) mean VBPCApy has lower MAE (better).
+    """
+    cost_vals: dict[tuple[int, int], list[float]] = defaultdict(list)
+    evr_vals: dict[tuple[int, int], list[float]] = defaultdict(list)
+    for t in trials:
+        if t.method == "vbpca" and t.metric == "cost":
+            cost_vals[t.n, t.p].append(t.abs_error)
+        elif t.method == "sklearn_pca" and t.metric == "evr95":
+            evr_vals[t.n, t.p].append(t.abs_error)
+
+    all_keys = sorted(set(cost_vals.keys()) & set(evr_vals.keys()))
+    if not all_keys:
+        LOGGER.warning("No overlapping (n, p) keys for ΔMAE plot; skipping.")
+        return
+
+    ns = sorted({k[0] for k in all_keys})
+    ps = sorted({k[1] for k in all_keys})
+    mat = np.full((len(ns), len(ps)), np.nan)
+    for i, n in enumerate(ns):
+        for j, p in enumerate(ps):
+            c = cost_vals.get((n, p), [])
+            e = evr_vals.get((n, p), [])
+            if c and e:
+                mat[i, j] = float(np.mean(e)) - float(np.mean(c))
+
+    fig, ax = plt.subplots(figsize=(6, 4.5))
+    abs_max = max(1.0, float(np.nanmax(np.abs(mat))))
+    im = ax.imshow(mat, aspect="auto", cmap="RdYlGn", vmin=-abs_max, vmax=abs_max)
+    ax.set_xticks(range(len(ps)))
+    ax.set_xticklabels(ps)
+    ax.set_yticks(range(len(ns)))
+    ax.set_yticklabels(ns)
+    ax.set_xlabel("p (features)")
+    ax.set_ylabel("n (samples)")
+    ax.set_title("MAE advantage: VBPCApy cost vs EVR95 (EVR95 − cost)")
+    for i in range(len(ns)):
+        for j in range(len(ps)):
+            val = mat[i, j]
+            if not np.isnan(val):
+                sign = "+" if val > 0 else ""
+                ax.text(
+                    j,
+                    i,
+                    f"{sign}{val:.1f}",
+                    ha="center",
+                    va="center",
+                    fontsize=8,
+                    color="white" if abs(val) > abs_max * 0.6 else "black",
+                )
+    fig.colorbar(im, ax=ax, shrink=0.8, label="ΔMAE (positive = VBPCApy better)")
+    fig.tight_layout()
+    out = output_dir / f"figure_delta_mae.{fmt}"
+    fig.savefig(out, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+    LOGGER.info("Wrote %s", out)
+
+
+# ---------------------------------------------------------------------------
 # Persistence
 # ---------------------------------------------------------------------------
 
@@ -995,6 +1286,8 @@ def main() -> None:
         plot_figure1(trials, args.output_dir, args.fmt)
         plot_figure2(trials, args.output_dir, args.fmt)
         plot_figure3(trials, args.output_dir, args.fmt)
+        plot_figure8(trials, args.output_dir, args.fmt)
+        plot_figure9(trials, args.output_dir, args.fmt)
 
         cov_path = args.output_dir / "coverage_results.json"
         if cov_path.exists():
@@ -1005,6 +1298,8 @@ def main() -> None:
             )
             plot_figure4(cov_results, args.output_dir, args.fmt)
             plot_figure5(cov_results, args.output_dir, args.fmt)
+            plot_figure6(cov_results, args.output_dir, args.fmt)
+            plot_figure7(trials, cov_results, args.output_dir, args.fmt)
         else:
             LOGGER.warning("No %s found; skipping coverage figures.", cov_path)
 
@@ -1024,6 +1319,8 @@ def main() -> None:
             plot_figure1(trials, args.output_dir, args.fmt)
             plot_figure2(trials, args.output_dir, args.fmt)
             plot_figure3(trials, args.output_dir, args.fmt)
+            plot_figure8(trials, args.output_dir, args.fmt)
+            plot_figure9(trials, args.output_dir, args.fmt)
         else:
             LOGGER.warning("No %s found; skipping stability figures.", stab_path)
 
@@ -1032,6 +1329,9 @@ def main() -> None:
             _save_coverage_results(cov_results, args.output_dir)
             plot_figure4(cov_results, args.output_dir, args.fmt)
             plot_figure5(cov_results, args.output_dir, args.fmt)
+            plot_figure6(cov_results, args.output_dir, args.fmt)
+            if stab_path.exists():
+                plot_figure7(trials, cov_results, args.output_dir, args.fmt)
         LOGGER.info("Done. Figures written to %s/", args.output_dir)
         return
 
@@ -1045,12 +1345,16 @@ def main() -> None:
     plot_figure1(trials, args.output_dir, args.fmt)
     plot_figure2(trials, args.output_dir, args.fmt)
     plot_figure3(trials, args.output_dir, args.fmt)
+    plot_figure8(trials, args.output_dir, args.fmt)
+    plot_figure9(trials, args.output_dir, args.fmt)
 
     cov_results = _run_coverage_grid(grid, reps=reps, seed=args.seed)
     if cov_results:
         _save_coverage_results(cov_results, args.output_dir)
         plot_figure4(cov_results, args.output_dir, args.fmt)
         plot_figure5(cov_results, args.output_dir, args.fmt)
+        plot_figure6(cov_results, args.output_dir, args.fmt)
+        plot_figure7(trials, cov_results, args.output_dir, args.fmt)
 
     LOGGER.info("Done. Figures written to %s/", args.output_dir)
 

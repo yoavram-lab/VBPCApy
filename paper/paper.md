@@ -63,7 +63,20 @@ threshold collapses under incomplete data.
 showing that VBPCApy's cost metric keeps both over- and under-selection
 rates low with a mean absolute error roughly three times smaller than the
 baseline, while \autoref{fig:power} confirms that detection power
-remains above 65\% even at the highest true ranks.
+remains roughly 65\% even at the highest true ranks.
+The direction of rank-selection error matters in practice:
+under-selection permanently discards true signal components, whereas
+over-selection adds identifiable noise dimensions that downstream
+analyses can often absorb.  EVR95's low under-selection rate (7\%) is
+therefore misleading—it avoids missing components only by massively
+over-selecting in 80\% of trials (mean bias $+4.4$ components; under
+MNAR, 99.6\% of trials over-select).  VBPCApy's cost metric is far
+better calibrated, with a mean bias of $+0.3$ components and balanced
+error rates (40\% over, 17\% under), and when it does err the
+magnitude is modest (median off-by-two in either direction).
+\autoref{fig:mae_heatmap} maps VBPCApy's MAE across the full $(n, p)$
+grid, and \autoref{fig:delta_mae} shows that this advantage over EVR95
+is consistent across nearly every setting.
 The posterior covariances produced by the variational E-step expose
 per-entry uncertainty in reconstructions and scores, enabling downstream
 analyses—such as the posterior predictive eigenvalue tests of
@@ -75,16 +88,34 @@ eigenvalues exceed a model-implied null envelope, offering formal
 statistical calibration where the empirical sweep metrics in VBPCApy
 provide only heuristic selection.
 \autoref{fig:rmse} shows that VBPCApy's held-out reconstruction error
-is 37--44\% lower than the impute-then-PCA baseline across all
-missingness patterns.
+is 31--45\% lower than the impute-then-PCA baseline across all
+missingness patterns, and \autoref{fig:rmse_heatmap} reveals that this
+advantage is strongest in high-dimensional settings ($p \geq 50$),
+where improvement reaches 41--56\%.
 \autoref{fig:coverage} evaluates the posterior predictive intervals:
 empirical coverage reaches roughly 63--64\% at the 95\% nominal level,
 a calibration gap that is characteristic of variational approximations
 whose factored posterior underestimates marginal variance
-[@Bishop1999; @Ilin2010]. Despite this under-coverage, VBPCApy is the
+[@Bishop1999; @Ilin2010].  Because the mean-field factorisation treats
+each entry independently, joint (multivariate) coverage over all
+held-out entries is lower still, a limitation shared by all
+fully-factored variational families.
+Despite this under-coverage, VBPCApy is the
 only method in this comparison that provides any uncertainty estimate;
 the impute-then-PCA pipeline yields point predictions with no
 accompanying variance.
+\autoref{fig:pareto} makes the resulting tradeoff explicit: the
+$(n, p)$ settings that achieve the best posterior coverage (low $p$,
+large $n$) have lower rank-selection accuracy, while the settings that
+maximise accuracy (moderate $p$, around $50$--$100$) come at the cost
+of reduced coverage.
+No single $(n, p)$ regime achieves both high accuracy and high coverage
+simultaneously.  This accuracy--calibration tradeoff motivates the
+posterior predictive bootstrap of @Macdonald2024a, which uses VBPCApy's
+posterior covariances as a generative engine—sampling synthetic data
+sets from the fitted model—rather than relying on the raw variational
+intervals for coverage, thereby sidestepping the calibration gap in the
+regimes where VBPCApy's rank selection is strongest.
 
 # State of the Field
 
@@ -196,7 +227,7 @@ peoples, where incomplete ethnographic records make standard PCA
 inapplicable. VBPCApy is the Python successor to that codebase and was
 developed to support the posterior predictive eigenvalue tests of
 @Macdonald2024a, which require posterior covariances produced by the
-variational E-step. The 3,360-trial stability study presented below
+variational E-step. The 16,800-trial stability study presented below
 demonstrates that VBPCApy's built-in model selection achieves roughly
 three times lower mean absolute error than the standard impute-then-PCA
 pipeline. The scikit-learn-compatible API is designed to integrate
@@ -205,11 +236,11 @@ directly into existing analysis pipelines.
 # Stability of Model Selection
 
 The stability study evaluates model selection across a factorial grid of
-4 sample sizes ($n \in \{20, 50, 100, 200\}$), 5 feature counts
-($p \in \{10, 20, 50, 100, 200\}$), 3 true latent ranks
+7 sample sizes ($n \in \{20, 30, 50, 70, 100, 150, 200\}$), 7 feature counts
+($p \in \{10, 20, 30, 50, 70, 100, 200\}$), 3 true latent ranks
 ($k_{\mathrm{true}} \in \{2, 5, 10\}$), 4 missingness patterns
 (Complete, MCAR at 15\%, MNAR-censored at 15\%, and Block at 15\%),
-and 5 independent replicates per setting, yielding 3,360 trials in
+and 10 independent replicates per setting, yielding 16,800 trials in
 total.  Each trial generates a low-rank-plus-noise matrix
 ($\sigma_{\mathrm{noise}} = 0.5$) and compares VBPCApy's cost and
 probe-set RMS metrics against scikit-learn's 95\% explained-variance
@@ -220,9 +251,9 @@ scikit-learn PCA with a 95\% explained-variance threshold (EVR95, bottom
 row) across four missingness patterns (Complete, MCAR, MNAR-censored,
 Block).  Each cell shows the fraction of simulations in which the
 selected rank exactly matched the true rank for a given sample size $n$
-and feature count $p$ (3,360 trials total: 4 $n$ $\times$ 5 $p$
-$\times$ 3 ranks $\times$ 4 patterns $\times$ 5 replicates).
-VBPCApy maintains 20–100\% recovery across all patterns, while the
+and feature count $p$ (16,800 trials total: 7 $n$ $\times$ 7 $p$
+$\times$ 3 ranks $\times$ 4 patterns $\times$ 10 replicates).
+VBPCApy maintains 5–100\% recovery across all patterns, while the
 impute-then-PCA baseline collapses to near-zero under incomplete
 data.\label{fig:accuracy}](figure_accuracy.png)
 
@@ -254,10 +285,41 @@ underestimated posterior variance rather than uninformative wide
 bands.\label{fig:coverage}](figure_coverage.png)
 
 ![Holdout reconstruction RMSE for VBPCApy versus impute-then-PCA,
-grouped by missingness pattern.  VBPCApy achieves 37--44\% lower
+grouped by missingness pattern.  VBPCApy achieves 31--45\% lower
 reconstruction error across all patterns, with the largest gains under
 MNAR and block missingness where mean imputation is most
 biased.\label{fig:rmse}](figure_rmse.png)
+
+![Percentage RMSE improvement of VBPCApy over the impute-then-PCA
+baseline, averaged across all missingness patterns and true ranks.
+Improvement ranges from 5\% at $(n{=}20, p{=}10)$ to 56\% at
+$(n{=}30, p{=}200)$, confirming that VBPCApy's reconstruction
+advantage grows with feature dimensionality.\label{fig:rmse_heatmap}](figure_rmse_heatmap.png)
+
+![Accuracy--coverage Pareto front across $(n, p)$ settings.  Each
+point represents one $(n, p)$ cell, averaged over missingness patterns
+and true ranks; colour indicates the number of features $p$.  The
+red dashed line traces the Pareto front: no setting simultaneously
+achieves both high rank-selection accuracy and high posterior coverage.
+Low-$p$ settings (dark) occupy the high-coverage / low-accuracy
+region, while moderate-$p$ settings ($p = 50$--$100$, teal) reach
+the highest accuracy at the cost of reduced coverage.  Very high $p$
+(yellow) tends to degrade both metrics, falling below the Pareto
+front.\label{fig:pareto}](figure_pareto.png)
+
+![VBPCApy rank-selection mean absolute error (MAE) by $(n, p)$,
+averaged across all missingness patterns and true ranks.  While the
+exact-match rate (\autoref{fig:accuracy}) penalises off-by-one
+errors equally, MAE reveals that the cost metric rarely selects a
+rank far from the truth.
+\label{fig:mae_heatmap}](figure_mae_heatmap.png)
+
+![MAE advantage of VBPCApy (cost metric) over the impute-then-PCA
+baseline (EVR95).  Each cell shows EVR95 MAE minus VBPCApy MAE;
+positive values (green) indicate settings where VBPCApy makes
+smaller rank-selection errors.  The advantage is largest under
+incomplete data where EVR95 systematically over-selects.
+\label{fig:delta_mae}](figure_delta_mae.png)
 
 # AI Usage Disclosure
 
