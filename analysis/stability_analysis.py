@@ -392,6 +392,112 @@ class _CoverageTrial:
     mean_interval_width: float = 0.0  # mean 2*z*sqrt(var) at this nominal
 
 
+def _run_single_coverage_trial(  # noqa: PLR0913, PLR0917
+    n: int,
+    p: int,
+    true_rank: int,
+    miss_pattern: str,
+    rep: int,
+    x_clean: np.ndarray,
+    rng: np.random.Generator,
+    stats: object,
+) -> list[_CoverageTrial]:
+    """Fit one VBPCA model and compute coverage at all nominals.
+
+    Returns:
+        List of coverage trial results, one per nominal level.
+    """
+    from typing import Any  # noqa: PLC0415
+
+    x = x_clean.copy()
+    mask = _apply_missingness(x, miss_pattern, rng)
+
+    # Create hold-out set from observed entries
+    obs_mask = np.ones((n, p), dtype=bool) if mask is None else mask.copy()
+    obs_indices = np.argwhere(obs_mask)
+    n_holdout = max(1, int(len(obs_indices) * HOLDOUT_FRACTION))
+    holdout_idx = rng.choice(len(obs_indices), size=n_holdout, replace=False)
+    holdout_coords = obs_indices[holdout_idx]
+    holdout_vals = x_clean[holdout_coords[:, 0], holdout_coords[:, 1]]
+
+    # Build training mask with holdout removed
+    train_mask = obs_mask.copy()
+    train_mask[holdout_coords[:, 0], holdout_coords[:, 1]] = False
+    x_train = x_clean.copy()
+    x_train[~train_mask] = np.nan
+
+    # Ensure every row/col has at least one observed entry
+    for i in range(n):
+        if not train_mask[i].any():
+            j = rng.integers(0, p)
+            train_mask[i, j] = True
+            x_train[i, j] = x_clean[i, j]
+    for j in range(p):
+        if not train_mask[:, j].any():
+            i = rng.integers(0, n)
+            train_mask[i, j] = True
+            x_train[i, j] = x_clean[i, j]
+
+    # Fit VBPCA at true rank
+    model = VBPCA(n_components=true_rank, maxiters=MAXITERS, verbose=0)
+    model.fit(x_train, mask=train_mask)
+
+    # Get predictions and variances at held-out entries
+    xrec = model.reconstruction_
+    vr = model.variance_
+    if xrec is None or vr is None:
+        LOGGER.warning(
+            "Missing reconstruction/variance for n=%d p=%d rank=%d %s rep=%d; skipping",
+            n,
+            p,
+            true_rank,
+            miss_pattern,
+            rep,
+        )
+        return []
+
+    pred = xrec[holdout_coords[:, 0], holdout_coords[:, 1]]
+    var = vr[holdout_coords[:, 0], holdout_coords[:, 1]]
+    residuals = np.abs(holdout_vals - pred)
+    rmse = float(np.sqrt(np.mean(residuals**2)))
+
+    # sklearn impute+PCA baseline RMSE on same holdout set
+    x_bl = x_clean.copy()
+    x_bl[~train_mask] = np.nan
+    imp = SimpleImputer(strategy="mean")
+    x_imp = imp.fit_transform(x_bl)
+    pca = PCA(n_components=true_rank)
+    scores = pca.fit_transform(x_imp)
+    x_pca = scores @ pca.components_ + pca.mean_
+    bl_pred = x_pca[holdout_coords[:, 0], holdout_coords[:, 1]]
+    bl_rmse = float(np.sqrt(np.mean((holdout_vals - bl_pred) ** 2)))
+
+    std = np.sqrt(np.maximum(var, 1e-12))
+    stats_mod: Any = stats
+    results: list[_CoverageTrial] = []
+    for nominal in COVERAGE_NOMINALS:
+        z = stats_mod.norm.ppf(0.5 + nominal / 2.0)
+        half_width = z * std
+        covered = residuals <= half_width
+        cov_rate = float(np.mean(covered))
+        width = float(np.mean(2.0 * half_width))
+        results.append(
+            _CoverageTrial(
+                n=n,
+                p=p,
+                true_rank=true_rank,
+                missingness=miss_pattern,
+                rep=rep,
+                nominal=nominal,
+                coverage=cov_rate,
+                holdout_rmse=rmse,
+                baseline_rmse=bl_rmse,
+                mean_interval_width=width,
+            )
+        )
+    return results
+
+
 def _run_coverage_grid(
     grid: dict[str, list[int]], reps: int, seed: int = 42
 ) -> list[_CoverageTrial]:
@@ -416,7 +522,7 @@ def _run_coverage_grid(
     )
 
     fit_count = 0
-    for idx, (n, p, true_rank) in enumerate(valid_settings):
+    for n, p, true_rank in valid_settings:
         for rep in range(reps):
             x_clean = _generate_low_rank(n, p, true_rank, rng)
 
@@ -432,96 +538,50 @@ def _run_coverage_grid(
                     miss_pattern,
                     rep,
                 )
-                x = x_clean.copy()
-                mask = _apply_missingness(x, miss_pattern, rng)
-
-                # Create hold-out set from observed entries
-                obs_mask = np.ones((n, p), dtype=bool) if mask is None else mask.copy()
-                obs_indices = np.argwhere(obs_mask)
-                n_holdout = max(1, int(len(obs_indices) * HOLDOUT_FRACTION))
-                holdout_idx = rng.choice(
-                    len(obs_indices), size=n_holdout, replace=False
+                trials = _run_single_coverage_trial(
+                    n,
+                    p,
+                    true_rank,
+                    miss_pattern,
+                    rep,
+                    x_clean,
+                    rng,
+                    stats,
                 )
-                holdout_coords = obs_indices[holdout_idx]
-                holdout_vals = x_clean[holdout_coords[:, 0], holdout_coords[:, 1]]
-
-                # Build training mask with holdout removed
-                train_mask = obs_mask.copy()
-                train_mask[holdout_coords[:, 0], holdout_coords[:, 1]] = False
-                x_train = x_clean.copy()
-                x_train[~train_mask] = np.nan
-
-                # Ensure every row/col has at least one observed entry
-                for i in range(n):
-                    if not train_mask[i].any():
-                        j = rng.integers(0, p)
-                        train_mask[i, j] = True
-                        x_train[i, j] = x_clean[i, j]
-                for j in range(p):
-                    if not train_mask[:, j].any():
-                        i = rng.integers(0, n)
-                        train_mask[i, j] = True
-                        x_train[i, j] = x_clean[i, j]
-
-                # Fit VBPCA at true rank
-                model = VBPCA(n_components=true_rank, maxiters=MAXITERS, verbose=0)
-                model.fit(x_train, mask=train_mask)
-
-                # Get predictions and variances at held-out entries
-                xrec = model.reconstruction_
-                vr = model.variance_
-                if xrec is None or vr is None:
-                    LOGGER.warning(
-                        "Missing reconstruction/variance for"
-                        " n=%d p=%d rank=%d %s rep=%d; skipping",
-                        n,
-                        p,
-                        true_rank,
-                        miss_pattern,
-                        rep,
-                    )
-                    continue
-
-                pred = xrec[holdout_coords[:, 0], holdout_coords[:, 1]]
-                var = vr[holdout_coords[:, 0], holdout_coords[:, 1]]
-                residuals = np.abs(holdout_vals - pred)
-                rmse = float(np.sqrt(np.mean(residuals**2)))
-
-                # sklearn impute+PCA baseline RMSE on same holdout set
-                x_bl = x_clean.copy()
-                x_bl[~train_mask] = np.nan
-                imp = SimpleImputer(strategy="mean")
-                x_imp = imp.fit_transform(x_bl)
-                pca = PCA(n_components=true_rank)
-                scores = pca.fit_transform(x_imp)
-                x_pca = scores @ pca.components_ + pca.mean_
-                bl_pred = x_pca[holdout_coords[:, 0], holdout_coords[:, 1]]
-                bl_rmse = float(np.sqrt(np.mean((holdout_vals - bl_pred) ** 2)))
-
-                std = np.sqrt(np.maximum(var, 1e-12))
-                for nominal in COVERAGE_NOMINALS:
-                    z = stats.norm.ppf(0.5 + nominal / 2.0)
-                    half_width = z * std
-                    covered = residuals <= half_width
-                    cov_rate = float(np.mean(covered))
-                    width = float(np.mean(2.0 * half_width))
-                    results.append(
-                        _CoverageTrial(
-                            n=n,
-                            p=p,
-                            true_rank=true_rank,
-                            missingness=miss_pattern,
-                            rep=rep,
-                            nominal=nominal,
-                            coverage=cov_rate,
-                            holdout_rmse=rmse,
-                            baseline_rmse=bl_rmse,
-                            mean_interval_width=width,
-                        )
-                    )
+                results.extend(trials)
 
     LOGGER.info("Coverage sweep done: %d results", len(results))
     return results
+
+
+# ---------------------------------------------------------------------------
+# Plotting helpers
+# ---------------------------------------------------------------------------
+
+
+def _annotate_heatmap(
+    ax: plt.Axes,
+    mat: np.ndarray,
+    *,
+    fmt: str = "{:.0%}",
+    threshold: float = 0.5,
+    fontsize: int = 8,
+) -> None:
+    """Annotate each cell of a heatmap with its value."""
+    nrows, ncols = mat.shape
+    for i in range(nrows):
+        for j in range(ncols):
+            val = mat[i, j]
+            if not np.isnan(val):
+                ax.text(
+                    j,
+                    i,
+                    fmt.format(val),
+                    ha="center",
+                    va="center",
+                    fontsize=fontsize,
+                    color="white" if val < threshold else "black",
+                )
 
 
 # ---------------------------------------------------------------------------
@@ -741,13 +801,11 @@ def plot_figure3(
 # ---------------------------------------------------------------------------
 
 
-def plot_figure4(  # noqa: C901
-    cov_results: list[_CoverageTrial], output_dir: pathlib.Path, fmt: str = "png"
+def _plot_coverage_calibration(
+    ax: plt.Axes,
+    cov_results: list[_CoverageTrial],
 ) -> None:
-    """3-panel coverage: calibration curves, per-(n,p) heatmap, interval width."""
-    fig, (ax_cal, ax_heat, ax_width) = plt.subplots(1, 3, figsize=(16, 4.5))
-
-    # --- Panel A: coverage vs nominal, one line per missingness ---
+    """Panel A: coverage vs nominal, one line per missingness."""
     miss_colors = {
         "complete": "#1f77b4",
         "mcar": "#ff7f0e",
@@ -767,23 +825,28 @@ def plot_figure4(  # noqa: C901
                 nominals.append(nom)
                 coverages.append(float(np.mean(vals)))
         if nominals:
-            ax_cal.plot(
+            ax.plot(
                 nominals,
                 coverages,
                 "o-",
                 color=miss_colors.get(miss, "grey"),
                 label=_MISS_LABEL.get(miss, miss),
             )
+    ax.plot([0, 1], [0, 1], "k--", alpha=0.4, label="ideal")
+    ax.set_xlabel("Nominal coverage")
+    ax.set_ylabel("Empirical coverage")
+    ax.set_xlim(0.45, 1.01)
+    ax.set_ylim(0.45, 1.01)
+    ax.set_title("A) Coverage calibration")
+    ax.legend(fontsize=7, loc="lower right")
 
-    ax_cal.plot([0, 1], [0, 1], "k--", alpha=0.4, label="ideal")
-    ax_cal.set_xlabel("Nominal coverage")
-    ax_cal.set_ylabel("Empirical coverage")
-    ax_cal.set_xlim(0.45, 1.01)
-    ax_cal.set_ylim(0.45, 1.01)
-    ax_cal.set_title("A) Coverage calibration")
-    ax_cal.legend(fontsize=7, loc="lower right")
 
-    # --- Panel B: heatmap of coverage at 95% nominal ---
+def _plot_coverage_heatmap(
+    fig: plt.Figure,
+    ax: plt.Axes,
+    cov_results: list[_CoverageTrial],
+) -> None:
+    """Panel B: heatmap of coverage at 95% nominal."""
     nominal_95 = 0.95
     vals_95: dict[tuple[int, int], list[float]] = defaultdict(list)
     for r in cov_results:
@@ -799,31 +862,24 @@ def plot_figure4(  # noqa: C901
             if v:
                 mat[i, j] = float(np.mean(v))
 
-    im = ax_heat.imshow(mat, aspect="auto", cmap="RdYlGn", vmin=0.5, vmax=1.0)
-    ax_heat.set_xticks(range(len(ps)))
-    ax_heat.set_xticklabels(ps)
-    ax_heat.set_yticks(range(len(ns)))
-    ax_heat.set_yticklabels(ns)
-    ax_heat.set_xlabel("p (features)")
-    ax_heat.set_ylabel("n (samples)")
-    ax_heat.set_title("B) 95% coverage by (n, p)")
-    for i in range(len(ns)):
-        for j in range(len(ps)):
-            val = mat[i, j]
-            if not np.isnan(val):
-                ax_heat.text(
-                    j,
-                    i,
-                    f"{val:.0%}",
-                    ha="center",
-                    va="center",
-                    fontsize=8,
-                    color="white" if val < 0.75 else "black",
-                )
-    fig.colorbar(im, ax=ax_heat, shrink=0.8, label="Coverage rate")
+    im = ax.imshow(mat, aspect="auto", cmap="RdYlGn", vmin=0.5, vmax=1.0)
+    ax.set_xticks(range(len(ps)))
+    ax.set_xticklabels(ps)
+    ax.set_yticks(range(len(ns)))
+    ax.set_yticklabels(ns)
+    ax.set_xlabel("p (features)")
+    ax.set_ylabel("n (samples)")
+    ax.set_title("B) 95% coverage by (n, p)")
+    _annotate_heatmap(ax, mat, fmt="{:.0%}", threshold=0.75)
+    fig.colorbar(im, ax=ax, shrink=0.8, label="Coverage rate")
 
-    # --- Panel C: mean interval width vs nominal, one line per missingness ---
-    miss_colors_c = {
+
+def _plot_interval_width(
+    ax: plt.Axes,
+    cov_results: list[_CoverageTrial],
+) -> None:
+    """Panel C: mean interval width vs nominal, one line per missingness."""
+    miss_colors = {
         "complete": "#1f77b4",
         "mcar": "#ff7f0e",
         "mnar_censored": "#2ca02c",
@@ -842,17 +898,28 @@ def plot_figure4(  # noqa: C901
                 nominals_w.append(nom)
                 widths.append(float(np.mean(vals_w)))
         if nominals_w:
-            ax_width.plot(
+            ax.plot(
                 nominals_w,
                 widths,
                 "o-",
-                color=miss_colors_c.get(miss, "grey"),
+                color=miss_colors.get(miss, "grey"),
                 label=_MISS_LABEL.get(miss, miss),
             )
-    ax_width.set_xlabel("Nominal coverage")
-    ax_width.set_ylabel("Mean interval width")
-    ax_width.set_title("C) Interval width")
-    ax_width.legend(fontsize=7, loc="upper left")
+    ax.set_xlabel("Nominal coverage")
+    ax.set_ylabel("Mean interval width")
+    ax.set_title("C) Interval width")
+    ax.legend(fontsize=7, loc="upper left")
+
+
+def plot_figure4(
+    cov_results: list[_CoverageTrial], output_dir: pathlib.Path, fmt: str = "png"
+) -> None:
+    """3-panel coverage: calibration curves, per-(n,p) heatmap, interval width."""
+    fig, (ax_cal, ax_heat, ax_width) = plt.subplots(1, 3, figsize=(16, 4.5))
+
+    _plot_coverage_calibration(ax_cal, cov_results)
+    _plot_coverage_heatmap(fig, ax_heat, cov_results)
+    _plot_interval_width(ax_width, cov_results)
 
     fig.suptitle("Posterior predictive coverage on held-out entries", fontsize=12)
     fig.tight_layout(rect=[0, 0, 1, 0.93])
@@ -983,6 +1050,23 @@ def plot_figure6(
 # ---------------------------------------------------------------------------
 
 
+def _compute_pareto_front(
+    points: list[tuple[float, float, int, int]],
+) -> list[tuple[float, float]]:
+    """Return non-dominated points in (accuracy-up, coverage-up) space."""
+    pareto: list[tuple[float, float]] = []
+    for a, c, _n, _p in points:
+        dominated = False
+        for a2, c2, _, _ in points:
+            if a2 >= a and c2 >= c and (a2 > a or c2 > c):
+                dominated = True
+                break
+        if not dominated:
+            pareto.append((a, c))
+    pareto.sort()
+    return pareto
+
+
 def plot_figure7(
     trials: list[_Trial],
     cov_results: list[_CoverageTrial],
@@ -1003,7 +1087,7 @@ def plot_figure7(
             cov_by[r.n, r.p].append(r.coverage)
 
     # Build scatter data
-    points = []
+    points: list[tuple[float, float, int, int]] = []
     for key in sorted(acc_by.keys()):
         if key in cov_by:
             a = float(np.mean(acc_by[key]))
@@ -1030,10 +1114,9 @@ def plot_figure7(
         norm=plt.matplotlib.colors.LogNorm(vmin=min(ps_vals), vmax=max(ps_vals)),
     )
 
-    # Annotate each point with (n, p)
-    for a, c, n, p in points:
+    for a, c, n_val, p_val in points:
         ax.annotate(
-            f"({n},{p})",
+            f"({n_val},{p_val})",
             (a, c),
             textcoords="offset points",
             xytext=(5, 5),
@@ -1041,34 +1124,14 @@ def plot_figure7(
             alpha=0.8,
         )
 
-    # Draw Pareto front
-    sorted_pts = sorted(points, key=lambda x: x[0])
-    front_a, front_c = [], []
-    best_c = -1.0
-    for a, c, _, _ in sorted_pts:
-        if c > best_c:
-            front_a.append(a)
-            front_c.append(c)
-            best_c = c
-    # Also walk from right to find dominated-from-right
-    # Use proper Pareto: non-dominated in (accuracy↑, coverage↑)
-    pareto_pts = []
-    for a, c, n, p in points:
-        dominated = False
-        for a2, c2, _, _ in points:
-            if a2 >= a and c2 >= c and (a2 > a or c2 > c):
-                dominated = True
-                break
-        if not dominated:
-            pareto_pts.append((a, c))
-    pareto_pts.sort()
+    pareto_pts = _compute_pareto_front(points)
     if pareto_pts:
-        pa, pc = zip(*pareto_pts)
+        pa, pc = zip(*pareto_pts, strict=True)
         ax.plot(pa, pc, "r--", alpha=0.7, linewidth=1.5, label="Pareto front")
 
     ax.set_xlabel("Model selection accuracy (exact match rate)")
     ax.set_ylabel("Posterior coverage at 95% nominal")
-    ax.set_title("Accuracy–coverage tradeoff by (n, p)")
+    ax.set_title("Accuracy-coverage tradeoff by (n, p)")
     ax.legend(fontsize=8, loc="lower left")
     fig.colorbar(sc, ax=ax, label="p (features)", shrink=0.8)
     fig.tight_layout()
@@ -1139,10 +1202,34 @@ def plot_figure8(
 # ---------------------------------------------------------------------------
 
 
+def _annotate_signed_heatmap(
+    ax: plt.Axes,
+    mat: np.ndarray,
+    abs_max: float,
+    fontsize: int = 8,
+) -> None:
+    """Annotate a diverging heatmap with signed values."""
+    nrows, ncols = mat.shape
+    for i in range(nrows):
+        for j in range(ncols):
+            val = mat[i, j]
+            if not np.isnan(val):
+                sign = "+" if val > 0 else ""
+                ax.text(
+                    j,
+                    i,
+                    f"{sign}{val:.1f}",
+                    ha="center",
+                    va="center",
+                    fontsize=fontsize,
+                    color="white" if abs(val) > abs_max * 0.6 else "black",
+                )
+
+
 def plot_figure9(
     trials: list[_Trial], output_dir: pathlib.Path, fmt: str = "png"
 ) -> None:
-    """Heatmap of MAE difference (EVR95 − VBPCApy cost) by (n, p).
+    """Heatmap of MAE difference (EVR95 - VBPCApy cost) by (n, p).
 
     Positive values (green) mean VBPCApy has lower MAE (better).
     """
@@ -1156,7 +1243,7 @@ def plot_figure9(
 
     all_keys = sorted(set(cost_vals.keys()) & set(evr_vals.keys()))
     if not all_keys:
-        LOGGER.warning("No overlapping (n, p) keys for ΔMAE plot; skipping.")
+        LOGGER.warning("No overlapping (n, p) keys for dMAE plot; skipping.")
         return
 
     ns = sorted({k[0] for k in all_keys})
@@ -1178,22 +1265,9 @@ def plot_figure9(
     ax.set_yticklabels(ns)
     ax.set_xlabel("p (features)")
     ax.set_ylabel("n (samples)")
-    ax.set_title("MAE advantage: VBPCApy cost vs EVR95 (EVR95 − cost)")
-    for i in range(len(ns)):
-        for j in range(len(ps)):
-            val = mat[i, j]
-            if not np.isnan(val):
-                sign = "+" if val > 0 else ""
-                ax.text(
-                    j,
-                    i,
-                    f"{sign}{val:.1f}",
-                    ha="center",
-                    va="center",
-                    fontsize=8,
-                    color="white" if abs(val) > abs_max * 0.6 else "black",
-                )
-    fig.colorbar(im, ax=ax, shrink=0.8, label="ΔMAE (positive = VBPCApy better)")
+    ax.set_title("MAE advantage: VBPCApy cost vs EVR95 (EVR95 - cost)")
+    _annotate_signed_heatmap(ax, mat, abs_max)
+    fig.colorbar(im, ax=ax, shrink=0.8, label="dMAE (positive = VBPCApy better)")
     fig.tight_layout()
     out = output_dir / f"figure_delta_mae.{fmt}"
     fig.savefig(out, dpi=300, bbox_inches="tight")
@@ -1237,6 +1311,102 @@ def _save_coverage_results(
     LOGGER.info("Wrote %s (%d records)", json_path, len(records))
 
 
+def _load_trials(path: pathlib.Path) -> list[_Trial]:
+    with path.open(encoding="utf-8") as f:
+        return [_Trial(**r) for r in json.load(f)]
+
+
+def _load_coverage(path: pathlib.Path) -> list[_CoverageTrial]:
+    with path.open(encoding="utf-8") as f:
+        return [_CoverageTrial(**r) for r in json.load(f)]
+
+
+def _plot_stability_figs(
+    trials: list[_Trial],
+    output_dir: pathlib.Path,
+    fmt: str,
+) -> None:
+    plot_figure1(trials, output_dir, fmt)
+    plot_figure2(trials, output_dir, fmt)
+    plot_figure3(trials, output_dir, fmt)
+    plot_figure8(trials, output_dir, fmt)
+    plot_figure9(trials, output_dir, fmt)
+
+
+def _plot_coverage_figs(
+    cov_results: list[_CoverageTrial],
+    output_dir: pathlib.Path,
+    fmt: str,
+    trials: list[_Trial] | None = None,
+) -> None:
+    plot_figure4(cov_results, output_dir, fmt)
+    plot_figure5(cov_results, output_dir, fmt)
+    plot_figure6(cov_results, output_dir, fmt)
+    if trials is not None:
+        plot_figure7(trials, cov_results, output_dir, fmt)
+
+
+def _run_plot_only(output_dir: pathlib.Path, fmt: str) -> None:
+    stab_path = output_dir / "stability_results.json"
+    if not stab_path.exists():
+        LOGGER.error("No %s found; run simulation first.", stab_path)
+        return
+    trials = _load_trials(stab_path)
+    LOGGER.info("Loaded %d trials from %s", len(trials), stab_path)
+    _plot_stability_figs(trials, output_dir, fmt)
+
+    cov_path = output_dir / "coverage_results.json"
+    if cov_path.exists():
+        cov_results = _load_coverage(cov_path)
+        LOGGER.info("Loaded %d coverage records from %s", len(cov_results), cov_path)
+        _plot_coverage_figs(cov_results, output_dir, fmt, trials=trials)
+    else:
+        LOGGER.warning("No %s found; skipping coverage figures.", cov_path)
+
+
+def _run_coverage_only(
+    grid: dict[str, list[int]],
+    reps: int,
+    seed: int,
+    output_dir: pathlib.Path,
+    fmt: str,
+) -> None:
+    stab_path = output_dir / "stability_results.json"
+    trials: list[_Trial] | None = None
+    if stab_path.exists():
+        trials = _load_trials(stab_path)
+        LOGGER.info("Loaded %d trials from %s", len(trials), stab_path)
+        _plot_stability_figs(trials, output_dir, fmt)
+    else:
+        LOGGER.warning("No %s found; skipping stability figures.", stab_path)
+
+    cov_results = _run_coverage_grid(grid, reps=reps, seed=seed)
+    if cov_results:
+        _save_coverage_results(cov_results, output_dir)
+        _plot_coverage_figs(cov_results, output_dir, fmt, trials=trials)
+
+
+def _run_full(
+    grid: dict[str, list[int]],
+    reps: int,
+    seed: int,
+    output_dir: pathlib.Path,
+    fmt: str,
+) -> None:
+    trials = _run_grid(grid, reps=reps, seed=seed)
+    if not trials:
+        LOGGER.warning("No valid trials; nothing to plot.")
+        return
+
+    _save_results(trials, output_dir)
+    _plot_stability_figs(trials, output_dir, fmt)
+
+    cov_results = _run_coverage_grid(grid, reps=reps, seed=seed)
+    if cov_results:
+        _save_coverage_results(cov_results, output_dir)
+        _plot_coverage_figs(cov_results, output_dir, fmt, trials=trials)
+
+
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
@@ -1275,34 +1445,7 @@ def main() -> None:
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
     if args.plot_only:
-        # Load existing results and regenerate figures only
-        stab_path = args.output_dir / "stability_results.json"
-        if not stab_path.exists():
-            LOGGER.error("No %s found; run simulation first.", stab_path)
-            return
-        with stab_path.open(encoding="utf-8") as f:
-            trials = [_Trial(**r) for r in json.load(f)]
-        LOGGER.info("Loaded %d trials from %s", len(trials), stab_path)
-        plot_figure1(trials, args.output_dir, args.fmt)
-        plot_figure2(trials, args.output_dir, args.fmt)
-        plot_figure3(trials, args.output_dir, args.fmt)
-        plot_figure8(trials, args.output_dir, args.fmt)
-        plot_figure9(trials, args.output_dir, args.fmt)
-
-        cov_path = args.output_dir / "coverage_results.json"
-        if cov_path.exists():
-            with cov_path.open(encoding="utf-8") as f:
-                cov_results = [_CoverageTrial(**r) for r in json.load(f)]
-            LOGGER.info(
-                "Loaded %d coverage records from %s", len(cov_results), cov_path
-            )
-            plot_figure4(cov_results, args.output_dir, args.fmt)
-            plot_figure5(cov_results, args.output_dir, args.fmt)
-            plot_figure6(cov_results, args.output_dir, args.fmt)
-            plot_figure7(trials, cov_results, args.output_dir, args.fmt)
-        else:
-            LOGGER.warning("No %s found; skipping coverage figures.", cov_path)
-
+        _run_plot_only(args.output_dir, args.fmt)
         LOGGER.info("Done. Figures written to %s/", args.output_dir)
         return
 
@@ -1310,51 +1453,9 @@ def main() -> None:
     reps = REPS_SMOKE if args.smoke else REPS_FULL
 
     if args.coverage_only:
-        # Reuse existing stability results for figs 1-3, rerun coverage only
-        stab_path = args.output_dir / "stability_results.json"
-        if stab_path.exists():
-            with stab_path.open(encoding="utf-8") as f:
-                trials = [_Trial(**r) for r in json.load(f)]
-            LOGGER.info("Loaded %d trials from %s", len(trials), stab_path)
-            plot_figure1(trials, args.output_dir, args.fmt)
-            plot_figure2(trials, args.output_dir, args.fmt)
-            plot_figure3(trials, args.output_dir, args.fmt)
-            plot_figure8(trials, args.output_dir, args.fmt)
-            plot_figure9(trials, args.output_dir, args.fmt)
-        else:
-            LOGGER.warning("No %s found; skipping stability figures.", stab_path)
-
-        cov_results = _run_coverage_grid(grid, reps=reps, seed=args.seed)
-        if cov_results:
-            _save_coverage_results(cov_results, args.output_dir)
-            plot_figure4(cov_results, args.output_dir, args.fmt)
-            plot_figure5(cov_results, args.output_dir, args.fmt)
-            plot_figure6(cov_results, args.output_dir, args.fmt)
-            if stab_path.exists():
-                plot_figure7(trials, cov_results, args.output_dir, args.fmt)
-        LOGGER.info("Done. Figures written to %s/", args.output_dir)
-        return
-
-    trials = _run_grid(grid, reps=reps, seed=args.seed)
-
-    if not trials:
-        LOGGER.warning("No valid trials; nothing to plot.")
-        return
-
-    _save_results(trials, args.output_dir)
-    plot_figure1(trials, args.output_dir, args.fmt)
-    plot_figure2(trials, args.output_dir, args.fmt)
-    plot_figure3(trials, args.output_dir, args.fmt)
-    plot_figure8(trials, args.output_dir, args.fmt)
-    plot_figure9(trials, args.output_dir, args.fmt)
-
-    cov_results = _run_coverage_grid(grid, reps=reps, seed=args.seed)
-    if cov_results:
-        _save_coverage_results(cov_results, args.output_dir)
-        plot_figure4(cov_results, args.output_dir, args.fmt)
-        plot_figure5(cov_results, args.output_dir, args.fmt)
-        plot_figure6(cov_results, args.output_dir, args.fmt)
-        plot_figure7(trials, cov_results, args.output_dir, args.fmt)
+        _run_coverage_only(grid, reps, args.seed, args.output_dir, args.fmt)
+    else:
+        _run_full(grid, reps, args.seed, args.output_dir, args.fmt)
 
     LOGGER.info("Done. Figures written to %s/", args.output_dir)
 
