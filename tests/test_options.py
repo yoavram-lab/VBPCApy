@@ -62,8 +62,8 @@ def test_options_unknown_params_included_with_warning() -> None:
     opts, wrnmsg = _options(defopts, alpha=0.1, BETA=0.2)
 
     # Unknown keys are present, lowercased
-    assert opts["alpha"] == 0.1
-    assert opts["beta"] == 0.2
+    assert opts["alpha"] == pytest.approx(0.1)
+    assert opts["beta"] == pytest.approx(0.2)
 
     # Defaults still present
     assert opts["maxiter"] == 100

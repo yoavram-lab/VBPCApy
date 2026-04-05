@@ -259,7 +259,7 @@ def test_subtract_mu_sparse_zero_becomes_eps_sharp_edge() -> None:
     assert sp.isspmatrix_csr(x_out)
     assert x_out.nnz == 1
     val = float(x_out.data[0])
-    assert val != 0.0
+    assert val != pytest.approx(0.0, abs=1e-300)
     assert abs(val - EPS) <= 1e-15
 
 
