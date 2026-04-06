@@ -7,13 +7,13 @@ from vbpca_py._pca_full import pca_full
 
 def analyze(label, n, p, k, miss_frac=0.0, seed=42, maxiters=200):
     rng = np.random.default_rng(seed)
-    U = rng.standard_normal((p, k))
-    S = rng.standard_normal((k, n))
-    X = U @ S + 0.3 * rng.standard_normal((p, n))
+    u = rng.standard_normal((p, k))
+    s = rng.standard_normal((k, n))
+    x = u @ s + 0.3 * rng.standard_normal((p, n))
     mask = None
     if miss_frac > 0:
         mask = rng.random((p, n)) > miss_frac
-        X[~mask] = np.nan
+        x[~mask] = np.nan
 
     # --- Monkey-patch to capture per-iteration angles ---
     import vbpca_py._converge as conv
@@ -28,7 +28,7 @@ def analyze(label, n, p, k, miss_frac=0.0, seed=42, maxiters=200):
     conv._angle_stop_message = capture
     try:
         result = pca_full(
-            X, k, mask=mask, maxiters=maxiters, verbose=0, niter_broadprior=0
+            x, k, mask=mask, maxiters=maxiters, verbose=0, niter_broadprior=0
         )
     finally:
         conv._angle_stop_message = orig_angle
@@ -87,8 +87,6 @@ def analyze(label, n, p, k, miss_frac=0.0, seed=42, maxiters=200):
             if i < len(angle_ratios):
                 print(f"    iter {i + 1}: {angle_ratios[i]:.6f}")
 
-    # Composite: angle * smoothed_rms_delta
-    # Idea: both must be small for true convergence
     print()
 
 
