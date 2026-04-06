@@ -27,7 +27,7 @@ __all__ = ["SelectionConfig", "select_n_components"]
 
 logger = logging.getLogger(__name__)
 
-_Metric = Literal["prms", "cost"]
+_Metric = Literal["rms", "prms", "cost"]
 _AllowedFloat = (
     SupportsFloat
     | SupportsIndex
@@ -94,7 +94,9 @@ def _to_float(val: object | None) -> float:
         return float("nan")
 
 
-def _metric_value(metric: _Metric, rms: float, prms: float, cost: float) -> float:  # noqa: ARG001
+def _metric_value(metric: _Metric, rms: float, prms: float, cost: float) -> float:
+    if metric == "rms":
+        return rms if np.isfinite(rms) else cost
     if metric == "prms":
         return prms if np.isfinite(prms) else cost
     return cost if np.isfinite(cost) else prms
