@@ -15,16 +15,16 @@ def run_diagnostic(
     label: str = "",
 ):
     rng = np.random.default_rng(seed)
-    U = rng.standard_normal((p, k))
-    S = rng.standard_normal((k, n))
-    X = U @ S + 0.3 * rng.standard_normal((p, n))
+    u = rng.standard_normal((p, k))
+    s = rng.standard_normal((k, n))
+    x = u @ s + 0.3 * rng.standard_normal((p, n))
 
     mask = None
     if miss_frac > 0:
         mask = rng.random((p, n)) > miss_frac
-        X[~mask] = np.nan
+        x[~mask] = np.nan
 
-    result = pca_full(X, k, mask=mask, maxiters=maxiters, verbose=0)
+    result = pca_full(x, k, mask=mask, maxiters=maxiters, verbose=0)
 
     lc = result["lc"]
     rms = np.array(lc["rms"])
