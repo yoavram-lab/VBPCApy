@@ -221,9 +221,9 @@ def trace_rms_within_iteration():
         """
         x_data = ctx.centering_state.x_data
         a = ctx.training.model.a
-        s_mat = ctx.training.model.s
+        s = ctx.training.model.s
         mask = ctx.prepared.mask
-        resid = np.asarray(x_data) - a @ s_mat
+        resid = np.asarray(x_data) - a @ s
         err = resid * np.asarray(mask, dtype=float)
         return float(np.sqrt(np.sum(err**2) / ctx.prepared.n_data))
 
