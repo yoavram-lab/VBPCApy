@@ -303,7 +303,7 @@ def test_add_m_cols_per_column_covs_with_missing() -> None:
     # missing columns have identity
     np.testing.assert_array_equal(expanded_covs[1], np.eye(1))
     np.testing.assert_array_equal(expanded_covs[3], np.eye(1))
-    assert expanded_indices == []
+    assert expanded_indices is None
 
 
 def test_add_m_cols_unique_pattern_mode() -> None:
@@ -475,3 +475,49 @@ def test_add_m_cols_out_of_range_kept_cols() -> None:
             n_total_cols=1,
             score_cov_indices=None,
         )
+
+
+# ============================================================
+# Regression tests for issue #71
+# ============================================================
+
+
+def test_expand_per_column_returns_none_pattern_index() -> None:
+    """Regression test for #71: per-column mode must return None pattern_index.
+
+    When _add_m_cols expands per-column covariances (score_cov_indices=None),
+    the returned pattern_index must be None so that _marginal_variance takes
+    the correct branch.
+    """
+    k = 2
+    scores = np.ones((k, 2))  # 2 kept columns
+    covs = [np.eye(k), np.eye(k)]  # per-column covariances
+
+    expanded_scores, expanded_covs, pattern_index = _add_m_cols(
+        scores=scores,
+        score_covs=covs,
+        kept_cols=[0, 2],
+        n_total_cols=3,
+        score_cov_indices=None,  # per-column mode
+    )
+
+    assert pattern_index is None, (
+        f"Per-column mode must return None pattern_index, got {pattern_index!r}"
+    )
+    assert expanded_scores.shape == (k, 3)
+    assert len(expanded_covs) == 3
+
+
+def test_pca_full_marginal_variance_with_all_nan_columns() -> None:
+    """End-to-end regression for #71: pca_full with all-NaN columns."""
+    from vbpca_py._pca_full import pca_full
+
+    rng = np.random.default_rng(42)
+    X = rng.standard_normal((6, 50))
+    X[:, [3, 10, 20]] = np.nan  # all-NaN columns trigger rmempty
+
+    result = pca_full(X, 3, return_diagnostics=True, verbose=0, maxiters=50)
+    vr = result["Vr"]
+    assert vr is not None
+    assert isinstance(vr, np.ndarray)
+    assert vr.shape == (6, 50)
