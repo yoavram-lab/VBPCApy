@@ -119,7 +119,7 @@ def _expand_score_covs_list_per_column(
         expanded_score_covs[int(col)] = score_covs[j]
 
     # Per-column mode does not use a pattern index mapping.
-    expanded_score_cov_indices: list[int] | None = []
+    expanded_score_cov_indices: list[int] | None = None
 
     return expanded_score_covs, expanded_score_cov_indices
 
