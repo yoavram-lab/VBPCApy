@@ -489,14 +489,16 @@ def test_iteration_order_scores_rotate_loadings(
         "V": 1.0,
     }
 
-    opts = pca_mod._build_options({
-        "init": init,
-        "maxiters": 1,
-        "bias": 1,
-        "verbose": 0,
-        "autosave": 0,
-        "rotate2pca": 1,
-    })
+    opts = pca_mod._build_options(
+        {
+            "init": init,
+            "maxiters": 1,
+            "bias": 1,
+            "verbose": 0,
+            "autosave": 0,
+            "rotate2pca": 1,
+        }
+    )
 
     prepared = pca_mod._prepare_problem(x, opts)
     training = pca_mod._initialize_model(
@@ -626,12 +628,16 @@ def test_dense_mask_and_observed_indices_agree_after_normalization() -> None:
     mask_arr = np.asarray(mask, dtype=bool)
 
     # (A) Missing entries become exactly 0.0
-    assert np.all(x_norm_arr[~mask_arr] == 0.0)  # exact-by-construction: missing entries are zero-filled
+    assert np.all(
+        x_norm_arr[~mask_arr] == 0.0
+    )  # exact-by-construction: missing entries are zero-filled
 
     # (B) Observed entries must be nonzero:
     #     - originally nonzero values stay nonzero
     #     - originally observed zeros are replaced by eps
-    assert np.all(x_norm_arr[mask_arr] != 0.0)  # exact-by-construction: eps replaces observed zeros
+    assert np.all(
+        x_norm_arr[mask_arr] != 0.0
+    )  # exact-by-construction: eps replaces observed zeros
 
     # (C) Therefore, observed index sets agree:
     ix_nz, jx_nz = _observed_indices(x_norm_arr)
@@ -796,14 +802,16 @@ def test_initialize_model_centers_prepared_data_once() -> None:
         "V": 1.0,
     }
 
-    opts = pca_mod._build_options({
-        "init": init,
-        "maxiters": 1,
-        "bias": 1,
-        "verbose": 0,
-        "autosave": 0,
-        "rotate2pca": 0,
-    })
+    opts = pca_mod._build_options(
+        {
+            "init": init,
+            "maxiters": 1,
+            "bias": 1,
+            "verbose": 0,
+            "autosave": 0,
+            "rotate2pca": 0,
+        }
+    )
 
     prepared = pca_mod._prepare_problem(x, opts)
     x_uncentered = np.array(prepared.x_data, copy=True)

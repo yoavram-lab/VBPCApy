@@ -15,12 +15,14 @@ from vbpca_py._pca_full import (
 
 
 def _prepare_state(x, *, runtime_tuning: str = "safe", sparse: bool = False):
-    opts = _build_options({
-        "maxiters": 0,
-        "runtime_tuning": runtime_tuning,
-        "cov_writeback_mode": "auto",
-        "num_cpu": 1,
-    })
+    opts = _build_options(
+        {
+            "maxiters": 0,
+            "runtime_tuning": runtime_tuning,
+            "cov_writeback_mode": "auto",
+            "num_cpu": 1,
+        }
+    )
     use_prior, use_postvar = _select_algorithm(opts)
     prepared = _prepare_problem(x if not sparse else sp.csr_matrix(x), opts)
     training = _initialize_model(

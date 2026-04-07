@@ -50,14 +50,16 @@ def test_apply_runtime_policy_defaults_normalizes_fields() -> None:
 
 
 def test_resolve_runtime_thread_config_preserves_legacy_defaults() -> None:
-    cfg = resolve_runtime_thread_config({
-        "num_cpu": 1,
-        "_num_cpu_user_set": False,
-        "num_cpu_score_update": None,
-        "num_cpu_loadings_update": None,
-        "num_cpu_noise_update": None,
-        "num_cpu_rms": None,
-    })
+    cfg = resolve_runtime_thread_config(
+        {
+            "num_cpu": 1,
+            "_num_cpu_user_set": False,
+            "num_cpu_score_update": None,
+            "num_cpu_loadings_update": None,
+            "num_cpu_noise_update": None,
+            "num_cpu_rms": None,
+        }
+    )
 
     assert cfg.score_update_sparse == 0
     assert cfg.loadings_update_sparse == 0
@@ -66,14 +68,16 @@ def test_resolve_runtime_thread_config_preserves_legacy_defaults() -> None:
 
 
 def test_resolve_runtime_thread_config_explicit_global_num_cpu_applies_to_all() -> None:
-    cfg = resolve_runtime_thread_config({
-        "num_cpu": 6,
-        "_num_cpu_user_set": True,
-        "num_cpu_score_update": None,
-        "num_cpu_loadings_update": None,
-        "num_cpu_noise_update": None,
-        "num_cpu_rms": None,
-    })
+    cfg = resolve_runtime_thread_config(
+        {
+            "num_cpu": 6,
+            "_num_cpu_user_set": True,
+            "num_cpu_score_update": None,
+            "num_cpu_loadings_update": None,
+            "num_cpu_noise_update": None,
+            "num_cpu_rms": None,
+        }
+    )
 
     assert cfg.score_update_sparse == 6
     assert cfg.loadings_update_sparse == 6
@@ -82,14 +86,16 @@ def test_resolve_runtime_thread_config_explicit_global_num_cpu_applies_to_all() 
 
 
 def test_resolve_runtime_thread_config_kernel_specific_overrides_global() -> None:
-    cfg = resolve_runtime_thread_config({
-        "num_cpu": 8,
-        "_num_cpu_user_set": True,
-        "num_cpu_score_update": 2,
-        "num_cpu_loadings_update": None,
-        "num_cpu_noise_update": "3",
-        "num_cpu_rms": None,
-    })
+    cfg = resolve_runtime_thread_config(
+        {
+            "num_cpu": 8,
+            "_num_cpu_user_set": True,
+            "num_cpu_score_update": 2,
+            "num_cpu_loadings_update": None,
+            "num_cpu_noise_update": "3",
+            "num_cpu_rms": None,
+        }
+    )
 
     assert cfg.score_update_sparse == 2
     assert cfg.loadings_update_sparse == 8
@@ -101,14 +107,16 @@ def test_resolve_runtime_thread_config_uses_env_when_no_global_opt(monkeypatch) 
     monkeypatch.setenv("VBPCA_NUM_THREADS", "5")
     monkeypatch.setenv("VBPCA_SCORE_THREADS", "3")
 
-    cfg = resolve_runtime_thread_config({
-        "num_cpu": 1,
-        "_num_cpu_user_set": False,
-        "num_cpu_score_update": None,
-        "num_cpu_loadings_update": None,
-        "num_cpu_noise_update": None,
-        "num_cpu_rms": None,
-    })
+    cfg = resolve_runtime_thread_config(
+        {
+            "num_cpu": 1,
+            "_num_cpu_user_set": False,
+            "num_cpu_score_update": None,
+            "num_cpu_loadings_update": None,
+            "num_cpu_noise_update": None,
+            "num_cpu_rms": None,
+        }
+    )
 
     assert cfg.score_update_sparse == 3
     assert cfg.loadings_update_sparse == 5
@@ -117,14 +125,16 @@ def test_resolve_runtime_thread_config_uses_env_when_no_global_opt(monkeypatch) 
 
 
 def test_resolve_runtime_thread_config_invalid_kernel_value_falls_back() -> None:
-    cfg = resolve_runtime_thread_config({
-        "num_cpu": 7,
-        "_num_cpu_user_set": True,
-        "num_cpu_score_update": "bad",
-        "num_cpu_loadings_update": None,
-        "num_cpu_noise_update": None,
-        "num_cpu_rms": None,
-    })
+    cfg = resolve_runtime_thread_config(
+        {
+            "num_cpu": 7,
+            "_num_cpu_user_set": True,
+            "num_cpu_score_update": "bad",
+            "num_cpu_loadings_update": None,
+            "num_cpu_noise_update": None,
+            "num_cpu_rms": None,
+        }
+    )
 
     assert cfg.score_update_sparse == 7
 
@@ -368,15 +378,17 @@ def test_autotune_masked_batch_skips_when_user_forces_values(monkeypatch) -> Non
 def test_runtime_profile_default_threads_override_env(tmp_path, monkeypatch) -> None:
     profile_path = tmp_path / "runtime_profile.json"
     profile_path.write_text(
-        json.dumps({
-            "schema_version": 1,
-            "default_threads": {
-                "num_cpu_score_update": 3,
-                "num_cpu_loadings_update": 4,
-                "num_cpu_noise_update": 5,
-                "num_cpu_rms": 2,
-            },
-        }),
+        json.dumps(
+            {
+                "schema_version": 1,
+                "default_threads": {
+                    "num_cpu_score_update": 3,
+                    "num_cpu_loadings_update": 4,
+                    "num_cpu_noise_update": 5,
+                    "num_cpu_rms": 2,
+                },
+            }
+        ),
         encoding="utf-8",
     )
 
@@ -411,23 +423,25 @@ def test_runtime_profile_default_threads_override_env(tmp_path, monkeypatch) -> 
 def test_runtime_profile_rule_overrides_default_for_matching_workload(tmp_path) -> None:
     profile_path = tmp_path / "runtime_profile.json"
     profile_path.write_text(
-        json.dumps({
-            "schema_version": 1,
-            "default_threads": {
-                "num_cpu_rms": 2,
-            },
-            "workload_rules": [
-                {
-                    "match": {
-                        "is_sparse": True,
-                        "min_features": 4000,
-                    },
-                    "threads": {
-                        "num_cpu_rms": 1,
-                    },
-                }
-            ],
-        }),
+        json.dumps(
+            {
+                "schema_version": 1,
+                "default_threads": {
+                    "num_cpu_rms": 2,
+                },
+                "workload_rules": [
+                    {
+                        "match": {
+                            "is_sparse": True,
+                            "min_features": 4000,
+                        },
+                        "threads": {
+                            "num_cpu_rms": 1,
+                        },
+                    }
+                ],
+            }
+        ),
         encoding="utf-8",
     )
 
@@ -457,15 +471,17 @@ def test_runtime_profile_rule_overrides_default_for_matching_workload(tmp_path) 
 def test_runtime_profile_respects_explicit_global_num_cpu(tmp_path) -> None:
     profile_path = tmp_path / "runtime_profile.json"
     profile_path.write_text(
-        json.dumps({
-            "schema_version": 1,
-            "default_threads": {
-                "num_cpu_score_update": 2,
-                "num_cpu_loadings_update": 2,
-                "num_cpu_noise_update": 2,
-                "num_cpu_rms": 2,
-            },
-        }),
+        json.dumps(
+            {
+                "schema_version": 1,
+                "default_threads": {
+                    "num_cpu_score_update": 2,
+                    "num_cpu_loadings_update": 2,
+                    "num_cpu_noise_update": 2,
+                    "num_cpu_rms": 2,
+                },
+            }
+        ),
         encoding="utf-8",
     )
 
@@ -521,15 +537,17 @@ def test_runtime_profile_bad_json_falls_back_to_env(monkeypatch, tmp_path) -> No
 
 
 def test_resolve_runtime_thread_config_with_report_includes_sources() -> None:
-    cfg, report = resolve_runtime_thread_config_with_report({
-        "num_cpu": 4,
-        "runtime_tuning": "off",
-        "_num_cpu_user_set": True,
-        "num_cpu_score_update": 2,
-        "num_cpu_loadings_update": None,
-        "num_cpu_noise_update": None,
-        "num_cpu_rms": None,
-    })
+    cfg, report = resolve_runtime_thread_config_with_report(
+        {
+            "num_cpu": 4,
+            "runtime_tuning": "off",
+            "_num_cpu_user_set": True,
+            "num_cpu_score_update": 2,
+            "num_cpu_loadings_update": None,
+            "num_cpu_noise_update": None,
+            "num_cpu_rms": None,
+        }
+    )
 
     assert cfg.score_update_sparse == 2
     assert cfg.loadings_update_sparse == 4

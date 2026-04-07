@@ -942,11 +942,13 @@ def _run_octave_eval(script: str) -> None:
 
 
 def _find_mex(tools: Path, stem: str) -> list[Path]:
-    return sorted([
-        p
-        for p in tools.glob(f"{stem}.*")
-        if p.is_file() and p.suffix not in {".cpp", ".m", ".py", ".pyi"}
-    ])
+    return sorted(
+        [
+            p
+            for p in tools.glob(f"{stem}.*")
+            if p.is_file() and p.suffix not in {".cpp", ".m", ".py", ".pyi"}
+        ]
+    )
 
 
 @pytest.fixture(scope="session")

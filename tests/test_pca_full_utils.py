@@ -41,11 +41,13 @@ def test_auto_masked_batch_size_branches() -> None:
     opts: dict[str, object] = {}
     assert pf._auto_masked_batch_size(prepared_small, opts) == 0
 
-    prepared_large = pf.PreparedProblem(**{
-        **prepared_small.__dict__,
-        "n_patterns": 300,
-        "n_data": 250_000,
-    })
+    prepared_large = pf.PreparedProblem(
+        **{
+            **prepared_small.__dict__,
+            "n_patterns": 300,
+            "n_data": 250_000,
+        }
+    )
     auto_batch = pf._auto_masked_batch_size(prepared_large, opts)
     assert auto_batch in {192, 256}
 

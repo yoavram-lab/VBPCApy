@@ -186,10 +186,12 @@ def test_init_non_dict_is_passed_through_no_empty() -> None:
 def test_init_non_dict_is_passed_through_with_empty() -> None:
     """If init is not a dict and there are empty rows/cols, it is returned unchanged."""
     # Row 0 is all NaN, col 1 is all NaN
-    x = np.array([
-        [np.nan, np.nan],
-        [1.0, np.nan],
-    ])
+    x = np.array(
+        [
+            [np.nan, np.nan],
+            [1.0, np.nan],
+        ]
+    )
     x_probe = None
     init = "not-a-dict"
 

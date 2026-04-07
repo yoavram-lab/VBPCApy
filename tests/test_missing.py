@@ -17,10 +17,12 @@ def test_missing_patterns_basic_grouping() -> None:
     # mask shape: (rows, cols)
     # Columns 0, 2 share pattern [1, 0]
     # Columns 1, 3 share pattern [0, 1]
-    mask = np.array([
-        [1, 0, 1, 0],
-        [0, 1, 0, 1],
-    ])
+    mask = np.array(
+        [
+            [1, 0, 1, 0],
+            [0, 1, 0, 1],
+        ]
+    )
 
     n_patterns, pattern_columns, column_pattern_index = _missing_patterns(mask)
 
@@ -45,10 +47,12 @@ def test_missing_patterns_basic_grouping() -> None:
 
 def test_missing_patterns_all_identical_columns() -> None:
     """All columns share the same missingness pattern -> one group."""
-    mask = np.array([
-        [1, 1, 1],
-        [0, 0, 0],
-    ])
+    mask = np.array(
+        [
+            [1, 1, 1],
+            [0, 0, 0],
+        ]
+    )
 
     n_patterns, pattern_columns, column_pattern_index = _missing_patterns(mask)
 
@@ -63,10 +67,12 @@ def test_missing_patterns_all_identical_columns() -> None:
 def test_missing_patterns_all_unique_columns() -> None:
     """Every column has a unique pattern -> n_patterns == n_cols, each group size 1."""
     # 3 columns, all different
-    mask = np.array([
-        [1, 0, 1],
-        [0, 1, 1],
-    ])
+    mask = np.array(
+        [
+            [1, 0, 1],
+            [0, 1, 1],
+        ]
+    )
 
     n_patterns, pattern_columns, column_pattern_index = _missing_patterns(mask)
 
@@ -85,10 +91,12 @@ def test_missing_patterns_all_unique_columns() -> None:
 def test_missing_patterns_non_boolean_mask() -> None:
     """Mask can be numeric; only pattern equality matters."""
     # numeric mask (e.g., 1 = observed, 9 = missing)
-    mask = np.array([
-        [1, 9, 1],
-        [9, 9, 1],
-    ])
+    mask = np.array(
+        [
+            [1, 9, 1],
+            [9, 9, 1],
+        ]
+    )
 
     n_patterns, pattern_columns, column_pattern_index = _missing_patterns(mask)
 
