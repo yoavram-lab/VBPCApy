@@ -284,6 +284,7 @@ def test_display_init_disabled_returns_flag_only() -> None:
 
 def test_display_init_with_matplotlib() -> None:
     """display_init returns figure/lines when matplotlib is available."""
+    pytest.importorskip("matplotlib")
     lc: Mapping[str, Sequence[float]] = {"rms": [1, 2, 3], "prms": [2, 4, 6]}
     dsph = display_init(1, lc)
 
@@ -295,6 +296,7 @@ def test_display_init_with_matplotlib() -> None:
 
 def test_display_progress_smoke() -> None:
     """display_progress should run without errors when matplotlib is available."""
+    pytest.importorskip("matplotlib")
     lc: Mapping[str, Sequence[float]] = {"rms": [1, 2, 3], "prms": [2, 4, 6]}
     dsph = display_init(1, lc)
     display_progress(dsph, lc)
