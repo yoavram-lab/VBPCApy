@@ -15,7 +15,7 @@ import numpy as np
 import scipy.sparse as sp
 
 from ._memory import exceeds_budget, format_bytes, resolve_max_dense_bytes
-from ._pca_full import _explained_variance, _reconstruct_data
+from ._pca_full import _explained_variance, _marginal_variance, _reconstruct_data
 
 if TYPE_CHECKING:  # pragma: no cover
     from collections.abc import Iterable, Mapping, Sequence
@@ -180,6 +180,35 @@ def _compute_evr_for_best(
     est.explained_variance_ = ev
     est.explained_variance_ratio_ = evr
     return evr
+
+
+def _compute_variance_for_best(est: VBPCA) -> np.ndarray | None:
+    if (
+        est.components_ is None
+        or est.scores_ is None
+        or est._av is None  # noqa: SLF001
+        or est._muv is None  # noqa: SLF001
+    ):
+        return None
+    from ._pca_full import FinalState  # noqa: PLC0415
+
+    final = FinalState(
+        a=est.components_,
+        s=est.scores_,
+        mu=est.mean_ if est.mean_ is not None else np.zeros(est.components_.shape[0]),
+        noise_var=est.noise_variance_ if est.noise_variance_ is not None else 0.0,
+        av=est._av,  # noqa: SLF001
+        sv=est._sv if est._sv is not None else [],  # noqa: SLF001
+        pattern_index=est._pattern_index,  # noqa: SLF001
+        muv=est._muv,  # noqa: SLF001
+        va=np.zeros(est.components_.shape[1]),
+        vmu=0.0,
+        lc={},
+        runtime_report=None,
+    )
+    vr = _marginal_variance(final)
+    est.variance_ = vr
+    return vr
 
 
 def _normalize_mask_for_selection(
@@ -529,6 +558,7 @@ def select_n_components(
                 cast("_AllowedFloat", fit_opts.get("explained_var_gram_ratio", 4.0))
             ),
         )
+        _compute_variance_for_best(best_est)
         best_metrics["evr"] = evr
         for entry in trace:
             if int(cast("int", entry.get("k", -1))) == best_k:
