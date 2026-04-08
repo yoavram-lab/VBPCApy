@@ -207,23 +207,17 @@ controls, outputs, or paper figures/tables:
 
 ## Reporting Issues
 
-### Bug Reports
+We provide issue templates for common types of contributions.
+When you [open a new issue](https://github.com/yoavram-lab/VBPCApy/issues/new/choose),
+choose the template that fits:
 
-Include:
-- A clear, descriptive title
-- Steps to reproduce the issue
-- Expected behavior
-- Actual behavior
-- Python version and platform
-- Minimal code example that demonstrates the issue
+| Template | Use for |
+|---|---|
+| **Bug report** | Crashes, incorrect results, unexpected behaviour |
+| **Feature request** | New functionality or enhancements |
+| **Documentation** | Missing, unclear, or incorrect docs |
 
-### Feature Requests
-
-Include:
-- A clear description of the feature
-- The motivation and use case
-- Examples of how it would be used
-- Any alternatives you've considered
+If none of the templates apply, you can still open a blank issue.
 
 ## Questions?
 
