@@ -15,7 +15,7 @@ import numpy as np
 import scipy.sparse as sp
 
 from ._memory import exceeds_budget, format_bytes, resolve_max_dense_bytes
-from ._pca_full import _explained_variance, _reconstruct_data
+from ._pca_full import _explained_variance, _marginal_variance, _reconstruct_data
 
 if TYPE_CHECKING:  # pragma: no cover
     from collections.abc import Iterable, Mapping, Sequence
@@ -23,11 +23,16 @@ if TYPE_CHECKING:  # pragma: no cover
     from ._pca_full import Matrix
     from .estimators import VBPCA
 
-__all__ = ["SelectionConfig", "select_n_components"]
+__all__ = [
+    "CVConfig",
+    "SelectionConfig",
+    "cross_validate_components",
+    "select_n_components",
+]
 
 logger = logging.getLogger(__name__)
 
-_Metric = Literal["prms", "cost"]
+_Metric = Literal["rms", "prms", "cost"]
 _AllowedFloat = (
     SupportsFloat
     | SupportsIndex
@@ -94,7 +99,9 @@ def _to_float(val: object | None) -> float:
         return float("nan")
 
 
-def _metric_value(metric: _Metric, rms: float, prms: float, cost: float) -> float:  # noqa: ARG001
+def _metric_value(metric: _Metric, rms: float, prms: float, cost: float) -> float:
+    if metric == "rms":
+        return rms if np.isfinite(rms) else cost
     if metric == "prms":
         return prms if np.isfinite(prms) else cost
     return cost if np.isfinite(cost) else prms
@@ -173,6 +180,35 @@ def _compute_evr_for_best(
     est.explained_variance_ = ev
     est.explained_variance_ratio_ = evr
     return evr
+
+
+def _compute_variance_for_best(est: VBPCA) -> np.ndarray | None:
+    if (
+        est.components_ is None
+        or est.scores_ is None
+        or est._av is None  # noqa: SLF001
+        or est._muv is None  # noqa: SLF001
+    ):
+        return None
+    from ._pca_full import FinalState  # noqa: PLC0415
+
+    final = FinalState(
+        a=est.components_,
+        s=est.scores_,
+        mu=est.mean_ if est.mean_ is not None else np.zeros(est.components_.shape[0]),
+        noise_var=est.noise_variance_ if est.noise_variance_ is not None else 0.0,
+        av=est._av,  # noqa: SLF001
+        sv=est._sv if est._sv is not None else [],  # noqa: SLF001
+        pattern_index=est._pattern_index,  # noqa: SLF001
+        muv=est._muv,  # noqa: SLF001
+        va=np.zeros(est.components_.shape[1]),
+        vmu=0.0,
+        lc={},
+        runtime_report=None,
+    )
+    vr = _marginal_variance(final)
+    est.variance_ = vr
+    return vr
 
 
 def _normalize_mask_for_selection(
@@ -522,6 +558,7 @@ def select_n_components(
                 cast("_AllowedFloat", fit_opts.get("explained_var_gram_ratio", 4.0))
             ),
         )
+        _compute_variance_for_best(best_est)
         best_metrics["evr"] = evr
         for entry in trace:
             if int(cast("int", entry.get("k", -1))) == best_k:
@@ -531,3 +568,305 @@ def select_n_components(
             best_model = best_est
 
     return best_k, best_metrics, trace, best_model
+
+
+# ---------------------------------------------------------------------------
+# K-fold cross-validated model selection
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class CVConfig:
+    """Configuration for K-fold cross-validated component selection.
+
+    Attributes:
+        metric: Selection metric (``"prms"`` or ``"cost"``).
+        n_splits: Number of cross-validation folds.
+        one_se_rule: If ``True``, select the smallest *k* whose mean metric
+            is within one standard error of the global minimum.
+        seed: Random seed for fold partitioning and model fitting.
+    """
+
+    metric: _Metric = "prms"
+    n_splits: int = 5
+    one_se_rule: bool = True
+    seed: int = 0
+
+
+def _make_element_folds(
+    x: np.ndarray,
+    n_splits: int,
+    rng: np.random.Generator,
+) -> list[tuple[np.ndarray, np.ndarray]]:
+    """Partition observed entries of *x* into *n_splits* folds.
+
+    Args:
+        x: Data matrix ``(n_features, n_samples)`` with ``NaN`` for
+            missing entries.
+        n_splits: Number of folds.
+        rng: NumPy random generator for reproducible shuffling.
+
+    Returns:
+        List of ``(probe_indices, train_indices)`` tuples where each
+        element is a 1-D array of flat indices into the observed-entry
+        array.
+    """
+    obs_rows, _obs_cols = np.nonzero(~np.isnan(x))
+    n_obs = len(obs_rows)
+    perm = rng.permutation(n_obs)
+
+    fold_size = n_obs // n_splits
+    folds: list[tuple[np.ndarray, np.ndarray]] = []
+    for i in range(n_splits):
+        start = i * fold_size
+        end = (i + 1) * fold_size if i < n_splits - 1 else n_obs
+        test_sel = perm[start:end]
+        train_sel = np.concatenate([perm[:start], perm[end:]])
+        folds.append((
+            test_sel,
+            train_sel,
+        ))
+    return folds
+
+
+_TRACKED_METRICS: tuple[str, ...] = ("rms", "prms", "cost")
+"""Metrics recorded from each candidate fit for CV aggregation."""
+
+
+def _run_fold(  # noqa: PLR0913
+    fold_i: int,
+    x_base: np.ndarray,
+    obs_rows: np.ndarray,
+    obs_cols: np.ndarray,
+    probe_sel: np.ndarray,
+    *,
+    k_list: list[int],
+    metric: _Metric,
+    opts: dict[str, object],
+    n_splits: int = 1,
+    verbose: int = 0,
+) -> dict[int, dict[str, float]]:
+    """Run one fold: mask probe entries, sweep all *k* values, return metrics.
+
+    Args:
+        fold_i: Zero-based fold index (for logging).
+        x_base: Original data matrix ``(n_features, n_samples)``.
+        obs_rows: Row indices of all observed entries.
+        obs_cols: Column indices of all observed entries.
+        probe_sel: Indices into ``obs_rows``/``obs_cols`` for this fold's
+            held-out probe entries.
+        k_list: Candidate component counts to evaluate.
+        metric: ``"prms"`` or ``"cost"``.
+        opts: Options forwarded to ``select_n_components``.
+        n_splits: Total number of folds (for log messages).
+        verbose: Verbosity level.
+
+    Returns:
+        Dict mapping each *k* to a dict of all tracked metric values.
+    """
+    if verbose:
+        logger.info("  Fold %d/%d ...", fold_i + 1, n_splits)
+
+    x_fold = x_base.copy()
+    x_fold[obs_rows[probe_sel], obs_cols[probe_sel]] = np.nan
+
+    xprobe = np.full(x_fold.shape, np.nan, dtype=float)
+    xprobe[obs_rows[probe_sel], obs_cols[probe_sel]] = x_base[
+        obs_rows[probe_sel], obs_cols[probe_sel]
+    ]
+
+    fold_opts = dict(opts)
+    fold_opts["xprobe"] = xprobe
+
+    _best_k, _best_metrics, trace, _model = select_n_components(
+        x_fold,
+        components=k_list,
+        config=SelectionConfig(
+            metric=metric,
+            patience=None,
+            max_trials=len(k_list),
+            compute_explained_variance=False,
+            return_best_model=False,
+        ),
+        **fold_opts,  # type: ignore[arg-type]
+    )
+
+    return {
+        int(cast("int", t["k"])): {
+            m: float(cast("float", t[m])) for m in _TRACKED_METRICS
+        }
+        for t in trace
+    }
+
+
+def _aggregate_cv_results(
+    k_list: list[int],
+    fold_metrics: list[dict[int, dict[str, float]]],
+    selection_metric: _Metric,
+) -> tuple[int, list[dict[str, object]]]:
+    """Aggregate fold metrics and select *k* via the 1-SE rule.
+
+    All tracked metrics (rms, prms, cost) are aggregated.  The 1-SE rule
+    is applied to *selection_metric*.
+
+    Args:
+        k_list: Candidate component counts.
+        fold_metrics: Per-fold dicts mapping *k* to a dict of all tracked
+            metric values.
+        selection_metric: The metric used for the 1-SE selection rule.
+
+    Returns:
+        Tuple ``(best_k, cv_results)`` where *cv_results* is a list of
+        dicts with keys ``k``, per-metric ``mean_<m>``, ``std_<m>``,
+        ``se_<m>`` columns, and ``<m>_fold_<i>`` per-fold values.
+    """
+    cv_results: list[dict[str, object]] = []
+
+    for k in k_list:
+        entry: dict[str, object] = {"k": k}
+        for m in _TRACKED_METRICS:
+            vals = [fold[k][m] for fold in fold_metrics if k in fold and m in fold[k]]
+            n = len(vals)
+            std_val = float(np.std(vals, ddof=1)) if n > 1 else 0.0
+            entry[f"mean_{m}"] = float(np.mean(vals)) if n > 0 else float("nan")
+            entry[f"std_{m}"] = std_val
+            entry[f"se_{m}"] = std_val / np.sqrt(n) if n > 1 else 0.0
+            for i, fold in enumerate(fold_metrics):
+                entry[f"{m}_fold_{i + 1}"] = fold.get(k, {}).get(m, float("nan"))
+        cv_results.append(entry)
+
+    # Apply 1-SE rule on the selection metric
+    means = np.array([
+        float(cast("float", r[f"mean_{selection_metric}"])) for r in cv_results
+    ])
+    min_idx = int(np.argmin(means))
+    threshold = means[min_idx] + float(
+        cast("float", cv_results[min_idx][f"se_{selection_metric}"])
+    )
+
+    for r in cv_results:
+        if float(cast("float", r[f"mean_{selection_metric}"])) <= threshold:
+            return int(cast("int", r["k"])), cv_results
+
+    return int(cast("int", cv_results[min_idx]["k"])), cv_results
+
+
+def cross_validate_components(
+    x: Matrix,
+    *,
+    mask: Matrix | None = None,
+    components: Iterable[int] | None = None,
+    config: CVConfig | None = None,
+    **opts: object,
+) -> tuple[int, list[dict[str, object]]]:
+    """K-fold cross-validated model selection for VBPCA.
+
+    Partitions observed entries into *n_splits* folds.  For each fold
+    the held-out entries become an xprobe set.  All candidate *k* values
+    are evaluated on every fold via ``select_n_components``.  The final
+    *k* is chosen by the **1-SE rule**: the smallest *k* whose mean
+    metric across folds is within one standard error of the global
+    minimum.
+
+    All tracked metrics (rms, prms, cost) are recorded per fold regardless
+    of which metric is used for selection, so callers can compare selection
+    criteria without re-running.
+
+    Args:
+        x: Data matrix (dense or sparse), shape
+            ``(n_features, n_samples)``.
+        mask: Optional boolean mask with the same shape as ``x``.
+        components: Candidate component counts.  Defaults to
+            ``1 .. min(n_features, n_samples)``.
+        config: Cross-validation parameters.  Uses ``CVConfig()``
+            defaults when ``None``.
+        **opts: Additional options forwarded to ``select_n_components``
+            and ultimately to the ``VBPCA`` constructor / fit.
+
+    Returns:
+        Tuple ``(best_k, cv_results)`` where:
+
+        - ``best_k``: selected component count.
+        - ``cv_results``: list of dicts (one per candidate *k*) with keys
+          ``k``, ``mean_<m>``, ``std_<m>``, ``se_<m>`` for each metric,
+          and ``<m>_fold_<i>`` per-fold values.
+
+    Raises:
+        ValueError: If ``metric`` is invalid, no valid ``components``
+            are provided, or ``n_splits < 2``.
+
+    Example:
+        >>> best_k, cv = cross_validate_components(
+        ...     X, components=range(1, 6), config=CVConfig(n_splits=5)
+        ... )
+    """
+    cv_cfg = config or CVConfig()
+
+    if cv_cfg.metric not in {"prms", "cost"}:
+        msg = f"metric must be one of prms, cost (got {cv_cfg.metric!r})"
+        raise ValueError(msg)
+    if cv_cfg.n_splits < 2:
+        msg = f"n_splits must be >= 2 (got {cv_cfg.n_splits})"
+        raise ValueError(msg)
+
+    # Materialize dense array (sparse support for fold creation is future work).
+    x_arr: np.ndarray = (
+        np.asarray(x.toarray(), dtype=float)
+        if sp.issparse(x)
+        else np.array(x, dtype=float)
+    )
+    if mask is not None:
+        x_arr[~np.asarray(mask, dtype=bool)] = np.nan
+
+    k_list = _normalize_components(components, x_arr.shape[0], x_arr.shape[1])
+    obs_rows, obs_cols = np.nonzero(~np.isnan(x_arr))
+    folds = _make_element_folds(
+        x_arr, cv_cfg.n_splits, np.random.default_rng(cv_cfg.seed)
+    )
+
+    fit_opts: dict[str, object] = dict(opts)
+    verbose_level = int(
+        cast(
+            "SupportsIndex | str | bytes | bytearray",
+            fit_opts.pop("selection_verbose", fit_opts.get("verbose", 0)),
+        )
+    )
+    fit_opts["verbose"] = 0
+
+    all_fold_metrics: list[dict[int, dict[str, float]]] = [
+        _run_fold(
+            fold_i=fold_i,
+            x_base=x_arr,
+            obs_rows=obs_rows,
+            obs_cols=obs_cols,
+            probe_sel=probe_sel,
+            k_list=k_list,
+            metric=cv_cfg.metric,
+            opts=fit_opts,
+            n_splits=cv_cfg.n_splits,
+            verbose=verbose_level,
+        )
+        for fold_i, (probe_sel, _train_sel) in enumerate(folds)
+    ]
+
+    best_k, cv_results = _aggregate_cv_results(k_list, all_fold_metrics, cv_cfg.metric)
+
+    if not cv_cfg.one_se_rule:
+        means = [float(cast("float", r[f"mean_{cv_cfg.metric}"])) for r in cv_results]
+        best_k = int(cast("int", cv_results[int(np.argmin(means))]["k"]))
+
+    if verbose_level:
+        min_entry = min(
+            cv_results,
+            key=lambda r: float(cast("float", r[f"mean_{cv_cfg.metric}"])),
+        )
+        logger.info(
+            "CV result: best_k=%d (min mean %s=%.6g +/- %.6g at k=%d)",
+            best_k,
+            cv_cfg.metric,
+            cast("float", min_entry[f"mean_{cv_cfg.metric}"]),
+            cast("float", min_entry[f"se_{cv_cfg.metric}"]),
+            cast("int", min_entry["k"]),
+        )
+
+    return best_k, cv_results

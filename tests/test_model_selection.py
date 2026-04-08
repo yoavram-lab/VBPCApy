@@ -3,7 +3,12 @@ import pytest
 from numpy.testing import assert_allclose
 
 import vbpca_py.model_selection as ms
-from vbpca_py.model_selection import SelectionConfig, select_n_components
+from vbpca_py.model_selection import (
+    CVConfig,
+    SelectionConfig,
+    cross_validate_components,
+    select_n_components,
+)
 
 
 def _low_rank_data(
@@ -575,3 +580,179 @@ def test_select_n_components_deterministic_across_num_cpu() -> None:
 
     assert res[0][0] == res[1][0]
     assert_allclose(res[0][1], res[1][1], rtol=1e-12, atol=1e-12)
+
+
+# ============================================================
+# cross_validate_components tests
+# ============================================================
+
+
+def test_cross_validate_components_basic() -> None:
+    """Smoke test: cv returns valid best_k and cv_results with all metrics."""
+    rng = np.random.default_rng(42)
+    x = _low_rank_data(rng, n_features=6, n_samples=30, rank=2)
+
+    cv_cfg = CVConfig(metric="prms", n_splits=3, one_se_rule=True, seed=0)
+
+    best_k, cv_results = cross_validate_components(
+        x,
+        components=[1, 2, 3],
+        config=cv_cfg,
+        maxiters=30,
+        verbose=0,
+    )
+
+    assert best_k in {1, 2, 3}
+    assert len(cv_results) == 3
+
+    # Every entry should have aggregated stats for all tracked metrics.
+    for entry in cv_results:
+        assert "k" in entry
+        for m in ("rms", "prms", "cost"):
+            assert f"mean_{m}" in entry
+            assert f"std_{m}" in entry
+            assert f"se_{m}" in entry
+            for fold_i in range(3):
+                assert f"{m}_fold_{fold_i + 1}" in entry
+
+
+def test_cross_validate_components_cost_metric() -> None:
+    """CV works with metric='cost'."""
+    rng = np.random.default_rng(7)
+    x = _low_rank_data(rng, n_features=5, n_samples=20, rank=1)
+
+    cv_cfg = CVConfig(metric="cost", n_splits=2, one_se_rule=False, seed=1)
+
+    best_k, cv_results = cross_validate_components(
+        x,
+        components=[1, 2],
+        config=cv_cfg,
+        maxiters=30,
+        verbose=0,
+    )
+
+    assert best_k in {1, 2}
+    assert len(cv_results) == 2
+    # Mean cost should be finite.
+    for entry in cv_results:
+        assert np.isfinite(entry["mean_cost"])
+
+
+def test_cross_validate_components_all_metrics_recorded() -> None:
+    """Even when selecting by prms, rms and cost are still recorded."""
+    rng = np.random.default_rng(99)
+    x = _low_rank_data(rng, n_features=6, n_samples=20, rank=2)
+
+    cv_cfg = CVConfig(metric="prms", n_splits=2, seed=0)
+
+    _best_k, cv_results = cross_validate_components(
+        x,
+        components=[1, 2, 3],
+        config=cv_cfg,
+        maxiters=30,
+        verbose=0,
+    )
+
+    for entry in cv_results:
+        # All three metrics are present regardless of selection metric.
+        assert np.isfinite(entry["mean_rms"])
+        assert np.isfinite(entry["mean_prms"])
+        assert np.isfinite(entry["mean_cost"])
+
+
+def test_cross_validate_components_invalid_splits() -> None:
+    """n_splits < 2 raises ValueError."""
+    rng = np.random.default_rng(0)
+    x = _low_rank_data(rng, n_features=4, n_samples=10, rank=1)
+
+    with pytest.raises(ValueError, match="n_splits must be >= 2"):
+        cross_validate_components(
+            x,
+            components=[1, 2],
+            config=CVConfig(n_splits=1),
+            maxiters=10,
+        )
+
+
+def test_cross_validate_components_one_se_vs_global_min() -> None:
+    """1-SE rule picks k <= global-minimum k."""
+    rng = np.random.default_rng(5)
+    x = _low_rank_data(rng, n_features=6, n_samples=40, rank=2)
+
+    cv_1se = CVConfig(metric="prms", n_splits=3, one_se_rule=True, seed=0)
+    cv_min = CVConfig(metric="prms", n_splits=3, one_se_rule=False, seed=0)
+
+    best_k_1se, _ = cross_validate_components(
+        x, components=[1, 2, 3, 4], config=cv_1se, maxiters=40, verbose=0
+    )
+    best_k_min, _ = cross_validate_components(
+        x, components=[1, 2, 3, 4], config=cv_min, maxiters=40, verbose=0
+    )
+
+    # 1-SE rule should pick k <= global min k (more parsimonious).
+    assert best_k_1se <= best_k_min
+
+
+# ---------------------------------------------------------------------------
+# Marginal variance on best model (#72)
+# ---------------------------------------------------------------------------
+
+
+def test_select_n_components_best_model_has_variance() -> None:
+    """variance_ is populated on best_model when compute_explained_variance=True."""
+    rng = np.random.default_rng(0)
+    x = _low_rank_data(rng, n_features=6, n_samples=10, rank=2)
+
+    cfg = SelectionConfig(
+        metric="cost",
+        return_best_model=True,
+        compute_explained_variance=True,
+    )
+    _, _, _, best_model = select_n_components(
+        x, components=[1, 2, 3], config=cfg, maxiters=80, verbose=0
+    )
+
+    assert best_model is not None
+    assert best_model.variance_ is not None
+    assert best_model.variance_.shape == x.shape
+    assert np.all(np.isfinite(best_model.variance_))
+    assert np.all(best_model.variance_ >= 0)
+
+
+def test_select_n_components_best_model_variance_with_missing() -> None:
+    """variance_ is populated when data contains NaN entries."""
+    rng = np.random.default_rng(1)
+    x = _low_rank_data(rng, n_features=6, n_samples=20, rank=2)
+    x[rng.random(x.shape) < 0.15] = np.nan
+
+    cfg = SelectionConfig(
+        metric="prms",
+        return_best_model=True,
+        compute_explained_variance=True,
+    )
+    _, _, _, best_model = select_n_components(
+        x, components=[1, 2], config=cfg, maxiters=80, verbose=0
+    )
+
+    assert best_model is not None
+    assert best_model.variance_ is not None
+    assert best_model.variance_.shape == x.shape
+    assert np.all(np.isfinite(best_model.variance_))
+
+
+def test_select_n_components_no_variance_without_diagnostics() -> None:
+    """variance_ stays None when compute_explained_variance=False."""
+    rng = np.random.default_rng(2)
+    x = _low_rank_data(rng, n_features=6, n_samples=10, rank=2)
+
+    cfg = SelectionConfig(
+        metric="cost",
+        return_best_model=True,
+        compute_explained_variance=False,
+    )
+    _, _, _, best_model = select_n_components(
+        x, components=[1, 2], config=cfg, maxiters=80, verbose=0
+    )
+
+    assert best_model is not None
+    assert best_model.variance_ is None

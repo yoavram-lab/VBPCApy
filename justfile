@@ -14,7 +14,7 @@ uv-sync-octave:
 
 # Lint Python sources using Ruff preview rules.
 lint:
-	uv run --with scipy-stubs ruff check --preview --fix src tests scripts analysis
+	uv run ruff check --preview --fix src tests scripts analysis
 
 # Check formatting without modifying files.
 format-check:
@@ -26,7 +26,7 @@ format:
 
 # Type-check library code (strict mode).
 typecheck:
-	uv run --with scipy-stubs --with matplotlib mypy --strict src
+	uv run mypy --strict src
 
 # Run the test suite quietly.
 test:
@@ -34,7 +34,7 @@ test:
 
 # Run tests with coverage report (fail under 89 %; Octave parity tests excluded).
 test-cov:
-	uv run pytest -q --cov=src/vbpca_py --cov-report=term-missing --cov-fail-under=89
+	uv run --extra dev python -m pytest -q --cov=src/vbpca_py --cov-report=term-missing --cov-fail-under=89
 
 # Run pytest perf benchmarks (excluded from default test/ci runs).
 bench:

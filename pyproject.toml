@@ -203,6 +203,8 @@ ignore = [
     "TC003",   # Type-checking imports OK in scripts
     "TRY003",  # Long exception messages OK in scripts
     "TRY004",  # TypeError preference OK in scripts
+    "SLF001",  # Private member access (intentional for monkey-patching in diagnostics)
+    "PLR0915", # Too many statements (diagnostic scripts with many print calls)
 ]
 "analysis/**/*" = [
     "D104",    # Missing docstring in __init__.py OK

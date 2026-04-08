@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import cast
+
 import numpy as np
 import scipy.sparse as sp
 
@@ -58,6 +60,10 @@ class VBPCA:
         self.explained_variance_: np.ndarray | None = None
         self.explained_variance_ratio_: np.ndarray | None = None
         self.n_features_in_: int | None = None
+        self._av: list[np.ndarray] | None = None
+        self._sv: list[np.ndarray] | None = None
+        self._pattern_index: np.ndarray | None = None
+        self._muv: np.ndarray | None = None
 
     def fit(  # noqa: C901, PLR0912, PLR0914, PLR0915
         self, x: Matrix, mask: Matrix | None = None
@@ -184,6 +190,16 @@ class VBPCA:
                 result["ExplainedVarRatio"], dtype=float
             )
         self.n_features_in_ = int(self.components_.shape[0])
+        av_raw = cast("list[np.ndarray] | None", result.get("Av"))
+        self._av = [np.asarray(a, dtype=float) for a in av_raw] if av_raw else None
+        sv_raw = cast("list[np.ndarray] | None", result.get("Sv"))
+        self._sv = [np.asarray(s, dtype=float) for s in sv_raw] if sv_raw else None
+        isv_raw = result.get("Isv")
+        self._pattern_index = (
+            np.asarray(isv_raw, dtype=int) if isv_raw is not None else None
+        )
+        muv_raw = result.get("Muv")
+        self._muv = np.asarray(muv_raw, dtype=float) if muv_raw is not None else None
         return self
 
     def get_options(self) -> dict[str, object]:
