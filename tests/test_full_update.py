@@ -489,16 +489,14 @@ def test_iteration_order_scores_rotate_loadings(
         "V": 1.0,
     }
 
-    opts = pca_mod._build_options(
-        {
-            "init": init,
-            "maxiters": 1,
-            "bias": 1,
-            "verbose": 0,
-            "autosave": 0,
-            "rotate2pca": 1,
-        }
-    )
+    opts = pca_mod._build_options({
+        "init": init,
+        "maxiters": 1,
+        "bias": 1,
+        "verbose": 0,
+        "autosave": 0,
+        "rotate2pca": 1,
+    })
 
     prepared = pca_mod._prepare_problem(x, opts)
     training = pca_mod._initialize_model(
@@ -802,16 +800,14 @@ def test_initialize_model_centers_prepared_data_once() -> None:
         "V": 1.0,
     }
 
-    opts = pca_mod._build_options(
-        {
-            "init": init,
-            "maxiters": 1,
-            "bias": 1,
-            "verbose": 0,
-            "autosave": 0,
-            "rotate2pca": 0,
-        }
-    )
+    opts = pca_mod._build_options({
+        "init": init,
+        "maxiters": 1,
+        "bias": 1,
+        "verbose": 0,
+        "autosave": 0,
+        "rotate2pca": 0,
+    })
 
     prepared = pca_mod._prepare_problem(x, opts)
     x_uncentered = np.array(prepared.x_data, copy=True)
