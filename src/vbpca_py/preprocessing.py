@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-# ruff: noqa: D102, D107, TRY003, EM101, EM102, TC003
+# ruff: noqa: D102, D107, DOC201, DOC501, TRY003, EM101, EM102, TC003
+import warnings as _warnings_mod
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Literal, cast
 
 import numpy as np
@@ -14,10 +15,15 @@ from ._sparsity import validate_mask_compatibility
 
 __all__ = [
     "AutoEncoder",
+    "DataReport",
+    "MissingAwareLogTransformer",
     "MissingAwareMinMaxScaler",
     "MissingAwareOneHotEncoder",
+    "MissingAwarePowerTransformer",
     "MissingAwareSparseOneHotEncoder",
     "MissingAwareStandardScaler",
+    "MissingAwareWinsorizer",
+    "check_data",
 ]
 
 Mask = np.ndarray
@@ -937,3 +943,482 @@ class AutoEncoder:
             inv = plan.encoder.inverse_transform(block, mask=None)
             out_cols.append(inv[:, 0])
         return np.column_stack(out_cols)
+
+
+# ── Distributional transforms (#80) ──────────────────────────────────────
+
+
+class MissingAwareLogTransformer:
+    """Apply ``log1p`` (or ``log(x + offset)``) while preserving NaN entries.
+
+    This is a *pre-scaling* transform: compress right-skewed features
+    before standardisation so that the standard deviation better reflects
+    the bulk of the data rather than extreme tails.
+
+    Args:
+        offset: Additive constant before taking the log.  The default
+            ``1.0`` gives the standard ``log1p`` transform.
+    """
+
+    def __init__(self, *, offset: float = 1.0) -> None:
+        if offset <= 0:
+            msg = "offset must be positive"
+            raise ValueError(msg)
+        self.offset = offset
+        self.n_features_in_: int | None = None
+
+    def fit(
+        self,
+        x: np.ndarray,
+        mask: Mask | None = None,  # noqa: ARG002
+    ) -> MissingAwareLogTransformer:
+        """Record input width (stateless transform)."""
+        self.n_features_in_ = np.asarray(x).shape[1]
+        return self
+
+    def transform(self, x: np.ndarray, mask: Mask | None = None) -> np.ndarray:
+        """Apply ``log(x + offset)`` to observed entries."""
+        if self.n_features_in_ is None:
+            raise RuntimeError("Transformer not fitted")
+        x_arr = np.asarray(x, dtype=float)
+        obs = _ensure_mask(x_arr, mask)
+        out = np.full_like(x_arr, np.nan)
+        out[obs] = np.log(x_arr[obs] + self.offset)
+        return out
+
+    def fit_transform(self, x: np.ndarray, mask: Mask | None = None) -> np.ndarray:
+        return self.fit(x, mask).transform(x, mask)
+
+    def inverse_transform(self, z: np.ndarray, mask: Mask | None = None) -> np.ndarray:
+        """Reverse via ``exp(z) - offset``."""
+        if self.n_features_in_ is None:
+            raise RuntimeError("Transformer not fitted")
+        z_arr = np.asarray(z, dtype=float)
+        obs = _ensure_mask(z_arr, mask)
+        out = np.full_like(z_arr, np.nan)
+        out[obs] = np.exp(z_arr[obs]) - self.offset
+        return out
+
+
+class MissingAwareWinsorizer:
+    """Clip features at fitted percentiles while preserving NaN entries.
+
+    Winsorization prevents outlier-driven variance inflation *before*
+    scaling, so that z-scoring better equalises feature scales.
+
+    Args:
+        lower_quantile: Lower clipping quantile (default ``0.01``).
+        upper_quantile: Upper clipping quantile (default ``0.99``).
+
+    Note:
+        This transform is lossy — ``inverse_transform`` is a no-op
+        (returns data unchanged) because the original tail values
+        cannot be recovered.
+    """
+
+    def __init__(
+        self,
+        *,
+        lower_quantile: float = 0.01,
+        upper_quantile: float = 0.99,
+    ) -> None:
+        if not 0.0 <= lower_quantile < upper_quantile <= 1.0:
+            msg = "quantiles must satisfy 0 <= lower < upper <= 1"
+            raise ValueError(msg)
+        self.lower_quantile = lower_quantile
+        self.upper_quantile = upper_quantile
+        self.n_features_in_: int | None = None
+        self.lower_: np.ndarray | None = None
+        self.upper_: np.ndarray | None = None
+
+    def fit(self, x: np.ndarray, mask: Mask | None = None) -> MissingAwareWinsorizer:
+        """Compute per-column clipping bounds from observed values."""
+        x_arr = np.asarray(x, dtype=float)
+        obs = _ensure_mask(x_arr, mask)
+        n_features = x_arr.shape[1]
+        self.n_features_in_ = n_features
+        lo = np.full(n_features, np.nan)
+        hi = np.full(n_features, np.nan)
+        for j in range(n_features):
+            col_obs = x_arr[obs[:, j], j]
+            if col_obs.size == 0:
+                continue
+            lo[j] = float(np.quantile(col_obs, self.lower_quantile))
+            hi[j] = float(np.quantile(col_obs, self.upper_quantile))
+        self.lower_ = lo
+        self.upper_ = hi
+        return self
+
+    def transform(self, x: np.ndarray, mask: Mask | None = None) -> np.ndarray:
+        """Clip observed entries to fitted bounds."""
+        if self.lower_ is None or self.upper_ is None:
+            raise RuntimeError("Transformer not fitted")
+        x_arr = np.asarray(x, dtype=float)
+        obs = _ensure_mask(x_arr, mask)
+        out = np.full_like(x_arr, np.nan)
+        for j in range(x_arr.shape[1]):
+            col_obs = obs[:, j]
+            out[col_obs, j] = np.clip(x_arr[col_obs, j], self.lower_[j], self.upper_[j])
+        return out
+
+    def fit_transform(self, x: np.ndarray, mask: Mask | None = None) -> np.ndarray:
+        return self.fit(x, mask).transform(x, mask)
+
+    def inverse_transform(  # noqa: PLR6301
+        self,
+        z: np.ndarray,
+        mask: Mask | None = None,  # noqa: ARG002
+    ) -> np.ndarray:
+        """No-op: winsorization is lossy.
+
+        Returns a copy of the input unchanged.
+        """
+        return np.asarray(z, dtype=float).copy()
+
+
+class MissingAwarePowerTransformer:
+    """Yeo-Johnson variance-stabilising transform preserving NaN entries.
+
+    Supports mixed-sign data.  The transform is applied element-wise
+    with a per-column ``lmbda`` parameter estimated by maximum
+    likelihood on observed values.
+
+    Args:
+        standardize: If ``True`` (default), z-score the transformed
+            output so each feature has zero mean and unit variance.
+    """
+
+    def __init__(self, *, standardize: bool = True) -> None:
+        self.standardize = standardize
+        self.n_features_in_: int | None = None
+        self.lambdas_: np.ndarray | None = None
+        self.mean_: np.ndarray | None = None
+        self.scale_: np.ndarray | None = None
+
+    # ── Yeo-Johnson element-wise helpers ──
+
+    @staticmethod
+    def _yj_transform(x: np.ndarray, lmbda: float) -> np.ndarray:
+        """Vectorised Yeo-Johnson forward transform for a single lambda."""
+        out = np.zeros_like(x, dtype=float)
+        pos = x >= 0
+        neg = ~pos
+
+        if np.abs(lmbda) > 1e-10:
+            out[pos] = ((x[pos] + 1.0) ** lmbda - 1.0) / lmbda
+        else:
+            out[pos] = np.log1p(x[pos])
+
+        if np.abs(lmbda - 2.0) > 1e-10:
+            out[neg] = -((-x[neg] + 1.0) ** (2.0 - lmbda) - 1.0) / (2.0 - lmbda)
+        else:
+            out[neg] = -np.log1p(-x[neg])
+
+        return out
+
+    @staticmethod
+    def _yj_inverse(z: np.ndarray, lmbda: float) -> np.ndarray:
+        """Vectorised Yeo-Johnson inverse transform for a single lambda."""
+        out = np.zeros_like(z, dtype=float)
+        pos = z >= 0
+        neg = ~pos
+
+        if np.abs(lmbda) > 1e-10:
+            out[pos] = (z[pos] * lmbda + 1.0) ** (1.0 / lmbda) - 1.0
+        else:
+            out[pos] = np.expm1(z[pos])
+
+        if np.abs(lmbda - 2.0) > 1e-10:
+            out[neg] = 1.0 - (-(2.0 - lmbda) * z[neg] + 1.0) ** (1.0 / (2.0 - lmbda))
+        else:
+            out[neg] = -np.expm1(-z[neg])
+
+        return out
+
+    @staticmethod
+    def _yj_neg_loglik(lmbda: float, x_obs: np.ndarray) -> float:
+        """Negative profile log-likelihood for Yeo-Johnson lambda."""
+        n = x_obs.size
+        if n == 0:
+            return 0.0
+        y = MissingAwarePowerTransformer._yj_transform(x_obs, lmbda)
+        var = float(np.var(y))
+        if var <= 0:
+            return 1e18
+        loglik = -0.5 * n * np.log(var)
+        loglik += (lmbda - 1.0) * np.sum(np.sign(x_obs) * np.log1p(np.abs(x_obs)))
+        return float(-loglik)
+
+    def fit(
+        self, x: np.ndarray, mask: Mask | None = None
+    ) -> MissingAwarePowerTransformer:
+        """Estimate per-column Yeo-Johnson lambda by profile MLE."""
+        from scipy.optimize import minimize_scalar  # noqa: PLC0415
+
+        x_arr = np.asarray(x, dtype=float)
+        obs = _ensure_mask(x_arr, mask)
+        n_features = x_arr.shape[1]
+        self.n_features_in_ = n_features
+        lambdas = np.ones(n_features)
+
+        for j in range(n_features):
+            col_obs = x_arr[obs[:, j], j]
+            if col_obs.size < 2:
+                continue
+            res = minimize_scalar(
+                self._yj_neg_loglik,
+                bounds=(-2.0, 5.0),
+                args=(col_obs,),
+                method="bounded",
+            )
+            lambdas[j] = float(res.x)
+
+        self.lambdas_ = lambdas
+
+        # Compute standardisation stats on the transformed data.
+        transformed = self._apply_yj(x_arr, obs)
+        means = np.nanmean(transformed, axis=0)
+        scales = np.nanstd(transformed, axis=0)
+        scales[~np.isfinite(scales) | np.isclose(scales, 0.0)] = 1.0
+        self.mean_ = means
+        self.scale_ = scales
+        return self
+
+    def _apply_yj(self, x: np.ndarray, obs: np.ndarray) -> np.ndarray:
+        """Apply per-column Yeo-Johnson, preserving NaN."""
+        if self.lambdas_ is None:
+            raise RuntimeError("Transformer not fitted")
+        out = np.full_like(x, np.nan)
+        for j in range(x.shape[1]):
+            col_obs = obs[:, j]
+            out[col_obs, j] = self._yj_transform(x[col_obs, j], self.lambdas_[j])
+        return out
+
+    def transform(self, x: np.ndarray, mask: Mask | None = None) -> np.ndarray:
+        """Apply Yeo-Johnson transform and optional standardisation."""
+        if self.lambdas_ is None:
+            raise RuntimeError("Transformer not fitted")
+        x_arr = np.asarray(x, dtype=float)
+        obs = _ensure_mask(x_arr, mask)
+        out = self._apply_yj(x_arr, obs)
+        if self.standardize and self.mean_ is not None and self.scale_ is not None:
+            out = (out - self.mean_) / self.scale_
+            out[~obs] = np.nan
+        return out
+
+    def fit_transform(self, x: np.ndarray, mask: Mask | None = None) -> np.ndarray:
+        return self.fit(x, mask).transform(x, mask)
+
+    def inverse_transform(self, z: np.ndarray, mask: Mask | None = None) -> np.ndarray:
+        """Reverse transform: un-standardise then invert Yeo-Johnson."""
+        if self.lambdas_ is None:
+            raise RuntimeError("Transformer not fitted")
+        z_arr = np.asarray(z, dtype=float)
+        obs = _ensure_mask(z_arr, mask)
+        out = z_arr.copy()
+        if self.standardize and self.mean_ is not None and self.scale_ is not None:
+            out = out * self.scale_ + self.mean_
+        result = np.full_like(out, np.nan)
+        for j in range(out.shape[1]):
+            col_obs = obs[:, j]
+            result[col_obs, j] = self._yj_inverse(out[col_obs, j], self.lambdas_[j])
+        return result
+
+
+# ── Data diagnostics (#81) ───────────────────────────────────────────────
+
+
+@dataclass
+class DataReport:
+    """Result of :func:`check_data` preflight validation.
+
+    Attributes:
+        warnings: Human-readable diagnostic messages.
+        summary: Per-feature statistics dictionary.
+        suggested_pretransforms: Mapping of column index (or name) to a
+            suggested transform string (e.g. ``"log1p"``).
+        passed: ``True`` when no warnings were raised.
+    """
+
+    warnings: list[str] = field(default_factory=list)
+    summary: dict[str, dict[str, float]] = field(default_factory=dict)
+    suggested_pretransforms: dict[str | int, str] = field(default_factory=dict)
+    passed: bool = True
+
+
+@dataclass
+class _CheckDataConfig:
+    """Internal container for :func:`check_data` thresholds."""
+
+    skewness_threshold: float
+    outlier_mad_threshold: float
+    near_zero_var_eps: float
+    missing_fraction_warn: float
+    n_samples: int
+    emit_warnings: bool
+
+
+def _emit(report: DataReport, msg: str, *, emit: bool) -> None:
+    """Append *msg* to *report* and optionally emit a stdlib warning."""
+    report.warnings.append(msg)
+    if emit:
+        _warnings_mod.warn(msg, UserWarning, stacklevel=3)
+
+
+def _check_missing(
+    obs: np.ndarray,
+    name: str,
+    col_summary: dict[str, float],
+    cfg: _CheckDataConfig,
+    report: DataReport,
+) -> None:
+    frac = 1.0 - obs.size / max(cfg.n_samples, 1)
+    col_summary["missing_fraction"] = frac
+    if frac >= cfg.missing_fraction_warn:
+        _emit(
+            report,
+            f"{name}: {frac:.0%} missing"
+            " — high missingness degrades covariance estimates",
+            emit=cfg.emit_warnings,
+        )
+
+
+def _check_variance(
+    obs: np.ndarray,
+    name: str,
+    col_summary: dict[str, float],
+    cfg: _CheckDataConfig,
+    report: DataReport,
+) -> bool:
+    """Return ``True`` if the column has meaningful variance."""
+    variance = float(np.var(obs))
+    col_summary["variance"] = variance
+    if variance < cfg.near_zero_var_eps:
+        _emit(
+            report,
+            f"{name}: near-zero variance ({variance:.2e})"
+            " — feature carries no information",
+            emit=cfg.emit_warnings,
+        )
+        return False
+    return True
+
+
+def _check_skewness(
+    obs: np.ndarray,
+    name: str,
+    col_summary: dict[str, float],
+    cfg: _CheckDataConfig,
+    report: DataReport,
+) -> None:
+    std = float(np.std(obs))
+    skew = float(np.mean(((obs - np.mean(obs)) / std) ** 3)) if std > 0 else 0.0
+    col_summary["skewness"] = skew
+    if abs(skew) > cfg.skewness_threshold:
+        _emit(
+            report,
+            f"{name}: skewness={skew:.1f}"
+            " — consider log or power transform before scaling",
+            emit=cfg.emit_warnings,
+        )
+        if skew > 0 and float(np.min(obs)) >= 0:
+            report.suggested_pretransforms[name] = "log1p"
+        else:
+            report.suggested_pretransforms[name] = "power"
+
+
+def _check_outliers(
+    obs: np.ndarray,
+    name: str,
+    col_summary: dict[str, float],
+    cfg: _CheckDataConfig,
+    report: DataReport,
+) -> None:
+    median = float(np.median(obs))
+    mad = float(np.median(np.abs(obs - median)))
+    if mad <= 0:
+        return
+    z_scores = np.abs(obs - median) / mad
+    outlier_frac = float(np.mean(z_scores > cfg.outlier_mad_threshold))
+    col_summary["outlier_fraction"] = outlier_frac
+    if outlier_frac > 0.01:
+        _emit(
+            report,
+            f"{name}: {outlier_frac:.1%} of entries are outliers"
+            f" (>{cfg.outlier_mad_threshold} MAD)"
+            " — consider winsorization before scaling",
+            emit=cfg.emit_warnings,
+        )
+        if name not in report.suggested_pretransforms:
+            report.suggested_pretransforms[name] = "winsorize"
+
+
+def check_data(  # noqa: PLR0913
+    x: np.ndarray,
+    *,
+    column_names: Sequence[str] | None = None,
+    skewness_threshold: float = 2.0,
+    outlier_mad_threshold: float = 5.0,
+    near_zero_var_eps: float = 1e-10,
+    missing_fraction_warn: float = 0.5,
+    warn: bool = False,
+) -> DataReport:
+    """Run preflight diagnostics on a data matrix before VBPCA fitting.
+
+    Checks focus on *scale comparability* — conditions that cause
+    individual features to dominate the decomposition — rather than
+    distributional shape.
+
+    Args:
+        x: Data matrix of shape ``(n_samples, n_features)``.
+        column_names: Optional feature names for readable messages.
+        skewness_threshold: Absolute skewness above which a feature is
+            flagged (default ``2.0``).
+        outlier_mad_threshold: Number of MADs from the median beyond
+            which an entry is considered an outlier (default ``5.0``).
+        near_zero_var_eps: Variance threshold below which a feature is
+            flagged as near-zero-variance (default ``1e-10``).
+        missing_fraction_warn: Per-feature missing fraction above which
+            a warning is emitted (default ``0.5``).
+        warn: If ``True``, also emit :func:`warnings.warn` for each
+            issue.
+
+    Returns:
+        A :class:`DataReport` with warnings, per-feature summary, and
+        suggested pre-transforms.
+    """
+    x_arr = np.asarray(x, dtype=float)
+    n_samples, n_features = x_arr.shape
+    report = DataReport()
+    cfg = _CheckDataConfig(
+        skewness_threshold=skewness_threshold,
+        outlier_mad_threshold=outlier_mad_threshold,
+        near_zero_var_eps=near_zero_var_eps,
+        missing_fraction_warn=missing_fraction_warn,
+        n_samples=n_samples,
+        emit_warnings=warn,
+    )
+
+    for j in range(n_features):
+        col = x_arr[:, j]
+        name = column_names[j] if column_names is not None else str(j)
+        obs = col[~np.isnan(col)]
+        col_summary: dict[str, float] = {"n_obs": float(obs.size)}
+
+        _check_missing(obs, name, col_summary, cfg, report)
+
+        if obs.size < 2:
+            col_summary["variance"] = 0.0
+            report.summary[name] = col_summary
+            continue
+
+        if not _check_variance(obs, name, col_summary, cfg, report):
+            report.summary[name] = col_summary
+            continue
+
+        _check_skewness(obs, name, col_summary, cfg, report)
+        _check_outliers(obs, name, col_summary, cfg, report)
+        report.summary[name] = col_summary
+
+    report.passed = len(report.warnings) == 0
+    return report
