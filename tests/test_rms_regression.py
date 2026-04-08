@@ -195,7 +195,7 @@ def _mk_sparse_case(seed: int = 1) -> dict[str, Any]:
     eps = np.finfo(np.float64).eps
     X_obs = np.zeros((n1, n2), dtype=np.float64)
     X_obs[obs] = vals[obs]
-    X_obs[(obs) & (X_obs == 0.0)] = eps
+    X_obs[(obs) & (X_obs == 0.0)] = eps  # noqa: RUF069
 
     X_csr = sp.csr_matrix(X_obs)
     assert X_csr.nnz == int(obs.sum())
@@ -468,7 +468,9 @@ def test_compute_rms_sparse_validation_errors() -> None:
 def test_compute_rms_sparse_csc_input_and_mask_validation_toggle() -> None:
     rng = np.random.default_rng(5150)
     x_dense = (rng.random((5, 4)) > 0.55).astype(float)
-    x_dense[x_dense != 0.0] = rng.standard_normal(np.count_nonzero(x_dense))
+    x_dense[x_dense != 0.0] = rng.standard_normal(  # noqa: RUF069
+        np.count_nonzero(x_dense)
+    )  # exact-by-construction
 
     X_csc = sp.csc_matrix(x_dense)
     A = rng.standard_normal((5, 2))

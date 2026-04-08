@@ -13,7 +13,7 @@ def test_coerce_and_float_helpers() -> None:
     assert pf._coerce_int(None, default=5) == 5
     assert pf._coerce_int("bad", default=7) == 7
     assert pf._int_opt({"not": "int"}, default=9) == 9
-    assert pf._float_opt(b"not-a-float", default=1.5) == 1.5
+    assert pf._float_opt(b"not-a-float", default=1.5) == pytest.approx(1.5)
 
 
 def test_auto_masked_batch_size_branches() -> None:

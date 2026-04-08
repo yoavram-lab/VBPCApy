@@ -64,7 +64,7 @@ def test_prepare_dense_and_sparse_mask_overrides() -> None:
     )
     assert mask_probe is None
     assert np.allclose(mask_out, mask_override_dense)
-    assert np.any(x_out != 0.0)
+    assert np.any(x_out != 0.0)  # noqa: RUF069  # exact-by-construction
     assert x_probe_out is not None
 
 

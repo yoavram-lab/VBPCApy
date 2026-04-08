@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 import scipy.sparse as sp
 
 from vbpca_py import VBPCA
@@ -25,7 +26,7 @@ def test_sparse_explicit_mask_counts_and_zero_preserved():
     assert sp.isspmatrix(mask_out)
     assert mask_out.count_nonzero() == int(mask.sum())
     np.testing.assert_array_equal(n_obs_row, np.array([2.0, 1.0]))
-    assert n_data == float(mask.sum())
+    assert n_data == pytest.approx(float(mask.sum()))
     assert n_probe == 0
     assert x_data.shape == (2, 2)
 
@@ -50,7 +51,7 @@ def test_sparse_implicit_zero_legacy_counts_nonzero_only():
     # Only the stored nonzeros should be counted here (legacy behavior)
     assert mask_out.count_nonzero() == 2
     np.testing.assert_array_equal(n_obs_row, np.array([1.0, 1.0]))
-    assert n_data == 2.0
+    assert n_data == pytest.approx(2.0)
     assert n_probe == 0
     assert x_data.shape == (2, 2)
 

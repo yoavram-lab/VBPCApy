@@ -52,7 +52,7 @@ def test_options_overrides_defaults_case_insensitive() -> None:
 
     # Original defopts not mutated
     assert defopts["maxiter"] == 100
-    assert defopts["tol"] == 1e-3
+    assert defopts["tol"] == pytest.approx(1e-3)
 
 
 def test_options_unknown_params_included_with_warning() -> None:
@@ -62,8 +62,8 @@ def test_options_unknown_params_included_with_warning() -> None:
     opts, wrnmsg = _options(defopts, alpha=0.1, BETA=0.2)
 
     # Unknown keys are present, lowercased
-    assert opts["alpha"] == 0.1
-    assert opts["beta"] == 0.2
+    assert opts["alpha"] == pytest.approx(0.1)
+    assert opts["beta"] == pytest.approx(0.2)
 
     # Defaults still present
     assert opts["maxiter"] == 100
@@ -99,7 +99,7 @@ def test_options_mixed_known_and_unknown_keys() -> None:
 
     # Known override
     assert opts["maxiter"] == 200
-    assert opts["tol"] == 1e-3
+    assert opts["tol"] == pytest.approx(1e-3)
 
     # Unknown added with lowercased keys
     assert opts["foo"] == 1

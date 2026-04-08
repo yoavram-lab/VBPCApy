@@ -69,7 +69,7 @@ def _dense_preprocess_like_impl(x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     mask = ~np.isnan(x_proc)
 
     eps = np.finfo(float).eps
-    x_proc[x_proc == 0.0] = eps
+    x_proc[x_proc == 0.0] = eps  # noqa: RUF069  # exact-by-construction
     x_proc[np.isnan(x_proc)] = 0.0
     return x_proc, mask
 
@@ -476,7 +476,7 @@ def test_pca_full_noise_variance_matches_masked_residual() -> None:
     mask = ~np.isnan(x)
     x_proc = x.copy()
     eps = np.finfo(float).eps
-    x_proc[x_proc == 0.0] = eps
+    x_proc[x_proc == 0.0] = eps  # noqa: RUF069  # exact-by-construction
     x_proc[np.isnan(x_proc)] = 0.0
     recon = A @ S + Mu
 

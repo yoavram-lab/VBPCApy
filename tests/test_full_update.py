@@ -157,7 +157,7 @@ def test_build_masks_sparse_basic() -> None:
         n_obs_row,
         np.asarray(mask.sum(axis=1)).ravel(),
     )
-    assert n_data == float(mask.count_nonzero())
+    assert n_data == pytest.approx(float(mask.count_nonzero()))
 
 
 def test_prepare_data_forwards_compat_mode_for_sparse_empty_detection() -> None:
@@ -219,7 +219,7 @@ def test_build_masks_dense_strict_legacy_rewrites_observed_zeros_to_eps() -> Non
 
     assert x_arr[0, 0] == eps
     assert x_arr[1, 1] == eps
-    assert x_arr[0, 1] == 0.0
+    assert x_arr[0, 1] == pytest.approx(0.0)
     assert np.array_equal(mask_arr, np.array([[True, False], [True, True]]))
 
 
@@ -242,9 +242,9 @@ def test_build_masks_dense_modern_keeps_observed_zeros_exact() -> None:
     x_arr = np.asarray(x_norm, dtype=float)
     mask_arr = np.asarray(mask, dtype=bool)
 
-    assert x_arr[0, 0] == 0.0
-    assert x_arr[1, 1] == 0.0
-    assert x_arr[0, 1] == 0.0
+    assert x_arr[0, 0] == pytest.approx(0.0)
+    assert x_arr[1, 1] == pytest.approx(0.0)
+    assert x_arr[0, 1] == pytest.approx(0.0)
     assert np.array_equal(mask_arr, np.array([[True, False], [True, True]]))
 
 
@@ -626,12 +626,16 @@ def test_dense_mask_and_observed_indices_agree_after_normalization() -> None:
     mask_arr = np.asarray(mask, dtype=bool)
 
     # (A) Missing entries become exactly 0.0
-    assert np.all(x_norm_arr[~mask_arr] == 0.0)
+    assert np.all(
+        x_norm_arr[~mask_arr] == 0.0  # noqa: RUF069  # exact-by-construction: zero-filled
+    )
 
     # (B) Observed entries must be nonzero:
     #     - originally nonzero values stay nonzero
     #     - originally observed zeros are replaced by eps
-    assert np.all(x_norm_arr[mask_arr] != 0.0)
+    assert np.all(
+        x_norm_arr[mask_arr] != 0.0  # noqa: RUF069  # exact-by-construction: eps replaces zeros
+    )
 
     # (C) Therefore, observed index sets agree:
     ix_nz, jx_nz = _observed_indices(x_norm_arr)
