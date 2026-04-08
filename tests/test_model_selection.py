@@ -691,3 +691,68 @@ def test_cross_validate_components_one_se_vs_global_min() -> None:
 
     # 1-SE rule should pick k <= global min k (more parsimonious).
     assert best_k_1se <= best_k_min
+
+
+# ---------------------------------------------------------------------------
+# Marginal variance on best model (#72)
+# ---------------------------------------------------------------------------
+
+
+def test_select_n_components_best_model_has_variance() -> None:
+    """variance_ is populated on best_model when compute_explained_variance=True."""
+    rng = np.random.default_rng(0)
+    x = _low_rank_data(rng, n_features=6, n_samples=10, rank=2)
+
+    cfg = SelectionConfig(
+        metric="cost",
+        return_best_model=True,
+        compute_explained_variance=True,
+    )
+    _, _, _, best_model = select_n_components(
+        x, components=[1, 2, 3], config=cfg, maxiters=80, verbose=0
+    )
+
+    assert best_model is not None
+    assert best_model.variance_ is not None
+    assert best_model.variance_.shape == x.shape
+    assert np.all(np.isfinite(best_model.variance_))
+    assert np.all(best_model.variance_ >= 0)
+
+
+def test_select_n_components_best_model_variance_with_missing() -> None:
+    """variance_ is populated when data contains NaN entries."""
+    rng = np.random.default_rng(1)
+    x = _low_rank_data(rng, n_features=6, n_samples=20, rank=2)
+    x[rng.random(x.shape) < 0.15] = np.nan
+
+    cfg = SelectionConfig(
+        metric="prms",
+        return_best_model=True,
+        compute_explained_variance=True,
+    )
+    _, _, _, best_model = select_n_components(
+        x, components=[1, 2], config=cfg, maxiters=80, verbose=0
+    )
+
+    assert best_model is not None
+    assert best_model.variance_ is not None
+    assert best_model.variance_.shape == x.shape
+    assert np.all(np.isfinite(best_model.variance_))
+
+
+def test_select_n_components_no_variance_without_diagnostics() -> None:
+    """variance_ stays None when compute_explained_variance=False."""
+    rng = np.random.default_rng(2)
+    x = _low_rank_data(rng, n_features=6, n_samples=10, rank=2)
+
+    cfg = SelectionConfig(
+        metric="cost",
+        return_best_model=True,
+        compute_explained_variance=False,
+    )
+    _, _, _, best_model = select_n_components(
+        x, components=[1, 2], config=cfg, maxiters=80, verbose=0
+    )
+
+    assert best_model is not None
+    assert best_model.variance_ is None
