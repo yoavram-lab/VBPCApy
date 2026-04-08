@@ -19,7 +19,7 @@ def test_subtract_mu_from_sparse_smoke() -> None:
     out = subtract_mu_from_sparse(data, indices, indptr, shape, mu)
     assert out.shape == data.shape
     assert np.all(np.isfinite(out))
-    assert np.all(out != 0.0)  # exact-by-construction
+    assert np.all(out != 0.0)  # noqa: RUF069  # exact-by-construction
 
 
 def test_subtract_mu_from_sparse_rejects_too_short_mu() -> None:

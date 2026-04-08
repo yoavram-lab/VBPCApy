@@ -182,7 +182,7 @@ def test_normalize_init_mapping_fieldnames_and_errors(
 
     struct_out = mon._normalize_init(DummyStruct())
     assert np.array_equal(struct_out["A"], np.array([[1.0]]))
-    assert struct_out["V"] == 3.0
+    assert struct_out["V"] == pytest.approx(3.0)
 
     with pytest.raises(ValueError, match=re.escape(ERR_INIT_TYPE)):
         mon._normalize_init(123)  # type: ignore[arg-type]

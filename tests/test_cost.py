@@ -1329,7 +1329,7 @@ def test_cost_regression_sparse_cf_full_octave_optional(
     eps = np.finfo(np.float64).eps
     Xdense = np.zeros((n1, n2), dtype=np.float64)
     Xdense[obs] = vals[obs]
-    Xdense[(obs) & (Xdense == 0.0)] = eps  # legacy "observed zeros stored"
+    Xdense[(obs) & (Xdense == 0.0)] = eps  # noqa: RUF069
 
     X = sp.csr_matrix(Xdense)
 
