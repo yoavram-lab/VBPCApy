@@ -1,0 +1,27 @@
+name: Documentation
+description: Report missing, unclear, or incorrect documentation
+labels: ["documentation"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: What needs documenting?
+      description: Describe what is missing, unclear, or wrong.
+    validations:
+      required: true
+
+  - type: textarea
+    id: location
+    attributes:
+      label: Where?
+      description: Link to the relevant page, docstring, or section (if applicable).
+    validations:
+      required: false
+
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: Suggested improvement
+      description: How you think it should be documented.
+    validations:
+      required: false
