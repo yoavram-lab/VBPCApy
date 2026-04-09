@@ -1456,3 +1456,62 @@ def test_ard_stability_with_xprobe_via_estimator() -> None:
 
     assert model.components_ is not None
     assert model.components_.shape == (n_features, true_k)
+
+
+def test_pca_full_hp_params_are_passed_from_opts() -> None:
+    """hp_va, hp_vb, hp_v set via opts reach IterationConfig."""
+    rng = np.random.default_rng(99)
+    x = rng.standard_normal((6, 8))
+
+    # Default (hp_v=0.001) vs. strong prior (hp_v=10.0) should produce
+    # different noise variance estimates for a small matrix.
+    out_default = pca_full(
+        x,
+        n_components=2,
+        maxiters=30,
+        verbose=0,
+        rotate2pca=1,
+    )
+    out_strong = pca_full(
+        x,
+        n_components=2,
+        maxiters=30,
+        verbose=0,
+        rotate2pca=1,
+        hp_v=10.0,
+    )
+
+    nv_default = float(out_default["V"])
+    nv_strong = float(out_strong["V"])
+    # Strong prior on noise should pull the estimate — they shouldn't match.
+    assert nv_default != pytest.approx(nv_strong, rel=1e-3)
+
+
+def test_pca_full_hp_va_affects_ard_pruning() -> None:
+    """Strong hp_va prior should influence component variance pruning."""
+    rng = np.random.default_rng(77)
+    x = rng.standard_normal((6, 10))
+
+    out_weak = pca_full(
+        x,
+        n_components=3,
+        maxiters=120,
+        verbose=0,
+        rotate2pca=1,
+        hp_va=1e-6,
+        niter_broadprior=0,
+    )
+    out_strong = pca_full(
+        x,
+        n_components=3,
+        maxiters=120,
+        verbose=0,
+        rotate2pca=1,
+        hp_va=10.0,
+        niter_broadprior=0,
+    )
+
+    va_weak = np.asarray(out_weak["Va"], dtype=float)
+    va_strong = np.asarray(out_strong["Va"], dtype=float)
+    # Different priors → different component variances.
+    assert not np.allclose(va_weak, va_strong, rtol=0.1)
