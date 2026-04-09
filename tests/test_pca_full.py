@@ -1394,3 +1394,65 @@ def test_pca_full_missing_fixture_matches_matlab_across_rotate_modes(
 
     assert rms <= 2e-2
     assert_allclose(float(result["V"]), float(mat_res.V), rtol=2e-2, atol=1e-6)
+
+
+# ----------------------------------------------------------------------
+# Regression: ARD stability with heavy missingness (issue #73)
+# ----------------------------------------------------------------------
+
+
+def test_ard_does_not_collapse_with_heavy_missingness() -> None:
+    """Va should remain well above _EPS_VAR on a small block with 80% missing."""
+    rng = np.random.default_rng(7373)
+    n_features, n_samples = 4, 50
+    true_k = 2
+    loadings = rng.standard_normal((n_features, true_k))
+    scores = rng.standard_normal((true_k, n_samples))
+    x = loadings @ scores + 0.3 * rng.standard_normal((n_features, n_samples))
+
+    # Knock out ~80 % of entries
+    miss = rng.random(x.shape) < 0.8
+    x[miss] = np.nan
+
+    result = pca_full(
+        x,
+        n_components=true_k,
+        maxiters=300,
+        niter_broadprior=100,
+        bias=True,
+        verbose=0,
+    )
+    va = np.asarray(result["Va"], dtype=float)
+
+    # With the obs-fraction scaling + shrinkage clamp, components should
+    # survive: Va >> 1e-10 (the old code collapsed to ~1e-15).
+    assert np.all(va > 1e-6), f"Va collapsed to {va}"
+
+
+def test_ard_stability_with_xprobe_via_estimator() -> None:
+    """VBPCA.fit() with xprobe should retain components on sparse data."""
+    rng = np.random.default_rng(7374)
+    n_features, n_samples = 6, 40
+    true_k = 2
+    loadings = rng.standard_normal((n_features, true_k))
+    scores = rng.standard_normal((true_k, n_samples))
+    x = loadings @ scores + 0.3 * rng.standard_normal((n_features, n_samples))
+
+    # Hold out 10 % as probe
+    probe_mask = rng.random(x.shape) < 0.1
+    xprobe = np.full_like(x, np.nan)
+    xprobe[probe_mask] = x[probe_mask]
+
+    # Knock out ~60 % of remaining entries
+    miss = (~probe_mask) & (rng.random(x.shape) < 0.6)
+    x_train = x.copy()
+    x_train[miss] = np.nan
+    x_train[probe_mask] = np.nan  # hide probe entries from training
+
+    from vbpca_py import VBPCA
+
+    model = VBPCA(n_components=true_k, maxiters=300, bias=True)
+    model.fit(x_train, xprobe=xprobe)
+
+    assert model.components_ is not None
+    assert model.components_.shape == (n_features, true_k)

@@ -66,7 +66,10 @@ class VBPCA:
         self._muv: np.ndarray | None = None
 
     def fit(  # noqa: C901, PLR0912, PLR0914, PLR0915
-        self, x: Matrix, mask: Matrix | None = None
+        self,
+        x: Matrix,
+        mask: Matrix | None = None,
+        xprobe: Matrix | None = None,
     ) -> VBPCA:
         """
         Fit the model to data, optionally supplying a mask.
@@ -75,6 +78,11 @@ class VBPCA:
             x: Data matrix of shape (n_features, n_samples).
             mask: Optional boolean mask of the same shape as x, where True
                 indicates observed entries.
+            xprobe: Optional probe matrix of the same shape as x used for
+                early-stopping diagnostics.  Entries that are not ``NaN``
+                (dense) or explicitly stored (sparse) are treated as held-out
+                observations.  When provided, the model monitors probe-RMS
+                and can stop early before ARD over-prunes components.
 
         Returns:
             The fitted estimator instance.
@@ -89,6 +97,8 @@ class VBPCA:
         if self.maxiters is not None:
             opts["maxiters"] = self.maxiters
         opts.update(self.opts)
+        if xprobe is not None:
+            opts["xprobe"] = xprobe
 
         max_dense_bytes = resolve_max_dense_bytes(
             opts.get("max_dense_bytes", 2_000_000_000)

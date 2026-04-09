@@ -1260,6 +1260,8 @@ def _ensure_phase_timing_keys(lc: dict[str, list[float]]) -> None:
 def _update_hyperpriors_phase(ctx: IterationContext) -> None:
     m = ctx.training.model
     cfg = ctx.cfg
+    total = ctx.prepared.n_features * ctx.prepared.n_samples
+    obs_frac = ctx.prepared.n_data / total if total > 0 else 1.0
     m.va, m.vmu = _update_hyperpriors(
         HyperpriorContext(
             iteration=ctx.iteration,
@@ -1275,6 +1277,7 @@ def _update_hyperpriors_phase(ctx: IterationContext) -> None:
             hp_vb=cfg.hp_vb,
             va=m.va,
             vmu=float(m.vmu),
+            obs_fraction=obs_frac,
         )
     )
 

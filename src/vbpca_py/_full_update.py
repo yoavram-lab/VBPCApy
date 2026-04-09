@@ -49,6 +49,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _EPS_VAR = 1e-15  # minimum variance for numerical safety
+_MAX_VA_SHRINK = 0.1  # maximum per-iteration shrinkage factor for Va
 ChoFactor = tuple[np.ndarray, bool]
 CovarianceStore = MutableSequence[np.ndarray] | np.ndarray
 
@@ -218,6 +219,7 @@ class HyperpriorContext:
     hp_vb: float
     va: np.ndarray
     vmu: float
+    obs_fraction: float = 1.0
 
 
 @dataclass
@@ -755,13 +757,18 @@ def _initialize_parameters(
 def _update_hyperpriors(ctx: HyperpriorContext) -> tuple[np.ndarray, float]:
     """Update Va and Vmu after a broad-prior warmup period.
 
+    When data are missing the effective evidence for each loading column is
+    reduced.  We scale the denominator by ``obs_fraction`` (observed entries /
+    total entries) so the ARD prior does not over-prune components on blocks
+    with a high fraction of missing values.
+
     Returns:
         Updated ``va`` and ``vmu`` hyperpriors.
     """
     if not ctx.use_prior or ctx.iteration <= ctx.niter_broadprior:
         return ctx.va, ctx.vmu
 
-    denom = float(ctx.n_features + 2.0 * ctx.hp_vb)
+    denom = float(ctx.n_features + 2.0 * ctx.hp_vb) / max(ctx.obs_fraction, _EPS_VAR)
 
     vmu = ctx.vmu
     if ctx.bias_enabled:
@@ -777,6 +784,7 @@ def _update_hyperpriors(ctx: HyperpriorContext) -> tuple[np.ndarray, float]:
 
     va_new = (va_new + 2.0 * ctx.hp_va) / denom
     va_new = np.maximum(va_new, _EPS_VAR)
+    va_new = np.maximum(va_new, ctx.va * _MAX_VA_SHRINK)
 
     return va_new, vmu
 
