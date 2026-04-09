@@ -1515,3 +1515,65 @@ def test_pca_full_hp_va_affects_ard_pruning() -> None:
     va_strong = np.asarray(out_strong["Va"], dtype=float)
     # Different priors → different component variances.
     assert not np.allclose(va_weak, va_strong, rtol=0.1)
+
+
+def test_lc_angle_stored_and_correct_length() -> None:
+    """lc["angle"] should exist and have the same length as lc["rms"]."""
+    rng = np.random.default_rng(520)
+    x = rng.standard_normal((8, 12))
+
+    result = pca_full(x, n_components=3, maxiters=10, verbose=0)
+
+    lc = result["lc"]
+    assert "angle" in lc
+    assert len(lc["angle"]) == len(lc["rms"])
+
+
+def test_lc_angle_first_entry_is_nan() -> None:
+    """The initial angle entry (before any iteration) should be NaN."""
+    rng = np.random.default_rng(521)
+    x = rng.standard_normal((8, 12))
+
+    result = pca_full(x, n_components=3, maxiters=5, verbose=0)
+
+    assert np.isnan(result["lc"]["angle"][0])
+
+
+def test_lc_angle_subsequent_entries_are_finite() -> None:
+    """After the first iteration, angle values should be finite in [0, pi/2]."""
+    rng = np.random.default_rng(522)
+    x = rng.standard_normal((8, 12))
+
+    result = pca_full(x, n_components=3, maxiters=10, verbose=0)
+
+    angles = np.asarray(result["lc"]["angle"][1:], dtype=float)
+    assert np.all(np.isfinite(angles))
+    assert np.all(angles >= 0.0)
+    assert np.all(angles <= np.pi / 2 + 1e-10)
+
+
+def test_lc_angle_with_angle_every_has_nan_on_skipped() -> None:
+    """When angle_every > 1, skipped iterations should store NaN."""
+    rng = np.random.default_rng(523)
+    x = rng.standard_normal((8, 12))
+
+    result = pca_full(
+        x,
+        n_components=3,
+        maxiters=8,
+        verbose=0,
+        angle_every=3,
+    )
+
+    lc = result["lc"]
+    angles = lc["angle"]
+    assert len(angles) == len(lc["rms"])
+    # iter_index = len(rms) at call time = i+1 for lc index i.
+    # Angle computed when (i+1) % angle_every == 0; NaN otherwise.
+    for i, a in enumerate(angles):
+        if i == 0:
+            assert np.isnan(a), "index 0 should be NaN (init)"
+        elif (i + 1) % 3 == 0:
+            assert np.isfinite(a), f"index {i} should be finite (angle_every=3)"
+        else:
+            assert np.isnan(a), f"index {i} should be NaN (skipped)"
