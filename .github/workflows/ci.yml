@@ -11,6 +11,33 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    outputs:
+      octave: ${{ steps.filter.outputs.octave }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            octave:
+              - 'src/vbpca_py/_rotate.py'
+              - 'src/vbpca_py/_rms.py'
+              - 'src/vbpca_py/_mean.py'
+              - 'src/vbpca_py/_cost.py'
+              - 'src/vbpca_py/_sparse_error.py'
+              - 'tests/test_rotate.py'
+              - 'tests/test_rms_regression.py'
+              - 'tests/test_mean.py'
+              - 'tests/test_cost.py'
+              - 'tests/test_octave_parity_smoke.py'
+              - 'tools/**'
+              - 'pyproject.toml'
+              - '.github/workflows/ci.yml'
+
   lint:
     runs-on: ubuntu-latest
     steps:
@@ -54,6 +81,8 @@ jobs:
           --cov-fail-under=89
 
   octave-parity:
+    needs: changes
+    if: needs.changes.outputs.octave == 'true'
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
