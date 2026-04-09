@@ -133,3 +133,45 @@ def test_get_options_rejects_invalid_compat_mode() -> None:
     model = VBPCA(n_components=2, compat_mode="legacy")
     with pytest.raises(ValueError, match="compat_mode"):
         _ = model.get_options()
+
+
+def test_hp_params_stored_on_estimator() -> None:
+    """hp_va, hp_vb, hp_v should be stored and passed through to options."""
+    model = VBPCA(n_components=2, hp_va=0.1, hp_vb=0.5, hp_v=1.0)
+    assert model.hp_va == pytest.approx(0.1)
+    assert model.hp_vb == pytest.approx(0.5)
+    assert model.hp_v == pytest.approx(1.0)
+
+    opts = model.get_options()
+    assert opts["hp_va"] == pytest.approx(0.1)
+    assert opts["hp_vb"] == pytest.approx(0.5)
+    assert opts["hp_v"] == pytest.approx(1.0)
+
+
+def test_hp_params_default_to_none() -> None:
+    """When not set, hp params should be None and options use library defaults."""
+    model = VBPCA(n_components=2)
+    assert model.hp_va is None
+    assert model.hp_vb is None
+    assert model.hp_v is None
+
+    opts = model.get_options()
+    assert opts["hp_va"] == pytest.approx(0.001)
+    assert opts["hp_vb"] == pytest.approx(0.001)
+    assert opts["hp_v"] == pytest.approx(0.001)
+
+
+def test_hp_params_affect_fit() -> None:
+    """Fitting with different hp_v should produce different noise variance."""
+    rng = np.random.default_rng(42)
+    x = rng.standard_normal((6, 8))
+
+    m_default = VBPCA(n_components=2, maxiters=30, verbose=0)
+    m_default.fit(x)
+
+    m_strong = VBPCA(n_components=2, maxiters=30, verbose=0, hp_v=10.0)
+    m_strong.fit(x)
+
+    assert m_default.noise_variance_ != pytest.approx(
+        m_strong.noise_variance_, rel=1e-3
+    )

@@ -1196,9 +1196,9 @@ def _run_training_loop(
 
     # Hyperparameters for Va, Vmu, V (kept here for compatibility).
     cfg = IterationConfig(
-        hp_va=0.001,
-        hp_vb=0.001,
-        hp_v=0.001,
+        hp_va=_float_opt(opts.get("hp_va", 0.001), default=0.001),
+        hp_vb=_float_opt(opts.get("hp_vb", 0.001), default=0.001),
+        hp_v=_float_opt(opts.get("hp_v", 0.001), default=0.001),
         eye_components=np.eye(training.model.s.shape[0], dtype=float),
         use_prior=use_prior,
         rotate_each_iter=bool(opts.get("rotate2pca", 0)),
@@ -1932,6 +1932,9 @@ def _build_options(kwargs: Mapping[str, object]) -> dict[str, object]:
         "minangle": 1e-8,
         "algorithm": "vb",
         "niter_broadprior": 100,
+        "hp_va": 0.001,
+        "hp_vb": 0.001,
+        "hp_v": 0.001,
         "earlystop": False,
         "rmsstop": np.array([100, 1e-4, 1e-3]),
         "cfstop": np.array([]),

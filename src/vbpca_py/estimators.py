@@ -21,7 +21,7 @@ __all__ = ["VBPCA"]
 class VBPCA:
     """Variational Bayesian PCA with a sklearn-like interface."""
 
-    def __init__(
+    def __init__(  # noqa: PLR0913
         self,
         n_components: int,
         *,
@@ -29,6 +29,9 @@ class VBPCA:
         maxiters: int | None = None,
         tol: float | None = None,
         verbose: int | bool = 0,
+        hp_va: float | None = None,
+        hp_vb: float | None = None,
+        hp_v: float | None = None,
         **opts: object,
     ) -> None:
         """
@@ -40,6 +43,9 @@ class VBPCA:
             maxiters: Maximum number of iterations for the training loop.
             tol: Tolerance for convergence.
             verbose: Verbosity level; can be an integer or a boolean.
+            hp_va: Prior hyperparameter for loadings variance (default 0.001).
+            hp_vb: Prior hyperparameter for score variance (default 0.001).
+            hp_v: Prior hyperparameter for noise variance (default 0.001).
             **opts: Additional options passed to the underlying PCA_FULL implementation.
         """
         self.n_components = n_components
@@ -47,6 +53,9 @@ class VBPCA:
         self.maxiters = maxiters
         self.tol = tol
         self.verbose = int(verbose)
+        self.hp_va = hp_va
+        self.hp_vb = hp_vb
+        self.hp_v = hp_v
         self.opts = opts
         self.components_: np.ndarray | None = None
         self.scores_: np.ndarray | None = None
@@ -96,6 +105,12 @@ class VBPCA:
         }
         if self.maxiters is not None:
             opts["maxiters"] = self.maxiters
+        if self.hp_va is not None:
+            opts["hp_va"] = self.hp_va
+        if self.hp_vb is not None:
+            opts["hp_vb"] = self.hp_vb
+        if self.hp_v is not None:
+            opts["hp_v"] = self.hp_v
         opts.update(self.opts)
         if xprobe is not None:
             opts["xprobe"] = xprobe
@@ -220,6 +235,12 @@ class VBPCA:
         }
         if self.maxiters is not None:
             opts["maxiters"] = self.maxiters
+        if self.hp_va is not None:
+            opts["hp_va"] = self.hp_va
+        if self.hp_vb is not None:
+            opts["hp_vb"] = self.hp_vb
+        if self.hp_v is not None:
+            opts["hp_v"] = self.hp_v
         opts.update(self.opts)
         return _build_options(opts)
 
