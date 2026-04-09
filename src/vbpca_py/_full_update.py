@@ -49,6 +49,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _EPS_VAR = 1e-15  # minimum variance for numerical safety
+_MAX_VA_SHRINK = 0.1  # maximum per-iteration shrinkage factor for Va
 ChoFactor = tuple[np.ndarray, bool]
 CovarianceStore = MutableSequence[np.ndarray] | np.ndarray
 
@@ -783,6 +784,7 @@ def _update_hyperpriors(ctx: HyperpriorContext) -> tuple[np.ndarray, float]:
 
     va_new = (va_new + 2.0 * ctx.hp_va) / denom
     va_new = np.maximum(va_new, _EPS_VAR)
+    va_new = np.maximum(va_new, ctx.va * _MAX_VA_SHRINK)
 
     return va_new, vmu
 
