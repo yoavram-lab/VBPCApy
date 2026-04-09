@@ -651,6 +651,7 @@ def _initial_monitoring(
         "prms": [float(prms)],
         "time": [0.0],
         "cost": [float("nan")],
+        "angle": [float("nan")],
         "phase_scores_sec": [0.0],
         "phase_loadings_sec": [0.0],
         "phase_rms_sec": [0.0],

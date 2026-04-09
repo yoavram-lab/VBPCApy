@@ -356,8 +356,10 @@ def _angle_for_iteration(state: ConvergenceState) -> tuple[float, float | None]:
     angle_every = max(1, _coerce_int(cast("Any", state.opts.get("angle_every", 1)), 1))
     iter_index = len(state.lc["rms"])
     if iter_index % angle_every != 0:
+        state.lc["angle"].append(float("nan"))
         return float("inf"), None
 
     angles = subspace_angles(state.loadings, state.loadings_old)
     angle_a = float(np.max(angles))
+    state.lc["angle"].append(angle_a)
     return angle_a, angle_a
