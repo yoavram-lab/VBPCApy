@@ -175,3 +175,38 @@ def test_hp_params_affect_fit() -> None:
     assert m_default.noise_variance_ != pytest.approx(
         m_strong.noise_variance_, rel=1e-3
     )
+
+
+def test_niter_broadprior_stored_on_estimator() -> None:
+    """niter_broadprior should be stored and passed through to options."""
+    model = VBPCA(n_components=2, niter_broadprior=10)
+    assert model.niter_broadprior == 10
+
+    opts = model.get_options()
+    assert opts["niter_broadprior"] == 10
+
+
+def test_niter_broadprior_default_is_none() -> None:
+    """When not set, niter_broadprior is None and options use library default."""
+    model = VBPCA(n_components=2)
+    assert model.niter_broadprior is None
+
+    opts = model.get_options()
+    assert opts["niter_broadprior"] == 100
+
+
+def test_niter_broadprior_affects_iteration_count() -> None:
+    """Lower niter_broadprior should allow earlier convergence."""
+    rng = np.random.default_rng(42)
+    w = rng.standard_normal((10, 2))
+    s = rng.standard_normal((2, 30))
+    x = w @ s + 0.1 * rng.standard_normal((10, 30))
+
+    from vbpca_py._pca_full import pca_full
+
+    r_default = pca_full(x, 2, bias=True, maxiters=200, niter_broadprior=100)
+    r_low = pca_full(x, 2, bias=True, maxiters=200, niter_broadprior=5)
+
+    iters_default = len(r_default["lc"]["rms"])
+    iters_low = len(r_low["lc"]["rms"])
+    assert iters_low <= iters_default
