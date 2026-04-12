@@ -20,6 +20,7 @@ from vbpca_py import (
     SelectionConfig,
     select_n_components,
 )
+from vbpca_py._pca_full import pca_full
 
 # -- fixtures --
 
@@ -202,3 +203,48 @@ def test_autoencoder_vbpca_roundtrip() -> None:
         np.linalg.norm(rec_cont - orig_cont) / (np.linalg.norm(orig_cont) + 1e-12)
     )
     assert rel_error < 1.5, f"Continuous block relative error {rel_error:.3f} too large"
+
+
+# -- convergence criteria integration tests --
+
+
+def test_cfstop_rel_terminates_fit(
+    low_rank_dense: tuple[np.ndarray, np.ndarray, int, float],
+) -> None:
+    """cfstop_rel criterion terminates the fit before maxiters."""
+    _x_clean, x_noisy, true_rank, _noise_std = low_rank_dense
+    result = pca_full(x_noisy, true_rank, bias=True, maxiters=500, cfstop_rel=1e-6)
+    n_iters = len(result["lc"]["rms"])
+    assert n_iters < 500
+
+
+def test_composite_stop_terminates_fit(
+    low_rank_dense: tuple[np.ndarray, np.ndarray, int, float],
+) -> None:
+    """composite_stop with angle + elbo_rel terminates the fit."""
+    _x_clean, x_noisy, true_rank, _noise_std = low_rank_dense
+    result = pca_full(
+        x_noisy,
+        true_rank,
+        bias=True,
+        maxiters=500,
+        composite_stop={"angle": 1e-3, "elbo_rel": 1e-5},
+    )
+    n_iters = len(result["lc"]["rms"])
+    assert n_iters < 500
+
+
+def test_patience_delays_convergence(
+    low_rank_dense: tuple[np.ndarray, np.ndarray, int, float],
+) -> None:
+    """patience>1 causes at least as many iterations as patience=1."""
+    _x_clean, x_noisy, true_rank, _noise_std = low_rank_dense
+
+    r1 = pca_full(
+        x_noisy, true_rank, bias=True, maxiters=500, cfstop_rel=1e-6, patience=1
+    )
+    r5 = pca_full(
+        x_noisy, true_rank, bias=True, maxiters=500, cfstop_rel=1e-6, patience=5
+    )
+
+    assert len(r5["lc"]["rms"]) >= len(r1["lc"]["rms"])

@@ -26,7 +26,7 @@ format:
 
 # Type-check library code (strict mode).
 typecheck:
-	uv run mypy --strict src
+	uv run --extra dev --extra plot mypy --strict src
 
 # Run the test suite quietly.
 test:
