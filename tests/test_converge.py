@@ -320,3 +320,250 @@ def test_cost_plateau_message_contains_window_info() -> None:
     msg = convergence_check(opts, lc, angle_a=1.0, sd_iter=None)
     assert "cost" in msg
     assert "over 2 iterations" in msg
+
+
+# --------------------------------------------------------------------------
+# Relative ELBO decrease (cfstop_rel) behaviour
+# --------------------------------------------------------------------------
+
+
+def test_cfstop_rel_triggers_when_change_small() -> None:
+    """Relative ELBO stop fires when |ΔELBO|/|ELBO| < threshold."""
+    opts = {
+        "minangle": 0.0,
+        "earlystop": False,
+        "rmsstop": None,
+        "cfstop": None,
+        "cfstop_rel": 1e-3,
+    }
+    # |8.0001 - 8.0| / |8.0001| ≈ 1.25e-5 < 1e-3 -> trigger
+    lc = _lc(
+        rms=[0.5, 0.4],
+        prms=[1.0, 0.9],
+        cost=[8.0, 8.0001],
+    )
+    msg = convergence_check(opts, lc, angle_a=1.0, sd_iter=None)
+    assert "relative ELBO" in msg.lower() or "cfstop_rel" in msg
+
+
+def test_cfstop_rel_does_not_trigger_when_change_large() -> None:
+    """Relative ELBO stop should not fire when change is above threshold."""
+    opts = {
+        "minangle": 0.0,
+        "earlystop": False,
+        "rmsstop": None,
+        "cfstop": None,
+        "cfstop_rel": 1e-6,
+    }
+    # |9.0 - 10.0| / |9.0| ≈ 0.111 >> 1e-6
+    lc = _lc(
+        rms=[0.5, 0.4],
+        prms=[1.0, 0.9],
+        cost=[10.0, 9.0],
+    )
+    msg = convergence_check(opts, lc, angle_a=1.0, sd_iter=None)
+    assert msg == ""
+
+
+def test_cfstop_rel_needs_two_cost_values() -> None:
+    """Cannot compute relative change with only one cost value."""
+    opts = {
+        "minangle": 0.0,
+        "earlystop": False,
+        "rmsstop": None,
+        "cfstop": None,
+        "cfstop_rel": 1e-3,
+    }
+    lc = _lc(
+        rms=[0.5],
+        prms=[1.0],
+        cost=[8.0],
+    )
+    msg = convergence_check(opts, lc, angle_a=1.0, sd_iter=None)
+    assert msg == ""
+
+
+def test_cfstop_rel_disabled_when_none() -> None:
+    """cfstop_rel=None should not trigger any stop."""
+    opts = {
+        "minangle": 0.0,
+        "earlystop": False,
+        "rmsstop": None,
+        "cfstop": None,
+        "cfstop_rel": None,
+    }
+    lc = _lc(
+        rms=[0.5, 0.4],
+        prms=[1.0, 0.9],
+        cost=[8.0, 8.0],  # zero change, but disabled
+    )
+    msg = convergence_check(opts, lc, angle_a=1.0, sd_iter=None)
+    assert msg == ""
+
+
+def test_cfstop_rel_message_format() -> None:
+    """The stop message should include the relative change and threshold."""
+    opts = {
+        "minangle": 0.0,
+        "earlystop": False,
+        "rmsstop": None,
+        "cfstop": None,
+        "cfstop_rel": 1e-4,
+    }
+    lc = _lc(
+        rms=[0.5, 0.4],
+        prms=[1.0, 0.9],
+        cost=[100.0, 100.000001],
+    )
+    msg = convergence_check(opts, lc, angle_a=1.0, sd_iter=None)
+    assert "cfstop_rel" in msg
+    assert "1.000e-04" in msg
+
+
+# --------------------------------------------------------------------------
+# ELBO curvature / 2nd difference (cfstop_curv) behaviour
+# --------------------------------------------------------------------------
+
+
+def test_cfstop_curv_triggers_when_curvature_small() -> None:
+    """ELBO curvature stop fires when |Δ²ELBO| < threshold."""
+    opts = {
+        "minangle": 0.0,
+        "earlystop": False,
+        "rmsstop": None,
+        "cfstop": None,
+        "cfstop_rel": None,
+        "cfstop_curv": 1e-3,
+    }
+    # Δ = [-1.0, -0.9999] -> curvature = |(-0.9999) - (-1.0)| = 1e-4 < 1e-3
+    lc = _lc(
+        rms=[0.5, 0.4, 0.3],
+        prms=[1.0, 0.9, 0.8],
+        cost=[10.0, 9.0, 8.0001],
+    )
+    msg = convergence_check(opts, lc, angle_a=1.0, sd_iter=None)
+    assert "curvature" in msg.lower() or "cfstop_curv" in msg
+
+
+def test_cfstop_curv_does_not_trigger_when_curvature_large() -> None:
+    """ELBO curvature stop should not fire when curvature is above threshold."""
+    opts = {
+        "minangle": 0.0,
+        "earlystop": False,
+        "rmsstop": None,
+        "cfstop": None,
+        "cfstop_rel": None,
+        "cfstop_curv": 1e-6,
+    }
+    # Δ = [-1.0, -0.5] -> curvature = |(-0.5) - (-1.0)| = 0.5 >> 1e-6
+    lc = _lc(
+        rms=[0.5, 0.4, 0.3],
+        prms=[1.0, 0.9, 0.8],
+        cost=[10.0, 9.0, 8.5],
+    )
+    msg = convergence_check(opts, lc, angle_a=1.0, sd_iter=None)
+    assert msg == ""
+
+
+def test_cfstop_curv_needs_three_cost_values() -> None:
+    """Cannot compute 2nd difference with fewer than 3 cost values."""
+    opts = {
+        "minangle": 0.0,
+        "earlystop": False,
+        "rmsstop": None,
+        "cfstop": None,
+        "cfstop_rel": None,
+        "cfstop_curv": 1e-3,
+    }
+    lc = _lc(
+        rms=[0.5, 0.4],
+        prms=[1.0, 0.9],
+        cost=[10.0, 9.0],
+    )
+    msg = convergence_check(opts, lc, angle_a=1.0, sd_iter=None)
+    assert msg == ""
+
+
+def test_cfstop_curv_disabled_when_none() -> None:
+    """cfstop_curv=None should not trigger any stop."""
+    opts = {
+        "minangle": 0.0,
+        "earlystop": False,
+        "rmsstop": None,
+        "cfstop": None,
+        "cfstop_rel": None,
+        "cfstop_curv": None,
+    }
+    lc = _lc(
+        rms=[0.5, 0.4, 0.3],
+        prms=[1.0, 0.9, 0.8],
+        cost=[10.0, 10.0, 10.0],  # zero curvature, but disabled
+    )
+    msg = convergence_check(opts, lc, angle_a=1.0, sd_iter=None)
+    assert msg == ""
+
+
+def test_cfstop_curv_message_format() -> None:
+    """The stop message should include the curvature value and threshold."""
+    opts = {
+        "minangle": 0.0,
+        "earlystop": False,
+        "rmsstop": None,
+        "cfstop": None,
+        "cfstop_rel": None,
+        "cfstop_curv": 1e-2,
+    }
+    # Δ = [-1.0, -1.001] -> curvature = 0.001 < 0.01
+    lc = _lc(
+        rms=[0.5, 0.4, 0.3],
+        prms=[1.0, 0.9, 0.8],
+        cost=[10.0, 9.0, 7.999],
+    )
+    msg = convergence_check(opts, lc, angle_a=1.0, sd_iter=None)
+    assert "cfstop_curv" in msg
+
+
+# --------------------------------------------------------------------------
+# Priority: cfstop_rel / cfstop_curv vs other criteria
+# --------------------------------------------------------------------------
+
+
+def test_cost_plateau_has_priority_over_cfstop_rel() -> None:
+    """cfstop (plateau) should fire before cfstop_rel when both are met."""
+    opts = {
+        "minangle": 0.0,
+        "earlystop": False,
+        "rmsstop": None,
+        "cfstop": [2, 1e-3, 1e-3],
+        "cfstop_rel": 1e-3,
+    }
+    # Both cost plateau and relative ELBO would trigger
+    lc = _lc(
+        rms=[0.5, 0.4, 0.3, 0.2],
+        prms=[1.0, 0.9, 0.8, 0.7],
+        cost=[8.0, 7.0, 7.0004, 7.0006],
+    )
+    msg = convergence_check(opts, lc, angle_a=1.0, sd_iter=None)
+    # Cost plateau has priority (checked first)
+    assert "cost" in msg.lower()
+    assert "over 2 iterations" in msg
+
+
+def test_cfstop_rel_has_priority_over_cfstop_curv() -> None:
+    """cfstop_rel should fire before cfstop_curv when both are met."""
+    opts = {
+        "minangle": 0.0,
+        "earlystop": False,
+        "rmsstop": None,
+        "cfstop": None,
+        "cfstop_rel": 1e-3,
+        "cfstop_curv": 1e-3,
+    }
+    # Both would trigger
+    lc = _lc(
+        rms=[0.5, 0.4, 0.3],
+        prms=[1.0, 0.9, 0.8],
+        cost=[10.0, 10.00001, 10.00002],
+    )
+    msg = convergence_check(opts, lc, angle_a=1.0, sd_iter=None)
+    assert "cfstop_rel" in msg

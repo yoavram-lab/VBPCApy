@@ -164,6 +164,64 @@ def _plateau_stop(
     return None
 
 
+def _relative_elbo_stop(
+    cost: np.ndarray,
+    threshold: float | None,
+) -> str | None:
+    """Return a message if relative ELBO decrease is below *threshold*.
+
+    Checks ``|ELBO[t] - ELBO[t-1]| / |ELBO[t]| < threshold``.  This is
+    scale-invariant and more robust than an absolute plateau check.
+
+    Returns:
+        A human-readable stop message, or ``None``.
+    """
+    if threshold is None or threshold <= 0 or cost.size < 2:
+        return None
+
+    curr, prev = cost[-1], cost[-2]
+    if not (np.isfinite(curr) and np.isfinite(prev)):
+        return None
+
+    rel_change = abs(curr - prev) / (abs(curr) + np.finfo(float).eps)
+    if rel_change < threshold:
+        return (
+            f"Stop: relative ELBO change {rel_change:.3e} "
+            f"is below cfstop_rel = {threshold:.3e}."
+        )
+    return None
+
+
+def _elbo_curvature_stop(
+    cost: np.ndarray,
+    threshold: float | None,
+) -> str | None:
+    """Return a message if ELBO curvature (2nd difference) is below *threshold*.
+
+    Checks ``|ΔELBO[t] - ΔELBO[t-1]| < threshold``, i.e. whether the
+    *rate of improvement* has itself stabilised.
+
+    Returns:
+        A human-readable stop message, or ``None``.
+    """
+    if threshold is None or threshold <= 0 or cost.size < 3:
+        return None
+
+    d1 = cost[-1] - cost[-2]
+    d0 = cost[-2] - cost[-3]
+
+    if not (np.isfinite(d1) and np.isfinite(d0)):
+        return None
+
+    curvature = abs(d1 - d0)
+    if curvature < threshold:
+        return (
+            f"Stop: ELBO curvature {curvature:.3e} "
+            f"is below cfstop_curv = {threshold:.3e}."
+        )
+    return None
+
+
 def _slowing_down_message(sd_iter: int | None) -> str | None:
     """Return a slowing-down message if sd_iter hits the threshold."""
     if sd_iter is not None and sd_iter == 40:
@@ -171,6 +229,39 @@ def _slowing_down_message(sd_iter: int | None) -> str | None:
             "Slowing-down stop: step size repeatedly reduced. "
             "Consider changing the gradient type or learning rates."
         )
+    return None
+
+
+def _cost_criteria(
+    opts: Mapping[str, Any],
+    cost: np.ndarray,
+) -> str | None:
+    """Evaluate all cost/ELBO-based stopping criteria in priority order.
+
+    Returns:
+        The first triggered message, or ``None``.
+    """
+    # Cost plateau
+    cfstop = opts.get("cfstop")
+    if cost.size >= 2 and cfstop is not None:
+        plateau_msg = _plateau_stop(cost, cfstop, "cost")
+        if plateau_msg:
+            return plateau_msg
+
+    # Relative ELBO decrease
+    cfstop_rel = opts.get("cfstop_rel")
+    if cfstop_rel is not None:
+        rel_msg = _relative_elbo_stop(cost, float(cfstop_rel))
+        if rel_msg:
+            return rel_msg
+
+    # ELBO curvature (2nd difference)
+    cfstop_curv = opts.get("cfstop_curv")
+    if cfstop_curv is not None:
+        curv_msg = _elbo_curvature_stop(cost, float(cfstop_curv))
+        if curv_msg:
+            return curv_msg
+
     return None
 
 
@@ -193,8 +284,8 @@ def convergence_check(
     1. Subspace-angle stop (``minangle``).
     2. Early stopping based on probe RMS (``earlystop``).
     3. RMS plateau stop (``rmsstop = [window, abs_tol, rel_tol]``).
-    4. Cost plateau stop (``cfstop = [window, abs_tol, rel_tol]``).
-    5. “Slowing-down'' stop based on ``sd_iter`` (gradient backtracking).
+    4. Cost / ELBO criteria (``cfstop``, ``cfstop_rel``, ``cfstop_curv``).
+    5. "Slowing-down'' stop based on ``sd_iter`` (gradient backtracking).
 
     Returns:
         A non-empty convergence message when a criterion triggers,
@@ -221,12 +312,10 @@ def convergence_check(
         if plateau_msg:
             return plateau_msg
 
-    # 4. Cost plateau
-    cfstop = opts.get("cfstop")
-    if cost.size >= 2 and cfstop is not None:
-        plateau_msg = _plateau_stop(cost, cfstop, "cost")
-        if plateau_msg:
-            return plateau_msg
+    # 4. Cost / ELBO criteria
+    cost_msg = _cost_criteria(opts, cost)
+    if cost_msg:
+        return cost_msg
 
     # 5. Slowing-down criterion
     slow_msg = _slowing_down_message(sd_iter)

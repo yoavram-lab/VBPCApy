@@ -1938,6 +1938,8 @@ def _build_options(kwargs: Mapping[str, object]) -> dict[str, object]:
         "earlystop": False,
         "rmsstop": np.array([100, 1e-4, 1e-3]),
         "cfstop": np.array([]),
+        "cfstop_rel": None,
+        "cfstop_curv": None,
         "verbose": 1,
         "num_cpu": None,
         "num_cpu_score_update": None,
