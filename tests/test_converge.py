@@ -567,3 +567,157 @@ def test_cfstop_rel_has_priority_over_cfstop_curv() -> None:
     )
     msg = convergence_check(opts, lc, angle_a=1.0, sd_iter=None)
     assert "cfstop_rel" in msg
+
+
+# --------------------------------------------------------------------------
+# Composite stop (composite_stop) behaviour
+# --------------------------------------------------------------------------
+
+
+def test_composite_stop_all_met() -> None:
+    """Composite stop triggers when ALL sub-criteria are satisfied."""
+    opts = {
+        "minangle": 0.0,
+        "earlystop": False,
+        "rmsstop": None,
+        "cfstop": None,
+        "cfstop_rel": None,
+        "cfstop_curv": None,
+        "composite_stop": {"angle": 1e-3, "rms": 1e-3},
+    }
+    # angle_a=1e-4 < 1e-3 ✓; rms rel change ≈ 2.5e-4 < 1e-3 ✓
+    lc = _lc(
+        rms=[0.5, 0.4, 0.4001],
+        prms=[1.0, 0.9, 0.8],
+        cost=[10.0, 9.0, 8.0],
+    )
+    msg = convergence_check(opts, lc, angle_a=1e-4, sd_iter=None)
+    assert "composite" in msg.lower()
+    assert "angle" in msg.lower()
+    assert "rms_rel" in msg.lower()
+
+
+def test_composite_stop_partial_not_met() -> None:
+    """Composite stop does NOT trigger when only some sub-criteria are met."""
+    opts = {
+        "minangle": 0.0,
+        "earlystop": False,
+        "rmsstop": None,
+        "cfstop": None,
+        "cfstop_rel": None,
+        "cfstop_curv": None,
+        "composite_stop": {"angle": 1e-3, "rms": 1e-6},
+    }
+    # angle met (1e-4 < 1e-3), but rms rel change ≈ 0.25 >> 1e-6
+    lc = _lc(
+        rms=[0.5, 0.4, 0.3],
+        prms=[1.0, 0.9, 0.8],
+        cost=[10.0, 9.0, 8.0],
+    )
+    msg = convergence_check(opts, lc, angle_a=1e-4, sd_iter=None)
+    assert msg == ""
+
+
+def test_composite_stop_with_elbo_rel() -> None:
+    """Composite stop works with the elbo_rel sub-criterion."""
+    opts = {
+        "minangle": 0.0,
+        "earlystop": False,
+        "rmsstop": None,
+        "cfstop": None,
+        "cfstop_rel": None,
+        "cfstop_curv": None,
+        "composite_stop": {"angle": 1e-3, "rms": 1e-3, "elbo_rel": 1e-3},
+    }
+    # All three met
+    lc = _lc(
+        rms=[0.5, 0.4, 0.4001],
+        prms=[1.0, 0.9, 0.8],
+        cost=[8.0, 8.0001, 8.00015],
+    )
+    msg = convergence_check(opts, lc, angle_a=1e-4, sd_iter=None)
+    assert "composite" in msg.lower()
+    assert "elbo_rel" in msg.lower()
+
+
+def test_composite_stop_elbo_rel_not_met() -> None:
+    """Composite stop fails when elbo_rel sub-criterion is not met."""
+    opts = {
+        "minangle": 0.0,
+        "earlystop": False,
+        "rmsstop": None,
+        "cfstop": None,
+        "cfstop_rel": None,
+        "cfstop_curv": None,
+        "composite_stop": {"angle": 1e-3, "elbo_rel": 1e-8},
+    }
+    # angle met, but ELBO change is large
+    lc = _lc(
+        rms=[0.5, 0.4],
+        prms=[1.0, 0.9],
+        cost=[10.0, 9.0],
+    )
+    msg = convergence_check(opts, lc, angle_a=1e-4, sd_iter=None)
+    assert msg == ""
+
+
+def test_composite_stop_disabled_when_none() -> None:
+    """composite_stop=None should not trigger any stop."""
+    opts = {
+        "minangle": 0.0,
+        "earlystop": False,
+        "rmsstop": None,
+        "cfstop": None,
+        "cfstop_rel": None,
+        "cfstop_curv": None,
+        "composite_stop": None,
+    }
+    lc = _lc(
+        rms=[0.5, 0.4, 0.4],
+        prms=[1.0, 0.9, 0.8],
+        cost=[8.0, 8.0, 8.0],
+    )
+    msg = convergence_check(opts, lc, angle_a=1e-10, sd_iter=None)
+    assert msg == ""
+
+
+def test_composite_stop_unknown_key_raises() -> None:
+    """Unknown keys in composite_stop should raise ValueError."""
+    import pytest
+
+    opts = {
+        "minangle": 0.0,
+        "earlystop": False,
+        "rmsstop": None,
+        "cfstop": None,
+        "cfstop_rel": None,
+        "cfstop_curv": None,
+        "composite_stop": {"angle": 1e-3, "bogus": 0.1},
+    }
+    lc = _lc(
+        rms=[0.5, 0.4],
+        prms=[1.0, 0.9],
+        cost=[10.0, 9.0],
+    )
+    with pytest.raises(ValueError, match="Unknown composite_stop key"):
+        convergence_check(opts, lc, angle_a=1e-4, sd_iter=None)
+
+
+def test_individual_criteria_still_fire_with_composite_unset() -> None:
+    """Individual criteria still work when composite_stop is None."""
+    opts = {
+        "minangle": 1e-3,
+        "earlystop": False,
+        "rmsstop": None,
+        "cfstop": None,
+        "cfstop_rel": None,
+        "cfstop_curv": None,
+        "composite_stop": None,
+    }
+    lc = _lc(
+        rms=[0.5, 0.4],
+        prms=[1.0, 0.9],
+        cost=[10.0, 9.0],
+    )
+    msg = convergence_check(opts, lc, angle_a=1e-4, sd_iter=None)
+    assert "angle" in msg.lower()

@@ -1940,6 +1940,7 @@ def _build_options(kwargs: Mapping[str, object]) -> dict[str, object]:
         "cfstop": np.array([]),
         "cfstop_rel": None,
         "cfstop_curv": None,
+        "composite_stop": None,
         "verbose": 1,
         "num_cpu": None,
         "num_cpu_score_update": None,

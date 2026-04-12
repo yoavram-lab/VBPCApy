@@ -265,6 +265,94 @@ def _cost_criteria(
     return None
 
 
+def _check_sub_criterion(
+    key: str,
+    threshold: float,
+    angle_a: float,
+    rms: np.ndarray,
+    cost: np.ndarray,
+) -> str | None:
+    """Evaluate a single composite sub-criterion.
+
+    Returns:
+        A short summary string like ``"angle=1.2e-04<1.0e-03"`` when the
+        criterion is satisfied, or ``None`` when it is not met.
+
+    Raises:
+        ValueError: If *key* is not a recognised sub-criterion name.
+    """
+    eps = np.finfo(float).eps
+
+    if key == "angle":
+        if np.isfinite(angle_a) and angle_a < threshold:
+            return f"angle={angle_a:.2e}<{threshold:.2e}"
+        return None
+
+    if key == "rms":
+        return _rel_change_check("rms_rel", rms, threshold, eps)
+
+    if key == "elbo_rel":
+        return _rel_change_check("elbo_rel", cost, threshold, eps)
+
+    msg = f"Unknown composite_stop key: {key!r}"
+    raise ValueError(msg)
+
+
+def _rel_change_check(
+    label: str,
+    series: np.ndarray,
+    threshold: float,
+    eps: float,
+) -> str | None:
+    """Check relative change between last two elements of *series*.
+
+    Returns:
+        A summary string when change is below *threshold*, else ``None``.
+    """
+    if series.size < 2:
+        return None
+    curr, prev = series[-1], series[-2]
+    if not (np.isfinite(curr) and np.isfinite(prev)):
+        return None
+    rel = abs(curr - prev) / (abs(curr) + eps)
+    if rel >= threshold:
+        return None
+    return f"{label}={rel:.2e}<{threshold:.2e}"
+
+
+def _composite_stop(
+    composite_cfg: Mapping[str, float],
+    angle_a: float,
+    rms: np.ndarray,
+    cost: np.ndarray,
+) -> str | None:
+    """Check whether **all** sub-criteria in *composite_cfg* are satisfied.
+
+    Supported keys (all optional, but at least one must be present):
+
+    - ``"angle"``: subspace angle must be below this value.
+    - ``"rms"``: relative RMS change over the last two iterations
+      must be below this value.
+    - ``"elbo_rel"``: relative ELBO change must be below this value.
+
+    Returns:
+        A stop message listing which sub-criteria were satisfied, or
+        ``None`` if any sub-criterion is **not** met.
+    """
+    satisfied: list[str] = []
+    for key, threshold in composite_cfg.items():
+        result = _check_sub_criterion(key, threshold, angle_a, rms, cost)
+        if result is None:
+            return None
+        satisfied.append(result)
+
+    if not satisfied:
+        return None
+
+    detail = ", ".join(satisfied)
+    return f"Composite stop: all criteria met ({detail})."
+
+
 # ---------------------------------------------------------------------------
 # Public convergence check
 # ---------------------------------------------------------------------------
@@ -285,44 +373,38 @@ def convergence_check(
     2. Early stopping based on probe RMS (``earlystop``).
     3. RMS plateau stop (``rmsstop = [window, abs_tol, rel_tol]``).
     4. Cost / ELBO criteria (``cfstop``, ``cfstop_rel``, ``cfstop_curv``).
-    5. "Slowing-down'' stop based on ``sd_iter`` (gradient backtracking).
+    5. Composite stop (``composite_stop``).
+    6. "Slowing-down'' stop based on ``sd_iter`` (gradient backtracking).
 
     Returns:
         A non-empty convergence message when a criterion triggers,
         otherwise an empty string.
     """
-    # 1. Angle-based stop
-    angle_msg = _angle_stop_message(opts, angle_a)
-    if angle_msg:
-        return angle_msg
-
     rms = np.asarray(lc.get("rms", []), dtype=float)
     prms = np.asarray(lc.get("prms", []), dtype=float)
     cost = np.asarray(lc.get("cost", []), dtype=float)
 
-    # 2. Early stopping on probe RMS
-    early_msg = _early_stop_message(opts, prms)
-    if early_msg:
-        return early_msg
-
-    # 3. RMS plateau
     rmsstop = opts.get("rmsstop")
-    if rms.size >= 2 and rmsstop is not None:
-        plateau_msg = _plateau_stop(rms, rmsstop, "RMS")
-        if plateau_msg:
-            return plateau_msg
+    composite_cfg = opts.get("composite_stop")
 
-    # 4. Cost / ELBO criteria
-    cost_msg = _cost_criteria(opts, cost)
-    if cost_msg:
-        return cost_msg
-
-    # 5. Slowing-down criterion
-    slow_msg = _slowing_down_message(sd_iter)
-    if slow_msg:
-        return slow_msg
-
-    return ""
+    # Evaluate criteria in priority order; return first trigger.
+    checks: list[str | None] = [
+        # 1. Angle-based stop
+        _angle_stop_message(opts, angle_a),
+        # 2. Early stopping on probe RMS
+        _early_stop_message(opts, prms),
+        # 3. RMS plateau
+        _plateau_stop(rms, rmsstop, "RMS")
+        if rms.size >= 2 and rmsstop is not None
+        else None,
+        # 4. Cost / ELBO criteria
+        _cost_criteria(opts, cost),
+        # 5. Composite stop
+        _composite_stop(composite_cfg, angle_a, rms, cost) if composite_cfg else None,
+        # 6. Slowing-down criterion
+        _slowing_down_message(sd_iter),
+    ]
+    return next((msg for msg in checks if msg), "")
 
 
 # ---------------------------------------------------------------------------
