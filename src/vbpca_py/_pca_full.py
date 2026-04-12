@@ -1941,6 +1941,7 @@ def _build_options(kwargs: Mapping[str, object]) -> dict[str, object]:
         "cfstop_rel": None,
         "cfstop_curv": None,
         "composite_stop": None,
+        "patience": 1,
         "verbose": 1,
         "num_cpu": None,
         "num_cpu_score_update": None,

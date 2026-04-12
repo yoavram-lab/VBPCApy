@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
 from vbpca_py._converge import convergence_check
 
 
@@ -719,5 +721,82 @@ def test_individual_criteria_still_fire_with_composite_unset() -> None:
         prms=[1.0, 0.9],
         cost=[10.0, 9.0],
     )
+    msg = convergence_check(opts, lc, angle_a=1e-4, sd_iter=None)
+    assert "angle" in msg.lower()
+
+
+# --------------------------------------------------------------------------
+# Patience window behaviour
+# --------------------------------------------------------------------------
+
+
+def _opts_with_patience(patience: int) -> dict[str, object]:
+    """Build opts with angle criterion and a patience window."""
+    return {
+        "minangle": 1e-3,
+        "earlystop": False,
+        "rmsstop": None,
+        "cfstop": None,
+        "cfstop_rel": None,
+        "cfstop_curv": None,
+        "composite_stop": None,
+        "patience": patience,
+    }
+
+
+def test_patience_suppresses_first_trigger() -> None:
+    """With patience=3, the first trigger should be suppressed."""
+    opts = _opts_with_patience(3)
+    lc = _lc(rms=[0.5, 0.4], prms=[1.0, 0.9], cost=[10.0, 9.0])
+    lc["_patience"] = [0.0]
+
+    msg = convergence_check(opts, lc, angle_a=1e-4, sd_iter=None)
+    assert msg == ""
+    assert lc["_patience"][0] == pytest.approx(1.0)
+
+
+def test_patience_fires_after_consecutive_triggers() -> None:
+    """With patience=3, the third consecutive trigger emits the message."""
+    opts = _opts_with_patience(3)
+    lc = _lc(rms=[0.5, 0.4], prms=[1.0, 0.9], cost=[10.0, 9.0])
+    lc["_patience"] = [0.0]
+
+    # Triggers 1 and 2: suppressed
+    convergence_check(opts, lc, angle_a=1e-4, sd_iter=None)
+    convergence_check(opts, lc, angle_a=1e-4, sd_iter=None)
+    assert lc["_patience"][0] == pytest.approx(2.0)
+
+    # Trigger 3: fires
+    msg = convergence_check(opts, lc, angle_a=1e-4, sd_iter=None)
+    assert "angle" in msg.lower()
+
+
+def test_patience_resets_on_no_trigger() -> None:
+    """If a non-triggering iteration breaks the streak, counter resets."""
+    opts = _opts_with_patience(3)
+    lc = _lc(rms=[0.5, 0.4], prms=[1.0, 0.9], cost=[10.0, 9.0])
+    lc["_patience"] = [0.0]
+
+    # Two triggers
+    convergence_check(opts, lc, angle_a=1e-4, sd_iter=None)
+    convergence_check(opts, lc, angle_a=1e-4, sd_iter=None)
+    assert lc["_patience"][0] == pytest.approx(2.0)
+
+    # No trigger (angle too large)
+    convergence_check(opts, lc, angle_a=1.0, sd_iter=None)
+    assert lc["_patience"][0] == pytest.approx(0.0)
+
+    # Need 3 more consecutive to fire
+    convergence_check(opts, lc, angle_a=1e-4, sd_iter=None)
+    convergence_check(opts, lc, angle_a=1e-4, sd_iter=None)
+    msg = convergence_check(opts, lc, angle_a=1e-4, sd_iter=None)
+    assert "angle" in msg.lower()
+
+
+def test_patience_1_is_default_behaviour() -> None:
+    """patience=1 should behave like no patience (immediate trigger)."""
+    opts = _opts_with_patience(1)
+    lc = _lc(rms=[0.5, 0.4], prms=[1.0, 0.9], cost=[10.0, 9.0])
+
     msg = convergence_check(opts, lc, angle_a=1e-4, sd_iter=None)
     assert "angle" in msg.lower()

@@ -353,6 +353,39 @@ def _composite_stop(
     return f"Composite stop: all criteria met ({detail})."
 
 
+def _apply_patience(
+    msg: str,
+    lc: Mapping[str, Sequence[float]],
+    patience: int,
+) -> str:
+    """Gate *msg* through a patience counter stored in ``lc["_patience"]``.
+
+    When a criterion fires (``msg`` is non-empty), the counter is
+    incremented.  The message is only returned once the counter reaches
+    *patience*.  If no criterion fires, the counter resets to zero.
+
+    Args:
+        msg: The candidate convergence message (may be empty).
+        lc: Learning-curve dict; ``lc["_patience"]`` is mutated in-place.
+        patience: Required number of consecutive satisfied iterations.
+
+    Returns:
+        The convergence message when patience is exhausted, otherwise
+        an empty string.
+    """
+    # Obtain the mutable patience list from lc.
+    patience_list: list[float] = lc.get("_patience", [0])  # type: ignore[assignment]
+
+    if msg:
+        patience_list[0] = float(patience_list[0]) + 1
+        if int(patience_list[0]) >= patience:
+            return msg
+        return ""
+
+    patience_list[0] = 0.0
+    return ""
+
+
 # ---------------------------------------------------------------------------
 # Public convergence check
 # ---------------------------------------------------------------------------
@@ -375,6 +408,9 @@ def convergence_check(
     4. Cost / ELBO criteria (``cfstop``, ``cfstop_rel``, ``cfstop_curv``).
     5. Composite stop (``composite_stop``).
     6. "Slowing-down'' stop based on ``sd_iter`` (gradient backtracking).
+
+    When ``patience`` is set (> 1), the winning criterion must fire for
+    that many **consecutive** iterations before the message is returned.
 
     Returns:
         A non-empty convergence message when a criterion triggers,
@@ -404,7 +440,14 @@ def convergence_check(
         # 6. Slowing-down criterion
         _slowing_down_message(sd_iter),
     ]
-    return next((msg for msg in checks if msg), "")
+    candidate = next((msg for msg in checks if msg), "")
+
+    # Apply patience window if configured.
+    patience_val = opts.get("patience")
+    patience = int(patience_val) if patience_val is not None else 1
+    if patience <= 1:
+        return candidate
+    return _apply_patience(candidate, lc, patience)
 
 
 # ---------------------------------------------------------------------------
