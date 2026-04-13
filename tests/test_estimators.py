@@ -223,16 +223,16 @@ def test_va_init_default_is_none() -> None:
     assert model.va_init is None
 
     opts = model.get_options()
-    assert opts["va_init"] == 1000.0
+    assert opts["va_init"] == pytest.approx(1000.0)
 
 
 def test_va_init_custom_value_propagates() -> None:
     """A custom va_init should appear in resolved options."""
     model = VBPCA(n_components=2, va_init=500.0)
-    assert model.va_init == 500.0
+    assert model.va_init == pytest.approx(500.0)
 
     opts = model.get_options()
-    assert opts["va_init"] == 500.0
+    assert opts["va_init"] == pytest.approx(500.0)
 
 
 def test_va_init_affects_initial_prior() -> None:
