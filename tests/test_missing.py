@@ -3,9 +3,10 @@
 
 import numpy as np
 import pytest
+import scipy.sparse as sp
 
 import vbpca_py._missing as missing_mod
-from vbpca_py._missing import _missing_patterns
+from vbpca_py._missing import _missing_patterns, make_xprobe_mask
 
 # ---------------------------------------------------------------------------
 # Happy paths
@@ -157,3 +158,71 @@ def test_missing_patterns_bad_dim_raises(bad_mask: np.ndarray) -> None:
     """_missing_patterns should raise when mask is not 2D."""
     with pytest.raises(ValueError, match=r"mask must be a 2D array."):
         _missing_patterns(bad_mask)
+
+
+# ---------------------------------------------------------------------------
+# make_xprobe_mask
+# ---------------------------------------------------------------------------
+
+
+def test_make_xprobe_mask_dense_basic() -> None:
+    """Dense: probe entries are held out and data is masked."""
+    rng = np.random.default_rng(0)
+    x = rng.standard_normal((6, 10))
+    x_masked, xprobe = make_xprobe_mask(x, fraction=0.2, rng=np.random.default_rng(0))
+
+    # xprobe has some non-NaN entries
+    probe_obs = ~np.isnan(xprobe)
+    assert probe_obs.any()
+
+    # Those entries are NaN in x_masked
+    assert np.all(np.isnan(x_masked[probe_obs]))
+
+    # Non-probe entries are unchanged
+    non_probe = ~probe_obs
+    np.testing.assert_array_equal(x_masked[non_probe], x[non_probe])
+
+    # Probe values match original
+    np.testing.assert_array_equal(xprobe[probe_obs], x[probe_obs])
+
+
+def test_make_xprobe_mask_dense_with_existing_nans() -> None:
+    """Dense: existing NaN entries are not selected as probes."""
+    rng = np.random.default_rng(1)
+    x = rng.standard_normal((6, 10))
+    x[0, 0] = np.nan
+    x[2, 3] = np.nan
+
+    x_masked, xprobe = make_xprobe_mask(x, fraction=0.1, rng=np.random.default_rng(1))
+
+    # Original NaN positions remain NaN in both
+    assert np.isnan(x_masked[0, 0])
+    assert np.isnan(xprobe[0, 0])
+
+
+def test_make_xprobe_mask_sparse() -> None:
+    """Sparse CSR: probe entries are removed from data."""
+    rng = np.random.default_rng(2)
+    dense = rng.standard_normal((6, 10))
+    dense[dense < 0.3] = 0.0
+    x = sp.csr_matrix(dense)
+    nnz_before = x.nnz
+
+    x_masked, xprobe = make_xprobe_mask(x, fraction=0.2, rng=np.random.default_rng(2))
+
+    assert sp.issparse(x_masked)
+    assert sp.issparse(xprobe)
+    assert xprobe.nnz > 0
+    assert x_masked.nnz < nnz_before
+    assert x_masked.nnz + xprobe.nnz == nnz_before
+
+
+def test_make_xprobe_mask_bad_fraction_raises() -> None:
+    """Fraction outside (0, 1) should raise ValueError."""
+    x = np.ones((3, 3))
+    with pytest.raises(ValueError, match="fraction must be in"):
+        make_xprobe_mask(x, fraction=0.0)
+    with pytest.raises(ValueError, match="fraction must be in"):
+        make_xprobe_mask(x, fraction=1.0)
+    with pytest.raises(ValueError, match="fraction must be in"):
+        make_xprobe_mask(x, fraction=-0.1)

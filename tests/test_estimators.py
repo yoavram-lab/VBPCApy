@@ -251,3 +251,50 @@ def test_va_init_affects_initial_prior() -> None:
     rms_default = r_default["lc"]["rms"]
     rms_custom = r_custom["lc"]["rms"]
     assert rms_default != rms_custom
+
+
+# ---------------------------------------------------------------------------
+# xprobe_fraction parameter
+# ---------------------------------------------------------------------------
+
+
+def test_xprobe_fraction_default_is_zero() -> None:
+    """Default xprobe_fraction is 0.0 (disabled)."""
+    model = VBPCA(n_components=2)
+    assert model.xprobe_fraction == pytest.approx(0.0)
+
+
+def test_xprobe_fraction_generates_probe() -> None:
+    """When xprobe_fraction > 0, fit() auto-generates a probe set."""
+    rng = np.random.default_rng(42)
+    x = rng.standard_normal((8, 20))
+    model = VBPCA(n_components=2, maxiters=5, xprobe_fraction=0.10)
+    model.fit(x)
+    # prms should be a real number (not NaN) when probe is active
+    assert model.prms_ is not None
+    assert np.isfinite(model.prms_)
+
+
+def test_xprobe_fraction_explicit_xprobe_takes_precedence() -> None:
+    """An explicit xprobe passed to fit() overrides xprobe_fraction."""
+    rng = np.random.default_rng(42)
+    x = rng.standard_normal((8, 20))
+    xprobe = np.full(x.shape, np.nan, dtype=float)
+    xprobe[0, 0] = x[0, 0]
+
+    model = VBPCA(n_components=2, maxiters=5, xprobe_fraction=0.10)
+    model.fit(x, xprobe=xprobe)
+    # Should still produce a finite prms from the explicit probe
+    assert model.prms_ is not None
+    assert np.isfinite(model.prms_)
+
+
+def test_xprobe_fraction_no_probe_when_zero() -> None:
+    """With xprobe_fraction=0.0 and no xprobe, prms should be NaN."""
+    rng = np.random.default_rng(42)
+    x = rng.standard_normal((8, 20))
+    model = VBPCA(n_components=2, maxiters=5, xprobe_fraction=0.0)
+    model.fit(x)
+    # No probe -> prms is NaN
+    assert model.prms_ is not None
+    assert np.isnan(model.prms_)

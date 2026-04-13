@@ -12,6 +12,7 @@ from vbpca_py._memory import (
     format_bytes,
     resolve_max_dense_bytes,
 )
+from vbpca_py._missing import make_xprobe_mask
 from vbpca_py._pca_full import Matrix, _build_options, pca_full
 from vbpca_py.model_selection import SelectionConfig, select_n_components
 
@@ -34,6 +35,7 @@ class VBPCA:
         hp_v: float | None = None,
         niter_broadprior: int | None = None,
         va_init: float | None = None,
+        xprobe_fraction: float = 0.0,
         **opts: object,
     ) -> None:
         """
@@ -52,6 +54,10 @@ class VBPCA:
                 prior before convergence checks activate (default 100).
             va_init: Initial broad prior value for loadings and bias
                 variances (default 1000).
+            xprobe_fraction: Fraction of observed entries to hold out as
+                probe data (default 0.0, disabled).  When positive and no
+                explicit *xprobe* is passed to :meth:`fit`, a random probe
+                set is generated automatically.
             **opts: Additional options passed to the underlying PCA_FULL implementation.
         """
         self.n_components = n_components
@@ -64,6 +70,7 @@ class VBPCA:
         self.hp_v = hp_v
         self.niter_broadprior = niter_broadprior
         self.va_init = va_init
+        self.xprobe_fraction = xprobe_fraction
         self.opts = opts
         self.components_: np.ndarray | None = None
         self.scores_: np.ndarray | None = None
@@ -126,6 +133,9 @@ class VBPCA:
         opts.update(self.opts)
         if xprobe is not None:
             opts["xprobe"] = xprobe
+        elif self.xprobe_fraction > 0.0:
+            x, xprobe_gen = make_xprobe_mask(x, fraction=self.xprobe_fraction)
+            opts["xprobe"] = xprobe_gen
 
         max_dense_bytes = resolve_max_dense_bytes(
             opts.get("max_dense_bytes", 2_000_000_000)
