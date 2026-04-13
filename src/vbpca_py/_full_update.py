@@ -688,9 +688,10 @@ def _initialize_parameters(
     mu_variances = init_result.muv.reshape(-1, 1)
 
     # Priors on loadings and mu
+    va_init = float(ctx.opts.get("va_init", 1000.0))
     if ctx.use_prior:
-        va = np.full(ctx.shapes.n_components, 1000.0, dtype=float)
-        vmu = 1000.0
+        va = np.full(ctx.shapes.n_components, va_init, dtype=float)
+        vmu = va_init
     else:
         va = np.full(ctx.shapes.n_components, np.inf, dtype=float)
         vmu = float("inf")
