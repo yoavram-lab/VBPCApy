@@ -1935,6 +1935,7 @@ def _build_options(kwargs: Mapping[str, object]) -> dict[str, object]:
         "hp_va": 0.001,
         "hp_vb": 0.001,
         "hp_v": 0.001,
+        "va_init": 1000.0,
         "earlystop": False,
         "rmsstop": np.array([100, 1e-4, 1e-3]),
         "cfstop": np.array([]),

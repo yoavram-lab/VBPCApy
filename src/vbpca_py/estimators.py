@@ -33,6 +33,7 @@ class VBPCA:
         hp_vb: float | None = None,
         hp_v: float | None = None,
         niter_broadprior: int | None = None,
+        va_init: float | None = None,
         **opts: object,
     ) -> None:
         """
@@ -49,6 +50,8 @@ class VBPCA:
             hp_v: Prior hyperparameter for noise variance (default 0.001).
             niter_broadprior: Number of iterations to run under the broad
                 prior before convergence checks activate (default 100).
+            va_init: Initial broad prior value for loadings and bias
+                variances (default 1000).
             **opts: Additional options passed to the underlying PCA_FULL implementation.
         """
         self.n_components = n_components
@@ -60,6 +63,7 @@ class VBPCA:
         self.hp_vb = hp_vb
         self.hp_v = hp_v
         self.niter_broadprior = niter_broadprior
+        self.va_init = va_init
         self.opts = opts
         self.components_: np.ndarray | None = None
         self.scores_: np.ndarray | None = None
@@ -117,6 +121,8 @@ class VBPCA:
             opts["hp_v"] = self.hp_v
         if self.niter_broadprior is not None:
             opts["niter_broadprior"] = self.niter_broadprior
+        if self.va_init is not None:
+            opts["va_init"] = self.va_init
         opts.update(self.opts)
         if xprobe is not None:
             opts["xprobe"] = xprobe
@@ -249,6 +255,8 @@ class VBPCA:
             opts["hp_v"] = self.hp_v
         if self.niter_broadprior is not None:
             opts["niter_broadprior"] = self.niter_broadprior
+        if self.va_init is not None:
+            opts["va_init"] = self.va_init
         opts.update(self.opts)
         return _build_options(opts)
 

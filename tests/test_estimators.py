@@ -210,3 +210,44 @@ def test_niter_broadprior_affects_iteration_count() -> None:
     iters_default = len(r_default["lc"]["rms"])
     iters_low = len(r_low["lc"]["rms"])
     assert iters_low <= iters_default
+
+
+# ---------------------------------------------------------------------------
+# va_init parameter
+# ---------------------------------------------------------------------------
+
+
+def test_va_init_default_is_none() -> None:
+    """When not set, va_init is None and options use the library default."""
+    model = VBPCA(n_components=2)
+    assert model.va_init is None
+
+    opts = model.get_options()
+    assert opts["va_init"] == pytest.approx(1000.0)
+
+
+def test_va_init_custom_value_propagates() -> None:
+    """A custom va_init should appear in resolved options."""
+    model = VBPCA(n_components=2, va_init=500.0)
+    assert model.va_init == pytest.approx(500.0)
+
+    opts = model.get_options()
+    assert opts["va_init"] == pytest.approx(500.0)
+
+
+def test_va_init_affects_initial_prior() -> None:
+    """Different va_init values should produce different model fits."""
+    rng = np.random.default_rng(42)
+    w = rng.standard_normal((10, 2))
+    s = rng.standard_normal((2, 30))
+    x = w @ s + 0.1 * rng.standard_normal((10, 30))
+
+    from vbpca_py._pca_full import pca_full
+
+    r_default = pca_full(x, 2, bias=True, maxiters=10, va_init=1000.0)
+    r_custom = pca_full(x, 2, bias=True, maxiters=10, va_init=100.0)
+
+    # The RMS traces should differ when starting from different priors
+    rms_default = r_default["lc"]["rms"]
+    rms_custom = r_custom["lc"]["rms"]
+    assert rms_default != rms_custom
