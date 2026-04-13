@@ -307,6 +307,7 @@ Then sync the Octave extra: `uv sync --extra octave`.
 - **`inverse_transform()` always returns dense output**, even when the input was sparse CSR/CSC.
 - **`MissingAwareSparseOneHotEncoder` requires numeric categories.** String categories cannot survive the CSR round-trip.
 - **Data convention:** `AutoEncoder` expects samples × features; `VBPCA` expects features × samples. Transpose as needed.
+- **RMS oscillation with uncentered data.** When `bias=True` (the default) and the input data has non-zero feature means, the RMS convergence trace can exhibit a stable period-2 oscillation. This is caused by a one-iteration lag between the mean update and the reconstruction error it depends on. **Workaround:** center your data before fitting — use `MissingAwareStandardScaler` (or `AutoEncoder`) as a preprocessing step. Pre-centered data eliminates the oscillation entirely, even with `bias=True`. See [#55](https://github.com/yoavram-lab/VBPCApy/issues/55) for details.
 
 ## Testing and development
 Install in developer mode:
