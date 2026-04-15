@@ -38,9 +38,12 @@ In short: backend selection affects runtime, not model semantics.
 - Posterior covariances for scores and loadings; probe-set RMS for held-out validation.
 - Direct access to reconstructions and per-entry marginal variances from the sklearn-like `VBPCA` estimator.
 - C++ extensions via pybind11 for performance-critical routines; runtime autotune selects thread counts, buffered accessors, and covariance writeback modes.
-- Missing-aware preprocessing utilities (one-hot encode, standardize, min-max, auto-routing) that preserve NaNs/masks for generative reconstruction.
+- Missing-aware preprocessing utilities (one-hot encode, standardize, min-max, log, power, winsorize, auto-routing) that preserve NaNs/masks for generative reconstruction.
+- Preflight data diagnostics via `check_data()` / `DataReport` (skewness, outliers, near-zero variance, missing patterns).
 - scikit-learn-compatible `VBPCA` estimator (`fit`/`transform`/`inverse_transform`) with mask support.
 - Empirical model selection for the number of latent components via `select_n_components`.
+- K-fold cross-validated model selection via `cross_validate_components`.
+- Configurable convergence criteria: subspace angle, RMS/cost plateau, relative ELBO, ELBO curvature, composite rules, and patience windows.
 
 ## Installation
 
@@ -209,6 +212,10 @@ Each fit (including every k tried in `select_n_components`) runs the PCA_FULL EM
 - Probe RMS increase when `earlystop` is truthy.
 - RMS plateau via `rmsstop = [window, abs_tol, rel_tol]` (default `[100, 1e-4, 1e-3]`, enabled). Meaning: compare the latest RMS to the value `window` iterations ago; stop if the absolute change is < `abs_tol` or, when finite, the relative change is < `rel_tol`.
 - Cost plateau via `cfstop = [window, abs_tol, rel_tol]` (default `[]`, disabled). Same interpretation as `rmsstop` but on cost.
+- Relative ELBO decrease via `elbo_rtol` (default disabled). Stops when the fractional ELBO improvement drops below threshold.
+- ELBO curvature via `elbo_curvature_tol` (default disabled). Stops when the second difference of the ELBO stabilizes.
+- Composite criteria via `composite_stop` (default disabled). Require multiple criteria to trigger simultaneously.
+- Patience window via `patience` (default 1). Require N consecutive sub-threshold iterations before declaring convergence.
 - Slowing-down guard when internal backtracking hits 40 steps.
 - Hard cap `maxiters` (default 1000).
 
@@ -223,23 +230,38 @@ All public APIs can be imported directly from `vbpca_py`:
 from vbpca_py import (
     VBPCA,
     select_n_components,
+    cross_validate_components,
     SelectionConfig,
+    CVConfig,
     AutoEncoder,
     MissingAwareOneHotEncoder,
     MissingAwareSparseOneHotEncoder,
     MissingAwareStandardScaler,
     MissingAwareMinMaxScaler,
+    MissingAwareLogTransformer,
+    MissingAwarePowerTransformer,
+    MissingAwareWinsorizer,
+    DataReport,
+    check_data,
+    make_xprobe_mask,
 )
 ```
 
-**Core estimator:** `VBPCA(n_components, bias=True, maxiters=None, tol=None, verbose=0, **opts)` with `fit`, `transform`, `fit_transform`, `inverse_transform`, learned attributes (`components_`, `scores_`, `mean_`, `rms_`, `prms_`, `cost_`, `variance_`, `reconstruction_`, `explained_variance_`, `explained_variance_ratio_`), and `get_options()` to inspect merged defaults.
+**Core estimator:** `VBPCA(n_components, bias=True, maxiters=None, tol=None, verbose=0, hp_va=None, hp_vb=None, hp_v=None, niter_broadprior=None, va_init=None, xprobe_fraction=0.0, **opts)` with `fit`, `transform`, `fit_transform`, `inverse_transform`, learned attributes (`components_`, `scores_`, `mean_`, `rms_`, `prms_`, `cost_`, `variance_`, `reconstruction_`, `explained_variance_`, `explained_variance_ratio_`), and `get_options()` to inspect merged defaults.
 
 **Model selection:** `select_n_components(x, *, mask=None, components=None, config=None, **opts)` sweeps ks and returns `(best_k, best_metrics, trace, best_model)`. `components` defaults to `1..min(n_features, n_samples)`. `SelectionConfig(metric="prms"|"rms"|"cost", patience=None, max_trials=None, compute_explained_variance=True, return_best_model=False)` controls sweep stopping and retention. `**opts` flow through to `VBPCA`/`pca_full` (e.g., `maxiters`, `minangle`, `rmsstop`, `cfstop`, `earlystop`, `rotate2pca`). `trace` holds per-k endpoint metrics; `best_metrics` is the winning entry.
+
+**K-fold cross-validation:** `cross_validate_components(x, *, mask=None, components=None, config=None, **opts)` runs K-fold CV over a grid of component counts and returns all-metric tracking per fold. `CVConfig(n_splits, metric, ...)` controls fold count and metric selection.
 
 **Preprocessing:** missing-aware encoders and scalers
   - `MissingAwareOneHotEncoder`: categorical OHE respecting masks/NaNs; `handle_unknown="ignore"|"raise"`, optional mean-centering.
   - `MissingAwareStandardScaler` and `MissingAwareMinMaxScaler`: continuous scaling while ignoring masked entries.
+  - `MissingAwareLogTransformer`: log1p transform for right-skewed data.
+  - `MissingAwarePowerTransformer`: Yeo-Johnson variance stabilization (supports mixed-sign data).
+  - `MissingAwareWinsorizer`: clip to percentiles (default 1st–99th) to handle outliers.
   - `AutoEncoder`: column-wise router that applies the above per column with `cardinality_threshold` (integer columns with uniques <= threshold are treated as categorical), `continuous_scaler` (`"standard"` or `"minmax"`), `handle_unknown` (ignore vs raise unseen categories), `mean_center_ohe` (center one-hot columns), optional `column_types` override (force categorical/continuous per column), and `fit/transform/inverse_transform` for round-tripping mixed data with masks.
+  - `check_data(x, mask)` / `DataReport`: preflight validation reporting skewness, outliers, near-zero variance, and missing patterns.
+  - `make_xprobe_mask(x, fraction)`: generate a random holdout probe mask from observed entries.
 
 All options are consumed via the `VBPCA` estimator. Call `model.get_options()` after construction to view the merged defaults and your overrides. The canonical reference list lives in [src/vbpca_py/_pca_full.py](src/vbpca_py/_pca_full.py). See [src/vbpca_py/estimators.py](src/vbpca_py/estimators.py), [src/vbpca_py/model_selection.py](src/vbpca_py/model_selection.py), and [src/vbpca_py/preprocessing.py](src/vbpca_py/preprocessing.py) for the stable public APIs.
 
@@ -428,7 +450,7 @@ If you use this package in your research, please cite:
   title = {{VBPCApy}: Variational Bayesian PCA with Missing Data Support},
   year = {2026},
   url = {https://github.com/yoavram-lab/VBPCApy},
-  version = {0.1.1},
+  version = {0.2.0},
 }
 ```
 
