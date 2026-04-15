@@ -1,5 +1,9 @@
 # Convergence Characterization — Design Matrix
 
+> **Superseded.** The canonical experiment design is now
+> [`jcm-sci/vbpca-convergence/plans/study_design.md`](https://github.com/jcm-sci/vbpca-convergence/blob/main/plans/study_design.md).
+> This file is kept for history.
+
 ## Overview
 
 Systematic characterization of VB-PCA convergence across data regimes, prior

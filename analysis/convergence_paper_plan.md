@@ -1,5 +1,9 @@
 # VB-PCA Convergence Paper — Finalized Ablation, Analysis & Proof Plan
 
+> **Superseded.** The canonical experiment design is now
+> [`jcm-sci/vbpca-convergence/plans/study_design.md`](https://github.com/jcm-sci/vbpca-convergence/blob/main/plans/study_design.md).
+> This file is kept for history.
+
 ## Paper thesis
 
 > VB-PCA has a closed-form ELBO that guarantees monotonic improvement and
