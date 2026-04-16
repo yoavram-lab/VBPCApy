@@ -1,0 +1,97 @@
+site_name: VBPCApy
+site_description: Variational Bayesian PCA with missing data support
+site_url: https://yoavram-lab.github.io/VBPCApy
+repo_url: https://github.com/yoavram-lab/VBPCApy
+repo_name: yoavram-lab/VBPCApy
+
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.expand
+    - navigation.indexes
+    - content.code.copy
+    - content.code.annotate
+    - search.highlight
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [src]
+          options:
+            show_source: false
+            members_order: source
+            show_root_heading: true
+            show_root_full_path: false
+            docstring_style: numpy
+            merge_init_into_class: true
+            show_signature_annotations: true
+            separate_signature: true
+
+not_in_nav: |
+  IMPLEMENTATION_PLAN.md
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.arithmatex:
+      generic: true
+  - toc:
+      permalink: true
+  - attr_list
+  - md_in_html
+
+extra_javascript:
+  - javascripts/mathjax.js
+  - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
+
+nav:
+  - Home: index.md
+  - Getting Started:
+    - Installation: getting-started/installation.md
+    - Quick Start: getting-started/quickstart.md
+  - Tutorials:
+    - Basic Dense PCA: tutorials/basic-dense-pca.md
+    - Missing Data & Model Selection: tutorials/missing-data-model-selection.md
+    - Preprocessing Mixed Data: tutorials/preprocessing-mixed-data.md
+    - Sparse Data Workflows: tutorials/sparse-data.md
+    - Cross-Validation & Diagnostics: tutorials/cv-diagnostics.md
+  - How-To Guides:
+    - Convergence Tuning: howto/convergence.md
+    - Runtime & Threading: howto/runtime-tuning.md
+    - Plotting: howto/plotting.md
+  - Concepts:
+    - Algorithm Overview: concepts/algorithm.md
+    - Data Convention: concepts/data-convention.md
+    - Convergence Criteria: concepts/convergence.md
+    - Model Selection: concepts/model-selection.md
+  - API Reference:
+    - VBPCA: api/vbpca.md
+    - Model Selection: api/model-selection.md
+    - Preprocessing: api/preprocessing.md
+    - Utilities: api/utilities.md
+    - Plotting: api/plotting.md
+  - Limitations: limitations.md
+  - Changelog: changelog.md
+  - Citation: citation.md

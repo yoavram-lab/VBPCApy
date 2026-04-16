@@ -140,3 +140,11 @@ paper-plot:
 # Quick smoke run of the stability analysis (~1-2 min).
 paper-figure-smoke:
 	uv run --extra analysis python analysis/stability_analysis.py --smoke --fmt png
+
+# Build documentation site.
+docs:
+	uv run --extra docs mkdocs build --strict
+
+# Serve documentation with live reload.
+docs-serve:
+	uv run --extra docs mkdocs serve

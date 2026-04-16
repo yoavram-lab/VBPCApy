@@ -33,6 +33,7 @@ dist/
 *.egg-info/
 *.egg
 .eggs/
+site/
 
 ########################################
 # Jupyter Notebook artifacts
