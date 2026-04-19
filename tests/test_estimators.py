@@ -298,3 +298,60 @@ def test_xprobe_fraction_no_probe_when_zero() -> None:
     # No probe -> prms is NaN
     assert model.prms_ is not None
     assert np.isnan(model.prms_)
+
+
+# ── Convergence diagnostics (issue #99) ─────────────────────────
+
+
+def test_convergence_diagnostics_exposed_after_fit() -> None:
+    """n_iter_, convergence_reason_, learning_curve_ are set after fit()."""
+    rng = np.random.default_rng(42)
+    x = rng.standard_normal((6, 10))
+    model = VBPCA(n_components=2, maxiters=10, verbose=0)
+    model.fit(x)
+
+    assert isinstance(model.n_iter_, int)
+    assert model.n_iter_ > 0
+    assert model.n_iter_ <= 10
+
+    assert isinstance(model.convergence_reason_, str)
+    assert model.convergence_reason_ != ""
+
+    assert isinstance(model.learning_curve_, dict)
+    assert "rms" in model.learning_curve_
+    assert len(model.learning_curve_["rms"]) == model.n_iter_ + 1
+
+
+def test_convergence_reason_maxiters() -> None:
+    """When maxiters is hit, convergence_reason_ should be 'maxiters'."""
+    rng = np.random.default_rng(42)
+    x = rng.standard_normal((6, 10))
+    model = VBPCA(n_components=2, maxiters=5, verbose=0)
+    model.fit(x)
+
+    assert model.convergence_reason_ == "maxiters"
+    assert model.n_iter_ == 5
+
+
+def test_convergence_reason_angle() -> None:
+    """With niter_broadprior=0 the angle criterion can fire early."""
+    rng = np.random.default_rng(42)
+    x = rng.standard_normal((6, 10))
+    model = VBPCA(n_components=2, maxiters=500, niter_broadprior=0, verbose=0)
+    model.fit(x)
+
+    assert model.convergence_reason_ in {
+        "angle",
+        "rms_plateau",
+        "cost_plateau",
+        "slowing_down",
+    }
+    assert model.n_iter_ < 500
+
+
+def test_diagnostics_none_before_fit() -> None:
+    """Diagnostics should be None before fit() is called."""
+    model = VBPCA(n_components=2)
+    assert model.n_iter_ is None
+    assert model.convergence_reason_ is None
+    assert model.learning_curve_ is None

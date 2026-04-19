@@ -392,7 +392,7 @@ class _CoverageTrial:
     mean_interval_width: float = 0.0  # mean 2*z*sqrt(var) at this nominal
 
 
-def _run_single_coverage_trial(  # noqa: PLR0913, PLR0917
+def _run_single_coverage_trial(
     n: int,
     p: int,
     true_rank: int,
@@ -407,7 +407,7 @@ def _run_single_coverage_trial(  # noqa: PLR0913, PLR0917
     Returns:
         List of coverage trial results, one per nominal level.
     """
-    from typing import Any  # noqa: PLC0415
+    from typing import Any
 
     x = x_clean.copy()
     mask = _apply_missingness(x, miss_pattern, rng)
@@ -506,7 +506,7 @@ def _run_coverage_grid(
     Returns:
         List of coverage trial results.
     """
-    from scipy import stats  # noqa: PLC0415
+    from scipy import stats
 
     rng = np.random.default_rng(seed)
     results: list[_CoverageTrial] = []
@@ -1290,7 +1290,7 @@ def _save_results(trials: list[_Trial], output_dir: pathlib.Path) -> None:
     LOGGER.info("Wrote %s (%d trials)", json_path, len(records))
 
     try:
-        import pandas as pd  # noqa: PLC0415
+        import pandas as pd
 
         df = pd.DataFrame(records)
         parquet_path = output_dir / "stability_results.parquet"

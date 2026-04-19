@@ -756,3 +756,30 @@ def test_select_n_components_no_variance_without_diagnostics() -> None:
 
     assert best_model is not None
     assert best_model.variance_ is None
+
+
+# ── Convergence diagnostics in trace (issue #99) ────────────────
+
+
+def test_trace_contains_convergence_diagnostics() -> None:
+    """Each trace entry should have n_iter and convergence_reason."""
+    rng = np.random.default_rng(42)
+    x = _low_rank_data(rng, n_features=6, n_samples=10, rank=2)
+
+    _, _, trace, _ = select_n_components(
+        x,
+        components=[1, 2, 3],
+        maxiters=20,
+        verbose=0,
+    )
+
+    assert len(trace) >= 3
+    for entry in trace:
+        assert "n_iter" in entry, f"trace entry for k={entry['k']} missing n_iter"
+        assert "convergence_reason" in entry, (
+            f"trace entry for k={entry['k']} missing convergence_reason"
+        )
+        assert isinstance(entry["n_iter"], int)
+        assert entry["n_iter"] > 0
+        assert isinstance(entry["convergence_reason"], str)
+        assert entry["convergence_reason"] != ""

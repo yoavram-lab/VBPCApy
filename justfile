@@ -141,6 +141,37 @@ paper-plot:
 paper-figure-smoke:
 	uv run --extra analysis python analysis/stability_analysis.py --smoke --fmt png
 
+# ── Trade study (hyperparameter optimisation) ────────────────────
+# Requires: pip install -e "/path/to/trade-study[all]" in the venv.
+
+# Phase 1: Morris sensitivity screening (~5-15 min).
+trade-screen:
+	.venv/bin/python -m analysis.trade_study.phase1_screen
+
+# Phase 2: Sobol exploration across all regimes (hours).
+trade-explore:
+	.venv/bin/python -m analysis.trade_study.phase2_explore --n-jobs -1
+
+# Phase 3-4: Adaptive refinement + benchmark per regime.
+trade-refine:
+	.venv/bin/python -m analysis.trade_study.phase3_refine --n-adaptive 100 --n-jobs -1
+
+# Run all trade-study phases end-to-end.
+trade-all:
+	.venv/bin/python -m analysis.trade_study --n-jobs -1
+
+# Quick smoke: screen only with minimal trajectories.
+trade-smoke:
+	.venv/bin/python -m analysis.trade_study.phase1_screen --trajectories 8 --threshold 0.1
+
+# Generate all trade-study + comparison figures from saved results.
+trade-plot fmt="png":
+	.venv/bin/python -m analysis.trade_study.plot --fmt {{fmt}}
+
+# Re-run stability grid with default + optimized configs, then plot comparison.
+trade-compare fmt="png":
+	.venv/bin/python -m analysis.trade_study.compare --fmt {{fmt}}
+
 # Build documentation site.
 docs:
 	uv run --extra docs mkdocs build --strict

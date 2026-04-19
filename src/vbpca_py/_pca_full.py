@@ -1241,6 +1241,13 @@ def _run_training_loop(
 
     # Cleanup internal stop marker to keep lc stable for external callers.
     training.lc.pop("_stop", None)
+
+    # Promote _convergence_reason to a top-level lc key (set by
+    # convergence_check when a criterion fires).  If no criterion
+    # fired the loop exhausted maxiters.
+    reason: str = str(training.lc.pop("_convergence_reason", "maxiters"))
+    training.lc["convergence_reason"] = reason  # type: ignore[assignment]
+
     return training
 
 
