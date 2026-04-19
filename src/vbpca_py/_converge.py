@@ -241,7 +241,7 @@ def _cost_criteria(
     Returns:
         The first triggered message, or ``None``.
     """
-    tag, msg = _cost_criteria_tagged(opts, cost)
+    _tag, msg = _cost_criteria_tagged(opts, cost)
     return msg
 
 
@@ -438,7 +438,7 @@ def convergence_check(
 
     # Evaluate criteria in priority order; return first trigger.
     # Each entry is (reason_tag, message_or_None).
-    tagged_checks: list[tuple[str, str | None]] = [
+    tagged_checks: list[tuple[str | None, str | None]] = [
         # 1. Angle-based stop
         ("angle", _angle_stop_message(opts, angle_a)),
         # 2. Early stopping on probe RMS
@@ -451,8 +451,7 @@ def convergence_check(
             else None,
         ),
         # 4. Cost / ELBO criteria (has its own sub-priority)
-        *([_cost_criteria_tagged(opts, cost)]
-          if True else []),
+        *([_cost_criteria_tagged(opts, cost)] if True else []),
         # 5. Composite stop
         (
             "composite",
@@ -468,7 +467,7 @@ def convergence_check(
     candidate = ""
     for tag, msg in tagged_checks:
         if msg:
-            reason_tag = tag
+            reason_tag = tag or ""
             candidate = msg
             break
 

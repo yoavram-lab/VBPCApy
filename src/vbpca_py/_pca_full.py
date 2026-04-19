@@ -1245,8 +1245,8 @@ def _run_training_loop(
     # Promote _convergence_reason to a top-level lc key (set by
     # convergence_check when a criterion fires).  If no criterion
     # fired the loop exhausted maxiters.
-    reason = training.lc.pop("_convergence_reason", "maxiters")
-    training.lc["convergence_reason"] = reason
+    reason: str = str(training.lc.pop("_convergence_reason", "maxiters"))
+    training.lc["convergence_reason"] = reason  # type: ignore[assignment]
 
     return training
 

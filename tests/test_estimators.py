@@ -341,7 +341,10 @@ def test_convergence_reason_angle() -> None:
     model.fit(x)
 
     assert model.convergence_reason_ in {
-        "angle", "rms_plateau", "cost_plateau", "slowing_down",
+        "angle",
+        "rms_plateau",
+        "cost_plateau",
+        "slowing_down",
     }
     assert model.n_iter_ < 500
 

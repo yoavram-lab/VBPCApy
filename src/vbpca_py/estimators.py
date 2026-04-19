@@ -230,9 +230,7 @@ class VBPCA:
         if lc and isinstance(lc, dict):
             rms_history = lc.get("rms", [])
             self.n_iter_ = max(0, len(rms_history) - 1)
-            self.convergence_reason_ = str(
-                lc.get("convergence_reason", "maxiters")
-            )
+            self.convergence_reason_ = str(lc.get("convergence_reason", "maxiters"))
             self.learning_curve_ = lc
         else:
             self.n_iter_ = 0

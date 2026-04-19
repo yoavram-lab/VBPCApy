@@ -767,7 +767,10 @@ def test_trace_contains_convergence_diagnostics() -> None:
     x = _low_rank_data(rng, n_features=6, n_samples=10, rank=2)
 
     _, _, trace, _ = select_n_components(
-        x, components=[1, 2, 3], maxiters=20, verbose=0,
+        x,
+        components=[1, 2, 3],
+        maxiters=20,
+        verbose=0,
     )
 
     assert len(trace) >= 3
