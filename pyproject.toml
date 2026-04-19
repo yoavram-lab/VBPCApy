@@ -212,10 +212,37 @@ ignore = [
     "PLR0915", # Too many statements (diagnostic scripts with many print calls)
 ]
 "analysis/**/*" = [
-    "D104",    # Missing docstring in __init__.py OK
+    "ANN",     # Type annotations not required in analysis
+    "ARG001",  # Unused arguments OK in analysis (callbacks, interfaces)
+    "ARG002",  # Unused method arguments OK in analysis (scorer interface)
+    "B905",    # zip() strict= not required in analysis
+    "BLE001",  # Blind except OK in analysis
+    "C901",    # Complex functions OK in analysis
+    "D",       # Docstring rules not enforced in analysis
+    "DOC201",  # Missing return in docstring OK in analysis
+    "DOC501",  # Missing raises in docstring OK in analysis
+    "E501",    # Long lines OK in analysis
+    "EM101",   # String literal in exception OK in analysis
+    "EM102",   # f-string in exception OK in analysis
+    "EXE001",  # Shebang presence not required
+    "F841",    # Unused local OK in analysis (intermediate results)
+    "FBT001",  # Boolean positional args OK in analysis
+    "FBT002",  # Boolean default args OK in analysis
     "INP001",  # Implicit namespace package
-    "PLR0914", # Many locals OK in plotting functions
+    "N806",    # Uppercase variable names OK (matrix convention: W, S)
+    "PLC0415", # Lazy imports OK in analysis
+    "PLR0913", # Many arguments OK in analysis
+    "PLR0914", # Many locals OK in analysis
+    "PLR0915", # Too many statements OK in analysis
+    "PLR0917", # Many positional args OK in analysis
+    "PLR6301", # Method could be function OK in analysis (scorer API)
+    "PLW1514", # Explicit encoding not required in analysis
+    "RUF001",  # Ambiguous unicode OK in analysis
+    "RUF002",  # Ambiguous unicode OK in analysis
+    "RUF003",  # Ambiguous unicode OK in analysis
+    "RUF046",  # Redundant int cast OK in analysis (defensive rounding)
     "T201",    # print() OK in analysis scripts
+    "TRY003",  # Long exception messages OK in analysis
 ]
 
 [tool.ruff.lint.pydocstyle]
