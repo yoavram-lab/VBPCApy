@@ -79,6 +79,9 @@ class VBPCA:
         self.prms_: float | None = None
         self.noise_variance_: float | None = None
         self.cost_: float | None = None
+        self.n_iter_: int | None = None
+        self.convergence_reason_: str | None = None
+        self.learning_curve_: dict[str, list[float]] | None = None
         self.reconstruction_: np.ndarray | None = None
         self.variance_: np.ndarray | None = None
         self.explained_variance_: np.ndarray | None = None
@@ -221,6 +224,21 @@ class VBPCA:
             if isinstance(cost_val, (float, int, np.floating))
             else float("nan")
         )
+
+        # Convergence diagnostics from the learning curve.
+        lc = result.get("lc")
+        if lc and isinstance(lc, dict):
+            rms_history = lc.get("rms", [])
+            self.n_iter_ = max(0, len(rms_history) - 1)
+            self.convergence_reason_ = str(
+                lc.get("convergence_reason", "maxiters")
+            )
+            self.learning_curve_ = lc
+        else:
+            self.n_iter_ = 0
+            self.convergence_reason_ = "maxiters"
+            self.learning_curve_ = None
+
         self.reconstruction_ = None
         if result.get("Xrec") is not None:
             self.reconstruction_ = np.asarray(result["Xrec"], dtype=float)

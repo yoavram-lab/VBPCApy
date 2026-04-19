@@ -156,6 +156,8 @@ def _fit_candidate(
         "prms": prms,
         "cost": cost,
         "evr": None,
+        "n_iter": est.n_iter_ if est.n_iter_ is not None else 0,
+        "convergence_reason": est.convergence_reason_ or "maxiters",
     }
     return entry, est
 

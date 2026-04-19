@@ -241,28 +241,41 @@ def _cost_criteria(
     Returns:
         The first triggered message, or ``None``.
     """
+    tag, msg = _cost_criteria_tagged(opts, cost)
+    return msg
+
+
+def _cost_criteria_tagged(
+    opts: Mapping[str, Any],
+    cost: np.ndarray,
+) -> tuple[str | None, str | None]:
+    """Like :func:`_cost_criteria` but also returns a reason tag.
+
+    Returns:
+        ``(reason_tag, message)`` or ``(None, None)`` when nothing fires.
+    """
     # Cost plateau
     cfstop = opts.get("cfstop")
     if cost.size >= 2 and cfstop is not None:
         plateau_msg = _plateau_stop(cost, cfstop, "cost")
         if plateau_msg:
-            return plateau_msg
+            return "cost_plateau", plateau_msg
 
     # Relative ELBO decrease
     cfstop_rel = opts.get("cfstop_rel")
     if cfstop_rel is not None:
         rel_msg = _relative_elbo_stop(cost, float(cfstop_rel))
         if rel_msg:
-            return rel_msg
+            return "cfstop_rel", rel_msg
 
     # ELBO curvature (2nd difference)
     cfstop_curv = opts.get("cfstop_curv")
     if cfstop_curv is not None:
         curv_msg = _elbo_curvature_stop(cost, float(cfstop_curv))
         if curv_msg:
-            return curv_msg
+            return "cfstop_curv", curv_msg
 
-    return None
+    return None, None
 
 
 def _check_sub_criterion(
@@ -424,30 +437,52 @@ def convergence_check(
     composite_cfg = opts.get("composite_stop")
 
     # Evaluate criteria in priority order; return first trigger.
-    checks: list[str | None] = [
+    # Each entry is (reason_tag, message_or_None).
+    tagged_checks: list[tuple[str, str | None]] = [
         # 1. Angle-based stop
-        _angle_stop_message(opts, angle_a),
+        ("angle", _angle_stop_message(opts, angle_a)),
         # 2. Early stopping on probe RMS
-        _early_stop_message(opts, prms),
+        ("earlystop", _early_stop_message(opts, prms)),
         # 3. RMS plateau
-        _plateau_stop(rms, rmsstop, "RMS")
-        if rms.size >= 2 and rmsstop is not None
-        else None,
-        # 4. Cost / ELBO criteria
-        _cost_criteria(opts, cost),
+        (
+            "rms_plateau",
+            _plateau_stop(rms, rmsstop, "RMS")
+            if rms.size >= 2 and rmsstop is not None
+            else None,
+        ),
+        # 4. Cost / ELBO criteria (has its own sub-priority)
+        *([_cost_criteria_tagged(opts, cost)]
+          if True else []),
         # 5. Composite stop
-        _composite_stop(composite_cfg, angle_a, rms, cost) if composite_cfg else None,
+        (
+            "composite",
+            _composite_stop(composite_cfg, angle_a, rms, cost)
+            if composite_cfg
+            else None,
+        ),
         # 6. Slowing-down criterion
-        _slowing_down_message(sd_iter),
+        ("slowing_down", _slowing_down_message(sd_iter)),
     ]
-    candidate = next((msg for msg in checks if msg), "")
+
+    reason_tag = ""
+    candidate = ""
+    for tag, msg in tagged_checks:
+        if msg:
+            reason_tag = tag
+            candidate = msg
+            break
 
     # Apply patience window if configured.
     patience_val = opts.get("patience")
     patience = int(patience_val) if patience_val is not None else 1
-    if patience <= 1:
-        return candidate
-    return _apply_patience(candidate, lc, patience)
+    if patience > 1:
+        candidate = _apply_patience(candidate, lc, patience)
+
+    # Store the reason tag in lc for downstream consumers.
+    if candidate and reason_tag:
+        lc["_convergence_reason"] = reason_tag  # type: ignore[index]
+
+    return candidate
 
 
 # ---------------------------------------------------------------------------
