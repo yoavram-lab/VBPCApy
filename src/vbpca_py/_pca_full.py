@@ -25,7 +25,11 @@ if TYPE_CHECKING:
     from collections.abc import Mapping, MutableMapping
     from pathlib import Path
 
-from ._converge import ConvergenceState, _log_and_check_convergence
+from ._converge import (
+    _VALID_CRITERION_NAMES,
+    ConvergenceState,
+    _log_and_check_convergence,
+)
 from ._expand import _add_m_cols, _add_m_rows
 from ._full_update import (
     BiasState,
@@ -1918,6 +1922,44 @@ def _pack_result(
 # ---------------------------------------------------------------------------
 
 
+def _validate_convergence_opts(opts: dict[str, object]) -> None:
+    """Validate ``criterion_order`` and ``convergence_criteria`` in *opts*.
+
+    Raises:
+        TypeError: If the values have wrong types.
+        ValueError: If unknown criterion names are supplied.
+    """
+    crit_order = opts.get("criterion_order")
+    if crit_order is not None:
+        if not isinstance(crit_order, (list, tuple)):
+            msg = "criterion_order must be a list of criterion names."
+            raise TypeError(msg)
+        unknown = set(crit_order) - _VALID_CRITERION_NAMES
+        if unknown:
+            msg = (
+                "Unknown criterion name(s) in "
+                f"criterion_order: {sorted(unknown)}. "
+                f"Valid names: {sorted(_VALID_CRITERION_NAMES)}"
+            )
+            raise ValueError(msg)
+
+    conv_criteria = opts.get("convergence_criteria")
+    if conv_criteria is not None:
+        if not isinstance(conv_criteria, dict):
+            msg = (
+                "convergence_criteria must be a dict mapping criterion names to bools."
+            )
+            raise TypeError(msg)
+        unknown = set(conv_criteria) - _VALID_CRITERION_NAMES
+        if unknown:
+            msg = (
+                "Unknown criterion name(s) in "
+                f"convergence_criteria: {sorted(unknown)}. "
+                f"Valid names: {sorted(_VALID_CRITERION_NAMES)}"
+            )
+            raise ValueError(msg)
+
+
 def _build_options(kwargs: Mapping[str, object]) -> dict[str, object]:
     """Merge user kwargs with defaults using _options (case-insensitive).
 
@@ -1926,7 +1968,8 @@ def _build_options(kwargs: Mapping[str, object]) -> dict[str, object]:
 
     Raises:
         ValueError: If ``compat_mode`` is not one of
-            ``{"strict_legacy", "modern"}``.
+            ``{"strict_legacy", "modern"}``, or if unknown criterion
+            names are supplied.
     """
     opts_default: dict[str, object] = {
         "init": "random",
@@ -1950,6 +1993,8 @@ def _build_options(kwargs: Mapping[str, object]) -> dict[str, object]:
         "cfstop_curv": None,
         "composite_stop": None,
         "patience": 1,
+        "criterion_order": None,
+        "convergence_criteria": None,
         "verbose": 1,
         "num_cpu": None,
         "num_cpu_score_update": None,
@@ -1999,6 +2044,8 @@ def _build_options(kwargs: Mapping[str, object]) -> dict[str, object]:
     if ratio <= 0.0:
         ratio = 4.0
     opts["explained_var_gram_ratio"] = ratio
+
+    _validate_convergence_opts(opts)
 
     if wrnmsg:
         logger.warning("pca_full options warning: %s", wrnmsg)

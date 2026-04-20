@@ -24,6 +24,18 @@ Matrix = Array | Sparse
 
 logger = logging.getLogger(__name__)
 
+#: Default priority order used by :func:`convergence_check`.
+DEFAULT_CRITERION_ORDER: list[str] = [
+    "angle",
+    "earlystop",
+    "rms_plateau",
+    "cost",
+    "composite",
+    "slowing_down",
+]
+
+_VALID_CRITERION_NAMES: frozenset[str] = frozenset(DEFAULT_CRITERION_ORDER)
+
 
 def _coerce_int(
     val: SupportsInt | SupportsIndex | str | bytes | bytearray | None,
@@ -412,15 +424,14 @@ def convergence_check(
 ) -> str:
     """Check convergence criteria and return a human-readable message.
 
-    The following criteria are evaluated **in order**; the first one that
-    triggers returns a non-empty message, otherwise an empty string:
+    Criteria are evaluated in the order given by ``opts["criterion_order"]``
+    (defaulting to :data:`DEFAULT_CRITERION_ORDER`).  The first **enabled**
+    criterion that triggers returns a non-empty message.
 
-    1. Subspace-angle stop (``minangle``).
-    2. Early stopping based on probe RMS (``earlystop``).
-    3. RMS plateau stop (``rmsstop = [window, abs_tol, rel_tol]``).
-    4. Cost / ELBO criteria (``cfstop``, ``cfstop_rel``, ``cfstop_curv``).
-    5. Composite stop (``composite_stop``).
-    6. "Slowing-down'' stop based on ``sd_iter`` (gradient backtracking).
+    Individual criteria can be disabled via ``opts["convergence_criteria"]``,
+    a ``dict[str, bool]``.  Disabled criteria are still evaluated (their
+    results are available for diagnostics) but excluded from the stop
+    decision.
 
     When ``patience`` is set (> 1), the winning criterion must fire for
     that many **consecutive** iterations before the message is returned.
@@ -436,36 +447,36 @@ def convergence_check(
     rmsstop = opts.get("rmsstop")
     composite_cfg = opts.get("composite_stop")
 
-    # Evaluate criteria in priority order; return first trigger.
-    # Each entry is (reason_tag, message_or_None).
-    tagged_checks: list[tuple[str | None, str | None]] = [
-        # 1. Angle-based stop
-        ("angle", _angle_stop_message(opts, angle_a)),
-        # 2. Early stopping on probe RMS
-        ("earlystop", _early_stop_message(opts, prms)),
-        # 3. RMS plateau
-        (
+    # Build the full check registry — always evaluate all criteria.
+    all_checks: dict[str, tuple[str | None, str | None]] = {
+        "angle": ("angle", _angle_stop_message(opts, angle_a)),
+        "earlystop": ("earlystop", _early_stop_message(opts, prms)),
+        "rms_plateau": (
             "rms_plateau",
             _plateau_stop(rms, rmsstop, "RMS")
             if rms.size >= 2 and rmsstop is not None
             else None,
         ),
-        # 4. Cost / ELBO criteria (has its own sub-priority)
-        *([_cost_criteria_tagged(opts, cost)] if True else []),
-        # 5. Composite stop
-        (
+        "cost": _cost_criteria_tagged(opts, cost),
+        "composite": (
             "composite",
             _composite_stop(composite_cfg, angle_a, rms, cost)
             if composite_cfg
             else None,
         ),
-        # 6. Slowing-down criterion
-        ("slowing_down", _slowing_down_message(sd_iter)),
-    ]
+        "slowing_down": ("slowing_down", _slowing_down_message(sd_iter)),
+    }
+
+    # Determine ordering and enablement.
+    order = opts.get("criterion_order") or DEFAULT_CRITERION_ORDER
+    enabled: dict[str, bool] = opts.get("convergence_criteria") or {}
 
     reason_tag = ""
     candidate = ""
-    for tag, msg in tagged_checks:
+    for name in order:
+        if not enabled.get(name, True):
+            continue
+        tag, msg = all_checks[name]
         if msg:
             reason_tag = tag or ""
             candidate = msg

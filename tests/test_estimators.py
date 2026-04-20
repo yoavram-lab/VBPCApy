@@ -355,3 +355,38 @@ def test_diagnostics_none_before_fit() -> None:
     assert model.n_iter_ is None
     assert model.convergence_reason_ is None
     assert model.learning_curve_ is None
+
+
+# --------------------------------------------------------------------------
+# criterion_order / convergence_criteria forwarding
+# --------------------------------------------------------------------------
+
+
+def test_criterion_order_forwarded_through_estimator() -> None:
+    """criterion_order kwarg reaches _build_options via VBPCA."""
+    order = ["cost", "angle", "rms_plateau", "earlystop", "composite", "slowing_down"]
+    model = VBPCA(n_components=2, criterion_order=order)
+    resolved = model.get_options()
+    assert resolved["criterion_order"] == order
+
+
+def test_convergence_criteria_forwarded_through_estimator() -> None:
+    """convergence_criteria kwarg reaches _build_options via VBPCA."""
+    crit = {"angle": False, "cost": True}
+    model = VBPCA(n_components=2, convergence_criteria=crit)
+    resolved = model.get_options()
+    assert resolved["convergence_criteria"] == crit
+
+
+def test_criterion_order_invalid_name_raises() -> None:
+    """Unknown criterion name in criterion_order raises ValueError."""
+    model = VBPCA(n_components=2, criterion_order=["angle", "bogus"])
+    with pytest.raises(ValueError, match="Unknown criterion name"):
+        model.get_options()
+
+
+def test_convergence_criteria_invalid_name_raises() -> None:
+    """Unknown criterion name in convergence_criteria raises ValueError."""
+    model = VBPCA(n_components=2, convergence_criteria={"bogus": True})
+    with pytest.raises(ValueError, match="Unknown criterion name"):
+        model.get_options()
