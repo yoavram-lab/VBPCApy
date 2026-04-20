@@ -36,6 +36,8 @@ class VBPCA:
         niter_broadprior: int | None = None,
         va_init: float | None = None,
         xprobe_fraction: float = 0.0,
+        criterion_order: list[str] | None = None,
+        convergence_criteria: dict[str, bool] | None = None,
         **opts: object,
     ) -> None:
         """
@@ -58,6 +60,12 @@ class VBPCA:
                 probe data (default 0.0, disabled).  When positive and no
                 explicit *xprobe* is passed to :meth:`fit`, a random probe
                 set is generated automatically.
+            criterion_order: Priority order for convergence criteria.
+                Defaults to ``DEFAULT_CRITERION_ORDER`` when ``None``.
+            convergence_criteria: Per-criterion enable/disable dict.  Keys
+                are criterion names, values are booleans.  Criteria set to
+                ``False`` are still evaluated for diagnostics but excluded
+                from the stop decision.  Defaults to all enabled.
             **opts: Additional options passed to the underlying PCA_FULL implementation.
         """
         self.n_components = n_components
@@ -71,6 +79,8 @@ class VBPCA:
         self.niter_broadprior = niter_broadprior
         self.va_init = va_init
         self.xprobe_fraction = xprobe_fraction
+        self.criterion_order = criterion_order
+        self.convergence_criteria = convergence_criteria
         self.opts = opts
         self.components_: np.ndarray | None = None
         self.scores_: np.ndarray | None = None
@@ -133,6 +143,10 @@ class VBPCA:
             opts["niter_broadprior"] = self.niter_broadprior
         if self.va_init is not None:
             opts["va_init"] = self.va_init
+        if self.criterion_order is not None:
+            opts["criterion_order"] = self.criterion_order
+        if self.convergence_criteria is not None:
+            opts["convergence_criteria"] = self.convergence_criteria
         opts.update(self.opts)
         if xprobe is not None:
             opts["xprobe"] = xprobe
@@ -283,6 +297,10 @@ class VBPCA:
             opts["niter_broadprior"] = self.niter_broadprior
         if self.va_init is not None:
             opts["va_init"] = self.va_init
+        if self.criterion_order is not None:
+            opts["criterion_order"] = self.criterion_order
+        if self.convergence_criteria is not None:
+            opts["convergence_criteria"] = self.convergence_criteria
         opts.update(self.opts)
         return _build_options(opts)
 

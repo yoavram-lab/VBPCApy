@@ -12,7 +12,7 @@ from typing import Any
 
 import pytest
 
-from vbpca_py._converge import convergence_check
+from vbpca_py._converge import DEFAULT_CRITERION_ORDER, convergence_check
 
 
 def _lc(
@@ -800,3 +800,152 @@ def test_patience_1_is_default_behaviour() -> None:
 
     msg = convergence_check(opts, lc, angle_a=1e-4, sd_iter=None)
     assert "angle" in msg.lower()
+
+
+# --------------------------------------------------------------------------
+# Criterion ordering (criterion_order)
+# --------------------------------------------------------------------------
+
+
+def test_default_criterion_order_matches_current_behaviour() -> None:
+    """DEFAULT_CRITERION_ORDER reproduces the existing hardcoded priority."""
+    assert DEFAULT_CRITERION_ORDER == [
+        "angle",
+        "earlystop",
+        "rms_plateau",
+        "cost",
+        "composite",
+        "slowing_down",
+    ]
+
+
+def test_criterion_order_changes_winner() -> None:
+    """Reordering criteria lets a lower-priority criterion win."""
+    # Both angle and rms_plateau would fire; default order → angle wins.
+    opts_default: dict[str, Any] = {
+        "minangle": 1e-3,
+        "earlystop": False,
+        "rmsstop": [2, 1e-1, 1e-1],
+        "cfstop": None,
+    }
+    lc = _lc(rms=[1.0, 1.0, 1.0], prms=[1.0, 0.9, 0.8], cost=[10.0, 9.0, 8.0])
+
+    msg = convergence_check(opts_default, lc, angle_a=1e-4, sd_iter=None)
+    assert "angle" in msg.lower()
+
+    # Now put rms_plateau first.
+    opts_reordered = {
+        **opts_default,
+        "criterion_order": [
+            "rms_plateau",
+            "angle",
+            "earlystop",
+            "cost",
+            "composite",
+            "slowing_down",
+        ],
+    }
+    lc2 = _lc(rms=[1.0, 1.0, 1.0], prms=[1.0, 0.9, 0.8], cost=[10.0, 9.0, 8.0])
+    msg2 = convergence_check(opts_reordered, lc2, angle_a=1e-4, sd_iter=None)
+    assert "rms" in msg2.lower()
+
+
+def test_criterion_order_none_uses_default() -> None:
+    """criterion_order=None reproduces default order."""
+    opts: dict[str, Any] = {
+        "minangle": 1e-3,
+        "earlystop": False,
+        "rmsstop": None,
+        "cfstop": None,
+        "criterion_order": None,
+    }
+    lc = _lc(rms=[1.0, 0.9], prms=[1.0, 0.9], cost=[10.0, 9.0])
+    msg = convergence_check(opts, lc, angle_a=1e-4, sd_iter=None)
+    assert "angle" in msg.lower()
+
+
+# --------------------------------------------------------------------------
+# Per-criterion enable/disable (convergence_criteria)
+# --------------------------------------------------------------------------
+
+
+def test_disabled_criterion_is_skipped() -> None:
+    """Disabling the angle criterion lets a lower one fire instead."""
+    opts: dict[str, Any] = {
+        "minangle": 1e-3,
+        "earlystop": False,
+        "rmsstop": [2, 1e-1, 1e-1],
+        "cfstop": None,
+        "convergence_criteria": {"angle": False},
+    }
+    lc = _lc(rms=[1.0, 1.0, 1.0], prms=[1.0, 0.9, 0.8], cost=[10.0, 9.0, 8.0])
+    msg = convergence_check(opts, lc, angle_a=1e-4, sd_iter=None)
+    # angle is disabled, so rms_plateau should win.
+    assert "rms" in msg.lower()
+    assert "angle" not in msg.lower()
+
+
+def test_disabled_criterion_no_stop() -> None:
+    """Disabling the only triggering criterion results in no stop."""
+    opts: dict[str, Any] = {
+        "minangle": 1e-3,
+        "earlystop": False,
+        "rmsstop": None,
+        "cfstop": None,
+        "convergence_criteria": {"angle": False},
+    }
+    lc = _lc(rms=[1.0, 0.9], prms=[1.0, 0.9], cost=[10.0, 9.0])
+    msg = convergence_check(opts, lc, angle_a=1e-4, sd_iter=None)
+    assert not msg
+
+
+def test_all_enabled_by_default() -> None:
+    """Empty convergence_criteria dict means all criteria are enabled."""
+    opts: dict[str, Any] = {
+        "minangle": 1e-3,
+        "earlystop": False,
+        "rmsstop": None,
+        "cfstop": None,
+        "convergence_criteria": {},
+    }
+    lc = _lc(rms=[1.0, 0.9], prms=[1.0, 0.9], cost=[10.0, 9.0])
+    msg = convergence_check(opts, lc, angle_a=1e-4, sd_iter=None)
+    assert "angle" in msg.lower()
+
+
+def test_convergence_criteria_none_enables_all() -> None:
+    """convergence_criteria=None enables all criteria (default)."""
+    opts: dict[str, Any] = {
+        "minangle": 1e-3,
+        "earlystop": False,
+        "rmsstop": None,
+        "cfstop": None,
+        "convergence_criteria": None,
+    }
+    lc = _lc(rms=[1.0, 0.9], prms=[1.0, 0.9], cost=[10.0, 9.0])
+    msg = convergence_check(opts, lc, angle_a=1e-4, sd_iter=None)
+    assert "angle" in msg.lower()
+
+
+def test_ordering_and_disable_combined() -> None:
+    """criterion_order + convergence_criteria work together."""
+    opts: dict[str, Any] = {
+        "minangle": 1e-3,
+        "earlystop": True,
+        "rmsstop": [2, 1e-1, 1e-1],
+        "cfstop": None,
+        # Put earlystop first, but disable it.
+        "criterion_order": [
+            "earlystop",
+            "rms_plateau",
+            "angle",
+            "cost",
+            "composite",
+            "slowing_down",
+        ],
+        "convergence_criteria": {"earlystop": False},
+    }
+    lc = _lc(rms=[1.0, 1.0, 1.0], prms=[0.5, 0.4, 0.45], cost=[10.0, 9.0, 8.0])
+    msg = convergence_check(opts, lc, angle_a=1e-4, sd_iter=None)
+    # earlystop is first but disabled; rms_plateau is next and fires.
+    assert "rms" in msg.lower()

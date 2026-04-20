@@ -86,3 +86,26 @@ $N$ consecutive iterations before convergence is declared.
 - **Broad-prior warmup:** during the first `niter_broadprior` iterations (default
   100), stopping messages are suppressed when `use_prior` is active, allowing the
   model to settle before ARD engages.
+
+## Criterion ordering — `criterion_order`
+
+By default, criteria are evaluated in a fixed priority order (angle first,
+slowing-down last). The first criterion that fires wins. You can change
+this ordering with `criterion_order`:
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `criterion_order` | `None` (use default) | List of criterion names in priority order |
+
+Valid criterion names: `angle`, `earlystop`, `rms_plateau`, `cost`,
+`composite`, `slowing_down`.
+
+## Per-criterion enable/disable — `convergence_criteria`
+
+Selectively disable individual criteria without zeroing their thresholds.
+Disabled criteria are still evaluated for diagnostics but excluded from the
+stop decision.
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `convergence_criteria` | `None` (all enabled) | Dict mapping criterion names to booleans |
