@@ -11,9 +11,8 @@ from typing import Any, Literal, cast
 import numpy as np
 import scipy.sparse as sp
 
+from ._sklearn_compat import BaseEstimator, TransformerMixin
 from ._sparsity import validate_mask_compatibility
-
-from sklearn.base import BaseEstimator, TransformerMixin
 
 __all__ = [
     "AutoEncoder",
@@ -48,7 +47,7 @@ def _ensure_mask(x: np.ndarray, mask: Mask | None) -> Mask:
     """Return a boolean mask where True marks observed entries."""
     if mask is None:
         if np.issubdtype(x.dtype, np.number):
-            return ~np.isnan(x.astype(float))  # type: ignore[no-any-return]
+            return ~np.isnan(x.astype(float))
         return ~np.not_equal(x, x)  # type: ignore[no-any-return]
     return np.asarray(mask, dtype=bool)
 
