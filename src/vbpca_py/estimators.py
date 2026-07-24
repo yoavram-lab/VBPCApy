@@ -16,10 +16,12 @@ from vbpca_py._missing import make_xprobe_mask
 from vbpca_py._pca_full import Matrix, _build_options, pca_full
 from vbpca_py.model_selection import SelectionConfig, select_n_components
 
+from sklearn.base import BaseEstimator, TransformerMixin
+
 __all__ = ["VBPCA"]
 
 
-class VBPCA:
+class VBPCA(BaseEstimator, TransformerMixin):
     """Variational Bayesian PCA with a sklearn-like interface."""
 
     def __init__(  # noqa: PLR0913
@@ -101,6 +103,38 @@ class VBPCA:
         self._sv: list[np.ndarray] | None = None
         self._pattern_index: np.ndarray | None = None
         self._muv: np.ndarray | None = None
+
+    def get_params(self, deep: bool = True) -> dict[str, object]:
+        params = {
+            "n_components": self.n_components,
+            "bias": self.bias,
+            "maxiters": self.maxiters,
+            "tol": self.tol,
+            "verbose": self.verbose,
+            "hp_va": self.hp_va,
+            "hp_vb": self.hp_vb,
+            "hp_v": self.hp_v,
+            "niter_broadprior": self.niter_broadprior,
+            "va_init": self.va_init,
+            "xprobe_fraction": self.xprobe_fraction,
+            "criterion_order": self.criterion_order,
+            "convergence_criteria": self.convergence_criteria,
+        }
+        params.update(self.opts)
+        return params
+
+    def set_params(self, **params: object) -> VBPCA:
+        valid_params = {
+            "n_components", "bias", "maxiters", "tol", "verbose", "hp_va", 
+            "hp_vb", "hp_v", "niter_broadprior", "va_init", "xprobe_fraction", 
+            "criterion_order", "convergence_criteria"
+        }
+        for key, value in params.items():
+            if key in valid_params:
+                setattr(self, key, value)
+            else:
+                self.opts[key] = value
+        return self
 
     def fit(  # noqa: C901, PLR0912, PLR0914, PLR0915
         self,
