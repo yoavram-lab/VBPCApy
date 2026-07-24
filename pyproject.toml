@@ -127,6 +127,7 @@ ignore = [
     "D203",    # 1 blank line before class docstring
     "D212",    # Multi-line docstring summary on first line
     "PLR2004", # Magic numbers
+    "RUF105",  # Prefer `ruff: ignore` over `noqa` (preview; repo uses noqa)
 ]
 
 [tool.ruff.lint.per-file-ignores]
@@ -198,6 +199,7 @@ ignore = [
     "PLR1702", # Nested blocks OK in scripts
     "PLR5501", # Collapsible else OK in scripts
     "PLR6104", # Augmented assignment OK in scripts
+    "PLW0717", # Long try clause OK in benchmark scripts
     "RUF001",  # Ambiguous unicode OK in scripts
     "RUF003",  # Ambiguous unicode OK in scripts
     "RUF046",  # Redundant int cast OK in scripts
