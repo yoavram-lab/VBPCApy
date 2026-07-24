@@ -11,9 +11,8 @@ from typing import Any, Literal, cast
 import numpy as np
 import scipy.sparse as sp
 
+from ._sklearn_compat import BaseEstimator, TransformerMixin
 from ._sparsity import validate_mask_compatibility
-
-from sklearn.base import BaseEstimator, TransformerMixin
 
 __all__ = [
     "AutoEncoder",
