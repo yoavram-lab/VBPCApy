@@ -11,6 +11,7 @@ from typing import Any, Literal, cast
 import numpy as np
 import scipy.sparse as sp
 
+from ._sklearn_compat import BaseEstimator, TransformerMixin
 from ._sparsity import validate_mask_compatibility
 
 __all__ = [
@@ -106,7 +107,7 @@ def _safe_unique(values: np.ndarray) -> list[Any]:
     return uniq
 
 
-class MissingAwareOneHotEncoder:
+class MissingAwareOneHotEncoder(BaseEstimator, TransformerMixin):
     """One-hot encode categorical columns while respecting missing values."""
 
     def __init__(
@@ -346,7 +347,7 @@ class MissingAwareOneHotEncoder:
                 col_vals[i] = cats[idx]
 
 
-class _BaseScaler:
+class _BaseScaler(BaseEstimator, TransformerMixin):
     def __init__(self) -> None:
         self.n_features_in_: int | None = None
 
@@ -369,7 +370,7 @@ class _BaseScaler:
         return self.fit(x, mask).transform(x, mask)
 
 
-class MissingAwareSparseOneHotEncoder:
+class MissingAwareSparseOneHotEncoder(BaseEstimator, TransformerMixin):
     """Sparse one-hot encoder for categorical columns.
 
     Assumptions:
@@ -717,7 +718,7 @@ class _ColumnPlan:
     slice_end: int
 
 
-class AutoEncoder:
+class AutoEncoder(BaseEstimator, TransformerMixin):
     """Column-wise router that applies missing-aware OHE or scaling."""
 
     def __init__(
