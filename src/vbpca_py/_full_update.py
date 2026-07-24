@@ -798,7 +798,7 @@ def _row_sums(err_mx: np.ndarray | sp.spmatrix) -> np.ndarray:
             else sp.csr_matrix(cast("Any", err_mx))
         )
         return np.asarray(err_sparse.sum(axis=1)).ravel()
-    return np.sum(np.asarray(err_mx, dtype=float), axis=1)  # type: ignore[no-any-return]
+    return np.sum(np.asarray(err_mx, dtype=float), axis=1)
 
 
 # ---------------------------------------------------------------------------
@@ -952,9 +952,10 @@ def _symmetrize(mat: np.ndarray) -> np.ndarray:
 def _safe_cholesky(mat: np.ndarray, eye: np.ndarray) -> ChoFactor:
     mat_sym = _symmetrize(mat)
     try:
-        return cho_factor(mat_sym, lower=True, check_finite=False)
+        factor = cho_factor(mat_sym, lower=True, check_finite=False)
     except LinAlgError:
-        return cho_factor(mat_sym + _EPS_VAR * eye, lower=True, check_finite=False)
+        factor = cho_factor(mat_sym + _EPS_VAR * eye, lower=True, check_finite=False)
+    return cast("ChoFactor", factor)
 
 
 def _csc_column_accessor(
