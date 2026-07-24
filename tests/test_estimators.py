@@ -177,6 +177,64 @@ def test_hp_params_affect_fit() -> None:
     )
 
 
+def test_predictive_variance_adds_noise_to_latent_variance() -> None:
+    """predictive_variance_ equals variance_ plus the noise variance."""
+    rng = np.random.default_rng(42)
+    x = rng.standard_normal((8, 12))
+
+    model = VBPCA(n_components=3, maxiters=40, verbose=0)
+    model.fit(x)
+
+    assert model.variance_ is not None
+    assert model.predictive_variance_ is not None
+    assert model.noise_variance_ is not None
+    assert model.predictive_variance_.shape == model.variance_.shape
+
+    # Predictive variance = latent (mean) variance + observation noise.
+    np.testing.assert_allclose(
+        model.predictive_variance_,
+        model.variance_ + model.noise_variance_,
+        rtol=1e-10,
+        atol=1e-12,
+    )
+    # Noise variance is strictly positive, so predictive intervals are wider.
+    assert model.noise_variance_ > 0.0
+    assert np.all(model.predictive_variance_ >= model.variance_)
+
+
+def test_predictive_variance_improves_coverage() -> None:
+    """Predictive intervals cover held-out noisy entries near the nominal rate."""
+    rng = np.random.default_rng(0)
+    p, n, k = 40, 80, 3
+    loadings = rng.standard_normal((p, k))
+    scores = rng.standard_normal((k, n))
+    x = loadings @ scores + 0.5 * rng.standard_normal((p, n))
+
+    # Hold out 10% of entries at random.
+    holdout = rng.random((p, n)) < 0.10
+    mask = np.ones_like(x)
+    mask[holdout] = 0.0
+    x_train = x.copy()
+    x_train[holdout] = np.nan
+
+    model = VBPCA(n_components=k, maxiters=100, niter_broadprior=0, verbose=0)
+    model.fit(x_train, mask=mask)
+
+    def coverage(var: np.ndarray) -> float:
+        std = np.sqrt(np.maximum(var, 0.0))
+        lower = model.reconstruction_ - 1.96 * std
+        upper = model.reconstruction_ + 1.96 * std
+        inside = (x >= lower) & (x <= upper)
+        return float(inside[holdout].mean())
+
+    cov_latent = coverage(model.variance_)
+    cov_predictive = coverage(model.predictive_variance_)
+
+    # Latent-only intervals under-cover; predictive intervals reach ~95%.
+    assert cov_predictive > cov_latent
+    assert cov_predictive == pytest.approx(0.95, abs=0.10)
+
+
 def test_niter_broadprior_stored_on_estimator() -> None:
     """niter_broadprior should be stored and passed through to options."""
     model = VBPCA(n_components=2, niter_broadprior=10)

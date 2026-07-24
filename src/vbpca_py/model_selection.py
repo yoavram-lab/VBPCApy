@@ -210,6 +210,8 @@ def _compute_variance_for_best(est: VBPCA) -> np.ndarray | None:
     )
     vr = _marginal_variance(final)
     est.variance_ = vr
+    if est.noise_variance_ is not None:
+        est.predictive_variance_ = vr + float(est.noise_variance_)
     return vr
 
 

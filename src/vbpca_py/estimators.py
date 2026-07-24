@@ -94,7 +94,12 @@ class VBPCA(BaseEstimator):
         self.convergence_reason_: str | None = None
         self.learning_curve_: dict[str, list[float]] | None = None
         self.reconstruction_: np.ndarray | None = None
+        # Posterior variance of the denoised reconstruction E[AS + mu]:
+        # epistemic uncertainty in the latent mean, excluding observation noise.
         self.variance_: np.ndarray | None = None
+        # Predictive variance for a new observed entry: variance_ + noise_variance_.
+        # Use this for calibrated prediction intervals / coverage of noisy data.
+        self.predictive_variance_: np.ndarray | None = None
         self.explained_variance_: np.ndarray | None = None
         self.explained_variance_ratio_: np.ndarray | None = None
         self.n_features_in_: int | None = None
@@ -320,6 +325,9 @@ class VBPCA(BaseEstimator):
         self.variance_ = None
         if result.get("Vr") is not None:
             self.variance_ = np.asarray(result["Vr"], dtype=float)
+        self.predictive_variance_ = None
+        if result.get("Vpred") is not None:
+            self.predictive_variance_ = np.asarray(result["Vpred"], dtype=float)
         self.explained_variance_ = None
         if result.get("ExplainedVar") is not None:
             self.explained_variance_ = np.asarray(result["ExplainedVar"], dtype=float)

@@ -1873,6 +1873,9 @@ def _pack_result(
     if include_diagnostics:
         xrec = _reconstruct_data(final.a, final.s, final.mu)
         vr = _marginal_variance(final)
+        # Predictive variance for a new observed entry adds the observation
+        # noise variance to the latent-reconstruction (mean) uncertainty.
+        vr_pred = vr + float(final.noise_var)
         ev, evr = _explained_variance(
             xrec,
             final.a.shape[1],
@@ -1882,6 +1885,7 @@ def _pack_result(
     else:
         xrec = None
         vr = None
+        vr_pred = None
         ev = None
         evr = None
 
@@ -1901,6 +1905,7 @@ def _pack_result(
         "lc": final.lc,
         "Xrec": xrec,
         "Vr": vr,
+        "Vpred": vr_pred,
         "ExplainedVar": ev,
         "ExplainedVarRatio": evr,
         "RMS": _last_metric(lc, "rms"),
