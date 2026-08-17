@@ -144,6 +144,10 @@ paper-figure-smoke:
 # ── Trade study (hyperparameter optimisation) ────────────────────
 # Requires: pip install -e "/path/to/trade-study[all]" in the venv.
 
+# Install local trade-study with adaptive extra (Optuna) into this venv.
+trade-a-install-adaptive:
+	uv pip install -p .venv/bin/python -e /home/jcmacdo/Documents/GitHub/jcm-sci/trade-study[adaptive]
+
 # Phase 1: Morris sensitivity screening (~5-15 min).
 trade-screen:
 	.venv/bin/python -m analysis.trade_study.phase1_screen
@@ -171,6 +175,66 @@ trade-plot fmt="png":
 # Re-run stability grid with default + optimized configs, then plot comparison.
 trade-compare fmt="png":
 	.venv/bin/python -m analysis.trade_study.compare --fmt {{fmt}}
+
+# ── Trade study: Option A (surrogate-first, rank_mae primary) ────
+
+# Collect surrogate-training data (Sobol design x regime grid, parallel).
+trade-a-collect n_samples="96":
+	.venv/bin/python -m analysis.trade_study.option_a_pipeline collect --n-samples {{n_samples}} --n-jobs -1
+
+# Fit the regime surrogate and recommend a config per regime.
+trade-a-recommend:
+	.venv/bin/python -m analysis.trade_study.option_a_pipeline recommend
+
+# Collect then recommend end-to-end.
+trade-a-all n_samples="96":
+	.venv/bin/python -m analysis.trade_study.option_a_pipeline all --n-samples {{n_samples}} --n-jobs -1
+
+# Generate the Option A figure suite (F1-F7).
+trade-a-figures fmt="png":
+	.venv/bin/python -m analysis.trade_study.option_a_figures --fmt {{fmt}}
+
+# Hyperparameter sensitivity report from the Option A surrogate-training table.
+trade-a-sensitivity fmt="png":
+	.venv/bin/python -m analysis.trade_study.sensitivity_report --fmt {{fmt}}
+
+# Sequential retuning: successive-halving + hyperband -> adaptive refinement (v4).
+trade-a-retune-seq n_samples="128" n_adaptive="200":
+	.venv/bin/python -m analysis.trade_study.v4_phase2_sequential --n-samples {{n_samples}} --n-adaptive {{n_adaptive}}
+
+# Fast smoke run of the v4 sequential retuning workflow.
+trade-a-retune-seq-smoke:
+	.venv/bin/python -m analysis.trade_study.v4_phase2_sequential --n-samples 16 --n-adaptive 24 --top-k 8 --rungs 10,20,40,80 --max-budget 80
+
+# Full v4 sequential retuning run tuned for the narrowed search workflow.
+trade-a-retune-seq-full n_samples="256" n_adaptive="400" top_k="48" max_budget="300" eta="3.0" rungs="25,50,100,200,300":
+	.venv/bin/python -m analysis.trade_study.v4_phase2_sequential --n-samples {{n_samples}} --n-adaptive {{n_adaptive}} --top-k {{top_k}} --max-budget {{max_budget}} --eta {{eta}} --rungs {{rungs}}
+
+# 3-way comparison: default vs rank_mae-recommended (surrogate) vs sklearn.
+# reps=3 is a fast validation; reps=10 (omit arg) is the full multi-hour grid.
+trade-a-compare reps="3" fmt="png":
+	.venv/bin/python -m analysis.trade_study.v3_compare --fmt {{fmt}} --reps {{reps}} --surrogate-config analysis/results/optionA/surrogate_train.json
+
+# Full 3-way comparison (reps=10, several hours).
+trade-a-compare-full fmt="png":
+	.venv/bin/python -m analysis.trade_study.v3_compare --fmt {{fmt}} --surrogate-config analysis/results/optionA/surrogate_train.json
+
+# Comprehensive parallel rank-selection benchmark (Option 3; SNR sweep, 8 comparators; multi-day).
+trade-a-benchmark reps="100":
+	.venv/bin/python -m analysis.trade_study.benchmark_full --reps {{reps}} --n-jobs -1
+
+# Analyze the comprehensive benchmark results.
+trade-a-benchmark-analyze:
+	.venv/bin/python -m analysis.trade_study.benchmark_full --analyze
+
+# Render comprehensive benchmark figures B1-B7 (works on partial results).
+trade-a-benchmark-figures fmt="png":
+	.venv/bin/python -m analysis.trade_study.benchmark_figures --fmt {{fmt}}
+
+# Run the convergence-trace study (quality vs iterations; feeds F1/F2).
+trade-a-convergence:
+	.venv/bin/python -m analysis.trade_study.convergence_trace --regime-set core --n-jobs -1
+
 
 # Build documentation site.
 docs:
