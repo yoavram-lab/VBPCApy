@@ -10,7 +10,7 @@ If you use this package in your research, please cite:
   title = {{VBPCApy}: Variational Bayesian PCA with Missing Data Support},
   year = {2026},
   url = {https://github.com/yoavram-lab/VBPCApy},
-  version = {0.2.0},
+  version = {0.3.0},
 }
 ```
 
