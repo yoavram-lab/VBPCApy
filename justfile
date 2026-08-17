@@ -148,34 +148,6 @@ paper-figure-smoke:
 trade-a-install-adaptive:
 	uv pip install -p .venv/bin/python -e /home/jcmacdo/Documents/GitHub/jcm-sci/trade-study[adaptive]
 
-# Phase 1: Morris sensitivity screening (~5-15 min).
-trade-screen:
-	.venv/bin/python -m analysis.trade_study.phase1_screen
-
-# Phase 2: Sobol exploration across all regimes (hours).
-trade-explore:
-	.venv/bin/python -m analysis.trade_study.phase2_explore --n-jobs -1
-
-# Phase 3-4: Adaptive refinement + benchmark per regime.
-trade-refine:
-	.venv/bin/python -m analysis.trade_study.phase3_refine --n-adaptive 100 --n-jobs -1
-
-# Run all trade-study phases end-to-end.
-trade-all:
-	.venv/bin/python -m analysis.trade_study --n-jobs -1
-
-# Quick smoke: screen only with minimal trajectories.
-trade-smoke:
-	.venv/bin/python -m analysis.trade_study.phase1_screen --trajectories 8 --threshold 0.1
-
-# Generate all trade-study + comparison figures from saved results.
-trade-plot fmt="png":
-	.venv/bin/python -m analysis.trade_study.plot --fmt {{fmt}}
-
-# Re-run stability grid with default + optimized configs, then plot comparison.
-trade-compare fmt="png":
-	.venv/bin/python -m analysis.trade_study.compare --fmt {{fmt}}
-
 # ── Trade study: Option A (surrogate-first, rank_mae primary) ────
 
 # Collect surrogate-training data (Sobol design x regime grid, parallel).
@@ -218,23 +190,6 @@ trade-a-compare reps="3" fmt="png":
 # Full 3-way comparison (reps=10, several hours).
 trade-a-compare-full fmt="png":
 	.venv/bin/python -m analysis.trade_study.v3_compare --fmt {{fmt}} --surrogate-config analysis/results/optionA/surrogate_train.json
-
-# Comprehensive parallel rank-selection benchmark (Option 3; SNR sweep, 8 comparators; multi-day).
-trade-a-benchmark reps="100":
-	.venv/bin/python -m analysis.trade_study.benchmark_full --reps {{reps}} --n-jobs -1
-
-# Analyze the comprehensive benchmark results.
-trade-a-benchmark-analyze:
-	.venv/bin/python -m analysis.trade_study.benchmark_full --analyze
-
-# Render comprehensive benchmark figures B1-B7 (works on partial results).
-trade-a-benchmark-figures fmt="png":
-	.venv/bin/python -m analysis.trade_study.benchmark_figures --fmt {{fmt}}
-
-# Run the convergence-trace study (quality vs iterations; feeds F1/F2).
-trade-a-convergence:
-	.venv/bin/python -m analysis.trade_study.convergence_trace --regime-set core --n-jobs -1
-
 
 # Build documentation site.
 docs:
