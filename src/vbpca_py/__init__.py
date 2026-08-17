@@ -3,6 +3,7 @@
 from importlib.metadata import version
 
 from vbpca_py._missing import make_xprobe_mask
+from vbpca_py.defaults import recommend_config
 from vbpca_py.estimators import VBPCA
 from vbpca_py.model_selection import (
     CVConfig,
@@ -39,6 +40,7 @@ __all__ = [
     "check_data",
     "cross_validate_components",
     "make_xprobe_mask",
+    "recommend_config",
     "select_n_components",
 ]
 
