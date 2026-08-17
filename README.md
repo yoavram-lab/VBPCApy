@@ -54,9 +54,11 @@ More examples: [quickstart](https://yoavram-lab.github.io/VBPCApy/getting-starte
 - C++ extensions with runtime autotune for threading and memory
 - Missing-aware preprocessing: one-hot, standard/minmax scaling, log, power, winsorize, auto-routing (`AutoEncoder`)
 - Preflight data diagnostics via `check_data()` / `DataReport`
-- scikit-learn-compatible estimator (`fit`/`transform`/`inverse_transform`)
+- scikit-learn-compatible estimator (`fit`/`transform`/`inverse_transform`, `get_params`/`set_params`, cloning) — scikit-learn is an optional dependency
 - Model selection via `select_n_components` and `cross_validate_components`
-- Configurable convergence: subspace angle, RMS/cost plateau, ELBO, curvature, composite rules, patience
+- Configurable convergence: subspace angle, RMS/cost plateau, ELBO, curvature, composite rules, patience, with per-criterion enable/disable and custom ordering
+- Convergence diagnostics (`n_iter_`, `convergence_reason_`, `learning_curve_`) and calibrated `predictive_variance_` (includes observation noise)
+- `recommend_config(n, p, priority)` — regime-aware default hyperparameters from a surrogate trade study
 
 See the [concept guides](https://yoavram-lab.github.io/VBPCApy/concepts/algorithm/) and [API reference](https://yoavram-lab.github.io/VBPCApy/api/vbpca/) for full details.
 
@@ -82,7 +84,7 @@ If you use this package in your research, please cite:
   title = {{VBPCApy}: Variational Bayesian PCA with Missing Data Support},
   year = {2026},
   url = {https://github.com/yoavram-lab/VBPCApy},
-  version = {0.2.0},
+  version = {0.3.0},
 }
 ```
 
