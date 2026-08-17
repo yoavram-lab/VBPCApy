@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-08-17
+
+### Added
+- `recommend_config(n, p, missingness="auto", priority="balanced")`: regime-aware recommended `VBPCA` hyperparameters distilled from the Option A regime-surrogate trade study. The dominant lever is a strong ARD loadings prior (`hp_va` ~0.65-0.75 vs. the library default 0.001), which drives correct rank recovery — the default prior recovers the true rank only ~33% of the time. Exposed as `vbpca_py.recommend_config`.
+- `predictive_variance_` fitted attribute: reconstruction variance including observation noise (`variance_ + noise_variance_`). Prediction intervals built from `variance_` alone under-covered noisy held-out entries (~48-65% at nominal 95%); `predictive_variance_` restores coverage to ~94-96% (#104).
+- scikit-learn estimator compatibility for `VBPCA` (`get_params`/`set_params`, cloning) (#103, closes #34).
+- Configurable convergence-criterion ordering and per-criterion enable/disable via `criterion_order` and `convergence_criteria` constructor kwargs (#102, closes #101).
+- Convergence diagnostics exposed as fitted attributes: `n_iter_`, `convergence_reason_`, `learning_curve_` on `VBPCA`, plus per-trial `n_iter`/`convergence_reason` in `select_n_components` traces (#100, closes #99).
+- Public documentation site (MkDocs + GitHub Pages).
+
+### Changed
+- scikit-learn is now an optional dependency rather than a hard import (#105).
+
+### Fixed
+- mypy 2.3.0 strict-mode compatibility.
+
 ## [0.2.0] - 2026-04-15
 
 ### Added
