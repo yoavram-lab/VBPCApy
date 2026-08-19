@@ -228,6 +228,7 @@ def test_pca_full_mask_argument_matches_implicit_mask() -> None:
         verbose=0,
         compat_mode="strict_legacy",
         rotate2pca=0,
+        random_state=0,
     )
     out_explicit = pca_full(
         x,
@@ -239,6 +240,7 @@ def test_pca_full_mask_argument_matches_implicit_mask() -> None:
         verbose=0,
         compat_mode="strict_legacy",
         rotate2pca=0,
+        random_state=0,
     )
 
     rms_imp = np.asarray(out_implicit["lc"]["rms"], dtype=float)
@@ -265,6 +267,7 @@ def test_pca_full_mask_argument_respects_eps_for_zeros_strict_legacy() -> None:
         verbose=0,
         compat_mode="strict_legacy",
         rotate2pca=0,
+        random_state=0,
     )
     out_explicit = pca_full(
         x,
@@ -276,6 +279,7 @@ def test_pca_full_mask_argument_respects_eps_for_zeros_strict_legacy() -> None:
         verbose=0,
         compat_mode="strict_legacy",
         rotate2pca=0,
+        random_state=0,
     )
 
     rms_imp = np.asarray(out_implicit["lc"]["rms"], dtype=float)
@@ -299,6 +303,7 @@ def test_pca_full_strict_legacy_is_deterministic_with_seed() -> None:
             verbose=0,
             compat_mode="strict_legacy",
             rotate2pca=0,
+            random_state=0,
         )
         lc_rms = np.asarray(out["lc"]["rms"], dtype=float)
         A = np.asarray(out["A"], dtype=float)
@@ -356,6 +361,7 @@ def test_pca_full_strict_legacy_regression_rms_value() -> None:
         rotate2pca=1,
         display=0,
         verbose=0,
+        random_state=0,
     )
 
     lc_rms = float(np.asarray(out["lc"]["rms"], dtype=float)[-1])
@@ -378,6 +384,7 @@ def test_pca_full_strict_legacy_regression_rms_trace_multiple_k() -> None:
             rotate2pca=1,
             display=0,
             verbose=0,
+            random_state=0,
         )
         rms_vals.append(float(np.asarray(out["lc"]["rms"], dtype=float)[-1]))
 
@@ -433,6 +440,7 @@ def test_pca_full_uniquesv_pattern_sharing_matches_no_uniquesv() -> None:
         compat_mode="strict_legacy",
         rotate2pca=1,
         verbose=0,
+        random_state=0,
     )
     out_yes = pca_full(
         x,
@@ -442,6 +450,7 @@ def test_pca_full_uniquesv_pattern_sharing_matches_no_uniquesv() -> None:
         compat_mode="strict_legacy",
         rotate2pca=1,
         verbose=0,
+        random_state=0,
     )
 
     rms_no = float(np.asarray(out_no["lc"]["rms"], dtype=float)[-1])
@@ -531,6 +540,7 @@ def test_pca_full_auto_pattern_masked_aligns_with_uniquesv() -> None:
         rotate2pca=1,
         auto_pattern_masked=1,
         verbose=0,
+        random_state=0,
     )
     out_uniquesv = pca_full(
         x,
@@ -540,6 +550,7 @@ def test_pca_full_auto_pattern_masked_aligns_with_uniquesv() -> None:
         rotate2pca=1,
         uniquesv=1,
         verbose=0,
+        random_state=0,
     )
 
     rms_auto = float(np.asarray(out_auto["lc"]["rms"], dtype=float)[-1])
@@ -627,6 +638,7 @@ def test_pca_full_sparse_vs_dense_rms_and_v_close() -> None:
         rotate2pca=1,
         verbose=0,
         mask=mask,
+        random_state=0,
     )
     out_sparse = pca_full(
         sparse,
@@ -636,6 +648,7 @@ def test_pca_full_sparse_vs_dense_rms_and_v_close() -> None:
         rotate2pca=1,
         verbose=0,
         mask=mask_sparse,
+        random_state=0,
     )
 
     rms_dense = float(np.asarray(out_dense["lc"]["rms"], dtype=float)[-1])

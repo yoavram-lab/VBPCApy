@@ -37,6 +37,7 @@ def test_select_n_components_tracks_trace_and_best_model() -> None:
         config=cfg,
         maxiters=80,
         verbose=0,
+        random_state=0,
     )
 
     assert len(trace) == 3
@@ -322,8 +323,9 @@ def test_select_n_components_mask_argument_matches_nan_mask() -> None:
     x = rng.standard_normal((5, 8))
     x[rng.random(x.shape) < 0.2] = np.nan
     mask = ~np.isnan(x)
-    # Supply an empty xprobe to suppress auto-holdout (which would differ
-    # between calls due to independent RNG states).
+    # Supply an empty xprobe to suppress auto-holdout, and a fixed
+    # random_state, so both calls share the same init/holdout draws and
+    # only the mask-argument form under test differs.
     empty_probe = np.full(x.shape, np.nan, dtype=float)
 
     cfg = SelectionConfig(metric="cost", compute_explained_variance=False)
@@ -338,6 +340,7 @@ def test_select_n_components_mask_argument_matches_nan_mask() -> None:
         compat_mode="strict_legacy",
         rotate2pca=0,
         xprobe=empty_probe,
+        random_state=0,
     )
 
     best_k_explicit, _, trace_explicit, _ = select_n_components(
@@ -350,6 +353,7 @@ def test_select_n_components_mask_argument_matches_nan_mask() -> None:
         compat_mode="strict_legacy",
         rotate2pca=0,
         xprobe=empty_probe,
+        random_state=0,
     )
 
     assert best_k_implicit == best_k_explicit
@@ -574,6 +578,7 @@ def test_select_n_components_deterministic_across_num_cpu() -> None:
             rotate2pca=0,
             num_cpu=num_cpu,
             runtime_tuning="off",
+            random_state=0,
         )
         cost_trace = [float(entry["cost"]) for entry in trace]
         res.append((best_k, cost_trace))

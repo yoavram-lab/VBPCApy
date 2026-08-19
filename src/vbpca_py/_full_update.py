@@ -669,15 +669,21 @@ def _initialize_parameters(  # noqa: PLR0914
     Returns:
         Initialized parameters and centered data/probe matrices.
     """
-    # Use a deterministic RNG only when we fall back to random init; when
-    # init is provided (e.g., MATLAB fixture), pass through without forcing a
-    # new seed.
+    # Seed from the user-controllable random_state option. Both the
+    # "random" sentinel string and an omitted/None init normalize to "no
+    # fixture" inside init_params -> _normalize_init (empty dict), so both
+    # draw from this rng for any field a real fixture (mapping or .mat
+    # path) doesn't supply. random_state=None (default) yields fresh
+    # entropy each call, matching sklearn's random_state convention.
     init_value = cast("str | Mapping[str, Any] | None", ctx.opts.get("init"))
+    random_state = cast(
+        "int | np.random.Generator | None", ctx.opts.get("random_state")
+    )
     init_result: InitResult = init_params(
         init_value,
         ctx.shapes,
         score_pattern_index=ctx.pattern_index,
-        rng=None if init_value else np.random.default_rng(),
+        rng=np.random.default_rng(random_state),
     )
     loadings = init_result.a
     scores = init_result.s

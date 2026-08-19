@@ -71,6 +71,7 @@ def test_vbpca_runs_with_sparse_mask_and_retains_observed_zero():
         maxiters=10,
         compat_mode="modern",
         verbose=0,
+        random_state=0,
     )
     model.fit(x, mask=mask)
     recon = np.asarray(model.inverse_transform(), dtype=float)
