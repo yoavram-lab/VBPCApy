@@ -56,10 +56,26 @@ class VBPCASimulator:
     def __init__(self, *, regime_defaults: dict[str, Any] | None = None) -> None:
         self._regime_defaults: dict[str, Any] = regime_defaults or {}
 
-    def generate(self, config: dict[str, Any]) -> tuple[Any, Any]:
-        """Run a single trial and return (truth, observations)."""
+    def generate(self, config: dict[str, Any], *, rep: int = 0) -> tuple[Any, Any]:
+        """Run a single trial and return (truth, observations).
+
+        ``rep`` opts into trade-study's replicated-trials convention
+        (jcm-sci/trade-study#112): each replicate derives its own data
+        seed and VBPCA ``random_state`` from ``rep``, so ``run_grid(...,
+        n_reps=N)`` produces genuinely independent draws instead of N
+        copies of the same trial. ``rep=0`` (the default) reproduces the
+        previous single-seed behavior for data generation, but note that
+        VBPCA's own default init (``random_state=None`` since #109) draws
+        fresh entropy regardless — this method always passes an explicit
+        ``random_state`` to keep trials reproducible.
+        """
         config = {**FIXED_STRUCTURAL, **self._regime_defaults, **config}
-        rng = np.random.default_rng(config.get("seed", RNG_SEED))
+        base_seed = int(config.get("seed", RNG_SEED))
+        # Distinct large odd multipliers keep the data-generation and
+        # model-init seed sequences independent across replicates.
+        data_seed = base_seed + 1_000_003 * rep
+        init_seed = base_seed + 2_000_003 * rep
+        rng = np.random.default_rng(data_seed)
 
         # ── Data regime ─────────────────────────────────────────
         n: int = config["n"]
@@ -73,7 +89,7 @@ class VBPCASimulator:
         train_mask, holdout_mask = holdout_split(obs_mask, HOLDOUT_FRACTION, rng)
 
         # ── Map tunable factors → VBPCA kwargs ─────────────────
-        vbpca_kw: dict[str, Any] = {"verbose": 0}
+        vbpca_kw: dict[str, Any] = {"verbose": 0, "random_state": init_seed}
         for key in (
             "hp_va",
             "hp_vb",

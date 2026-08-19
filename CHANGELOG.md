@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - **Behavior change:** the default (`random_state=None`) now draws fresh entropy on every `fit()` call. Previously, default initialization was silently seeded with a fixed value regardless of configuration, so repeated fits produced identical results without any way to request a different draw. Pass `random_state=<int>` for reproducible runs (#109).
 - `recommend_config()`'s `missingness` parameter now warns (`UserWarning`) when passed anything other than the default `"auto"`, instead of silently ignoring it. Recommendations are still bucketed by `p` only — the Option A trade study's example recommendations are too sparse per (p-bucket, missingness) cell (23 points across 3 p-buckets x 4 missingness categories) to bucket on responsibly without shipping unreplicated values (#110, see also #111).
+- `defaults.py`'s docstring corrected the unsupported "`hp_va` is the dominant lever" claim (the trade study's own marginal sensitivity data doesn't support it) and now documents a real validation: replicated (n_reps=8, seeded) rank_mae for the shipped bucket configs is 28-58% lower than the library default across all three p-buckets, at a 0.4-3.8% cost in holdout RMSE (#111).
 
 ## [0.3.0] - 2026-08-17
 
