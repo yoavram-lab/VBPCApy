@@ -387,6 +387,7 @@ class VBPCA(BaseEstimator):
             opts["criterion_order"] = self.criterion_order
         if self.convergence_criteria is not None:
             opts["convergence_criteria"] = self.convergence_criteria
+        opts["random_state"] = self.random_state
         opts.update(self.opts)
         return _build_options(opts)
 

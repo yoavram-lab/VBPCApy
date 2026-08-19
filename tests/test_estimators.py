@@ -358,6 +358,105 @@ def test_xprobe_fraction_no_probe_when_zero() -> None:
     assert np.isnan(model.prms_)
 
 
+# ── Reproducible initialization via random_state (issue #109) ───
+
+
+def test_random_state_default_is_none() -> None:
+    """Default random_state is None (fresh entropy each call)."""
+    model = VBPCA(n_components=2)
+    assert model.random_state is None
+
+
+def test_random_state_forwarded_through_estimator() -> None:
+    """random_state kwarg reaches _build_options via VBPCA."""
+    model = VBPCA(n_components=2, random_state=42)
+    resolved = model.get_options()
+    assert resolved["random_state"] == 42
+
+
+def test_random_state_reproducible_across_fits() -> None:
+    """Two fits with the same random_state produce identical results."""
+    rng = np.random.default_rng(0)
+    x = rng.standard_normal((10, 20))
+    mask = rng.random(x.shape) > 0.1
+
+    model_a = VBPCA(n_components=2, maxiters=10, verbose=0, random_state=42)
+    model_a.fit(x, mask=mask)
+    model_b = VBPCA(n_components=2, maxiters=10, verbose=0, random_state=42)
+    model_b.fit(x, mask=mask)
+
+    np.testing.assert_array_equal(model_a.components_, model_b.components_)
+    np.testing.assert_array_equal(model_a.scores_, model_b.scores_)
+
+
+def test_random_state_different_seeds_diverge() -> None:
+    """Different random_state values produce different initializations."""
+    rng = np.random.default_rng(0)
+    x = rng.standard_normal((10, 20))
+    mask = rng.random(x.shape) > 0.1
+
+    model_a = VBPCA(n_components=2, maxiters=10, verbose=0, random_state=1)
+    model_a.fit(x, mask=mask)
+    model_b = VBPCA(n_components=2, maxiters=10, verbose=0, random_state=2)
+    model_b.fit(x, mask=mask)
+
+    assert not np.array_equal(model_a.components_, model_b.components_)
+
+
+def test_random_state_none_is_not_reproducible() -> None:
+    """random_state=None (default) draws fresh entropy on every fit."""
+    rng = np.random.default_rng(0)
+    x = rng.standard_normal((10, 20))
+    mask = rng.random(x.shape) > 0.1
+
+    model_a = VBPCA(n_components=2, maxiters=10, verbose=0)
+    model_a.fit(x, mask=mask)
+    model_b = VBPCA(n_components=2, maxiters=10, verbose=0)
+    model_b.fit(x, mask=mask)
+
+    assert not np.array_equal(model_a.components_, model_b.components_)
+
+
+def test_random_state_reproducible_with_xprobe_fraction() -> None:
+    """random_state also seeds the auto-generated xprobe mask."""
+    rng = np.random.default_rng(7)
+    x = rng.standard_normal((8, 20))
+
+    model_a = VBPCA(n_components=2, maxiters=5, xprobe_fraction=0.10, random_state=3)
+    model_a.fit(x)
+    model_b = VBPCA(n_components=2, maxiters=5, xprobe_fraction=0.10, random_state=3)
+    model_b.fit(x)
+
+    assert model_a.prms_ == pytest.approx(model_b.prms_)
+    np.testing.assert_array_equal(model_a.components_, model_b.components_)
+
+
+def test_random_state_accepts_generator_instance() -> None:
+    """random_state also accepts an existing np.random.Generator."""
+    rng = np.random.default_rng(0)
+    x = rng.standard_normal((10, 20))
+
+    model_a = VBPCA(n_components=2, maxiters=5, random_state=np.random.default_rng(11))
+    model_a.fit(x)
+    model_b = VBPCA(n_components=2, maxiters=5, random_state=11)
+    model_b.fit(x)
+
+    np.testing.assert_array_equal(model_a.components_, model_b.components_)
+
+
+def test_get_params_includes_random_state() -> None:
+    """random_state is included in get_params() output."""
+    model = VBPCA(n_components=2, random_state=5)
+    assert model.get_params()["random_state"] == 5
+
+
+def test_set_params_random_state() -> None:
+    """set_params() can update random_state."""
+    model = VBPCA(n_components=2)
+    model.set_params(random_state=9)
+    assert model.random_state == 9
+
+
 # ── Convergence diagnostics (issue #99) ─────────────────────────
 
 
