@@ -1,5 +1,7 @@
 """Tests for regime-aware default configuration recommendations."""
 
+import warnings
+
 import numpy as np
 import pytest
 
@@ -37,6 +39,19 @@ def test_recommend_config_validates_inputs() -> None:
         recommend_config(n=0, p=10)
     with pytest.raises(ValueError, match="unknown priority"):
         recommend_config(n=10, p=10, priority="fast")  # type: ignore[arg-type]
+
+
+def test_recommend_config_default_missingness_does_not_warn() -> None:
+    """The default missingness="auto" is a documented no-op and stays silent."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        recommend_config(n=100, p=20)
+
+
+def test_recommend_config_explicit_missingness_warns() -> None:
+    """Passing a non-default missingness warns that it is not yet branched on."""
+    with pytest.warns(UserWarning, match="does not yet branch on missingness"):
+        recommend_config(n=100, p=20, missingness="mcar")
 
 
 def test_recommended_config_fits() -> None:
