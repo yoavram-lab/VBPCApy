@@ -39,6 +39,7 @@ class VBPCA(BaseEstimator):
         xprobe_fraction: float = 0.0,
         criterion_order: list[str] | None = None,
         convergence_criteria: dict[str, bool] | None = None,
+        random_state: int | np.random.Generator | None = None,
         **opts: object,
     ) -> None:
         """
@@ -67,6 +68,13 @@ class VBPCA(BaseEstimator):
                 are criterion names, values are booleans.  Criteria set to
                 ``False`` are still evaluated for diagnostics but excluded
                 from the stop decision.  Defaults to all enabled.
+            random_state: Seed (or existing ``Generator``) controlling
+                internal randomness: parameter initialization when no
+                explicit ``init`` value is supplied, and the automatically
+                generated probe mask when ``xprobe_fraction`` is positive
+                and no explicit *xprobe* is passed to :meth:`fit`.  ``None``
+                (default) draws fresh entropy each call, matching prior
+                behaviour; set an int for reproducible fits.
             **opts: Additional options passed to the underlying PCA_FULL implementation.
         """
         self.n_components = n_components
@@ -82,6 +90,7 @@ class VBPCA(BaseEstimator):
         self.xprobe_fraction = xprobe_fraction
         self.criterion_order = criterion_order
         self.convergence_criteria = convergence_criteria
+        self.random_state = random_state
         self.opts = opts
         self.components_: np.ndarray | None = None
         self.scores_: np.ndarray | None = None
@@ -132,6 +141,7 @@ class VBPCA(BaseEstimator):
             "xprobe_fraction": self.xprobe_fraction,
             "criterion_order": self.criterion_order,
             "convergence_criteria": self.convergence_criteria,
+            "random_state": self.random_state,
         }
         params.update(self.opts)
         return params
@@ -161,6 +171,7 @@ class VBPCA(BaseEstimator):
             "xprobe_fraction",
             "criterion_order",
             "convergence_criteria",
+            "random_state",
         }
         for key, value in params.items():
             if key in valid_params:
@@ -214,11 +225,16 @@ class VBPCA(BaseEstimator):
             opts["criterion_order"] = self.criterion_order
         if self.convergence_criteria is not None:
             opts["convergence_criteria"] = self.convergence_criteria
+        opts["random_state"] = self.random_state
         opts.update(self.opts)
         if xprobe is not None:
             opts["xprobe"] = xprobe
         elif self.xprobe_fraction > 0.0:
-            x, xprobe_gen = make_xprobe_mask(x, fraction=self.xprobe_fraction)
+            x, xprobe_gen = make_xprobe_mask(
+                x,
+                fraction=self.xprobe_fraction,
+                rng=np.random.default_rng(self.random_state),
+            )
             opts["xprobe"] = xprobe_gen
 
         max_dense_bytes = resolve_max_dense_bytes(
@@ -371,6 +387,7 @@ class VBPCA(BaseEstimator):
             opts["criterion_order"] = self.criterion_order
         if self.convergence_criteria is not None:
             opts["convergence_criteria"] = self.convergence_criteria
+        opts["random_state"] = self.random_state
         opts.update(self.opts)
         return _build_options(opts)
 
