@@ -5,11 +5,35 @@ arguments tuned to maximise rank recovery (minimise ``rank_mae``) while keeping
 reconstruction error within a small tolerance of the library defaults.
 
 These configurations come from the Option A regime-surrogate trade study
-(``analysis/trade_study``).  The dominant lever is a **strong ARD loadings
-prior** (``hp_va`` ~ 0.7 versus the library default 0.001): it drives correct
-component pruning, whereas the weak default prior under-prunes and recovers the
-true rank only about a third of the time.  Recommendations are bucketed by the
-feature count ``p`` — the study's primary axis of rank-recovery difficulty.
+(``analysis/trade_study``), which fits a random-forest surrogate over the
+full joint factor space per regime and recommends the joint-optimal
+config. The joint-optimal configs use a moderately strong ARD loadings
+prior (``hp_va`` ~ 0.65-0.75 vs. the library default 0.001) alongside a
+small xprobe fraction (~0.01-0.02); the weak default prior under-prunes
+and recovers the true rank only about a third of the time.
+
+**On "dominant lever" claims:** a marginal (univariate Spearman)
+sensitivity analysis of the same trade study's data does *not* single out
+``hp_va`` as dominant — ``xprobe_fraction`` is the strongest, most
+significant, and most consistent per-bucket predictor of ``rank_mae`` in
+that marginal view, and ``hp_va``'s marginal correlation is weak and not
+statistically significant in 2 of the 3 p-buckets (though its tercile
+means do show a real, nonlinear U-shape a monotonic Spearman correlation
+understates). The RF surrogate optimises interactions a marginal view
+can't see, so which single factor (if any) is "dominant" remains
+unreconciled; treat the recommendation as a joint-optimal bundle rather
+than attributing its effect to any one factor.
+
+**Validation status (#111):** the exact configs this module ships *are*
+now validated with real replication and seeded VBPCA initialization
+(``analysis/trade_study/validate_shipped_defaults.py``, n_reps=8 across
+training + held-out regimes) — replicated ``rank_mae`` for the shipped
+config is 28-58% lower than the library default across all three
+p-buckets (smallp 0.34→0.14, trans 1.20→0.74, large 1.44→1.04), at a
+small cost in holdout RMSE (+0.4-3.8%). What remains unvalidated is the
+*attribution* to a specific factor, not whether the shipped bundle helps.
+Recommendations are bucketed by the feature count ``p`` — the study's
+primary axis of rank-recovery difficulty.
 
 The returned dict is intended to be splatted into the estimator, e.g.::
 
