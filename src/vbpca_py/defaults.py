@@ -21,6 +21,7 @@ The returned dict is intended to be splatted into the estimator, e.g.::
 
 from __future__ import annotations
 
+import warnings
 from typing import Any, Literal
 
 __all__ = ["recommend_config"]
@@ -76,7 +77,7 @@ def recommend_config(
     n: int,
     p: int,
     *,
-    missingness: str = "auto",  # noqa: ARG001 - reserved for future tuning
+    missingness: str = "auto",
     priority: Priority = "balanced",
 ) -> dict[str, Any]:
     """Recommend VBPCA keyword arguments for a data regime.
@@ -84,8 +85,17 @@ def recommend_config(
     Args:
         n: Number of samples (columns of the ``p x n`` data matrix).
         p: Number of features (rows).  Selects the recommendation bucket.
-        missingness: Missingness descriptor.  Reserved for future
-            regime-specific tuning; accepted but not yet branched on.
+        missingness: Missingness descriptor. **Not currently branched on** —
+            recommendations are bucketed by ``p`` only. The Option A trade
+            study evaluates missingness as a regime feature, but its example
+            recommendations span only 4 missingness categories x 3 p-buckets
+            from 23 design points total (some cells have a single point), too
+            sparse to bucket on without shipping unreplicated, effectively
+            arbitrary per-cell values (see #111). Passing anything other than
+            the default ``"auto"`` raises a :class:`UserWarning` rather than
+            silently doing nothing. Tracked in #110, blocked on trade-study
+            replication support (`jcm-sci/trade-study#112
+            <https://github.com/jcm-sci/trade-study/issues/112>`_).
         priority: Trade-off preset.  ``"balanced"`` (default) uses the
             tuned configuration as-is; ``"accuracy"`` raises the iteration
             budget; ``"speed"`` lowers it and disables the broad-prior
@@ -105,6 +115,15 @@ def recommend_config(
     if priority not in {"balanced", "accuracy", "speed"}:
         msg = f"unknown priority {priority!r}"
         raise ValueError(msg)
+    if missingness != "auto":
+        warnings.warn(
+            f"recommend_config() does not yet branch on missingness "
+            f"(got missingness={missingness!r}); recommendations are "
+            f"bucketed by p only. See "
+            f"https://github.com/yoavram-lab/VBPCApy/issues/110.",
+            UserWarning,
+            stacklevel=2,
+        )
 
     cfg = dict(_BUCKET_CONFIGS[_bucket(p)])
 
