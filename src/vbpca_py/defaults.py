@@ -35,6 +35,16 @@ small cost in holdout RMSE (+0.4-3.8%). What remains unvalidated is the
 Recommendations are bucketed by the feature count ``p`` — the study's
 primary axis of rank-recovery difficulty.
 
+**Validated range (#116):** the regime grid behind these buckets only
+covers ``p`` up to 200 and ``p/n`` up to 2.0 — ``n`` itself never enters
+the bucketing decision, so nothing distinguishes a balanced 100x100
+matrix from a small-cohort, thousands-of-features genomics matrix
+(``p/n`` of 50-1000x) once ``p`` exceeds the "large" bucket's threshold
+of 70. Empirically the "large" bucket's config does not transfer to that
+shape (wrong rank recovered entirely); ``recommend_config`` warns when
+``p``/``p over n`` fall outside the validated region, but there's no
+tuned alternative to fall back to yet.
+
 The returned dict is intended to be splatted into the estimator, e.g.::
 
     from vbpca_py import VBPCA, recommend_config
@@ -87,6 +97,12 @@ _BUCKET_CONFIGS: dict[str, dict[str, Any]] = {
 _SMALLP_MAX_P = 30
 _TRANS_MAX_P = 70
 
+# Widest values actually present in the Option A trade study's regime
+# grid, analysis/trade_study -- recommendations for anything past these
+# bounds extrapolate rather than interpolate.
+_MAX_VALIDATED_P = 200
+_MAX_VALIDATED_P_OVER_N = 2.0
+
 
 def _bucket(p: int) -> str:
     """Return the feature-count bucket for ``p`` features."""
@@ -132,6 +148,18 @@ def recommend_config(
     Raises:
         ValueError: If ``n`` or ``p`` is not positive, or if ``priority``
             is not a recognised preset.
+
+    Warns:
+        UserWarning: If ``p`` or the ``p/n`` aspect ratio falls outside
+            what the Option A trade study's regime grid covered (``p`` up
+            to 200, ``p/n`` up to 2.0). Buckets are keyed on ``p`` alone
+            with no upper bound, so e.g. genomics-scale data (small
+            cohorts, thousands of features -- ``p/n`` of 50-1000x) gets
+            the same config as a balanced 100x100 matrix despite being
+            nowhere near the validated region; empirically this can pick
+            the wrong rank entirely (see #116). There's no shape-aware
+            recommendation to fall back to yet -- this only flags that
+            the one returned is an extrapolation, not a fix.
     """
     if n <= 0 or p <= 0:
         msg = f"n and p must be positive; got n={n}, p={p}"
@@ -145,6 +173,18 @@ def recommend_config(
             f"(got missingness={missingness!r}); recommendations are "
             f"bucketed by p only. See "
             f"https://github.com/yoavram-lab/VBPCApy/issues/110.",
+            UserWarning,
+            stacklevel=2,
+        )
+    if p > _MAX_VALIDATED_P or p / n > _MAX_VALIDATED_P_OVER_N:
+        warnings.warn(
+            f"recommend_config(n={n}, p={p}) falls outside the Option A "
+            f"trade study's validated region (p up to {_MAX_VALIDATED_P}, "
+            f"p/n up to {_MAX_VALIDATED_P_OVER_N}); the bucketed "
+            f"recommendation is an extrapolation and has been observed to "
+            f"pick the wrong rank at extreme p/n ratios (e.g. small-cohort "
+            f"genomics data). See "
+            f"https://github.com/yoavram-lab/VBPCApy/issues/116.",
             UserWarning,
             stacklevel=2,
         )

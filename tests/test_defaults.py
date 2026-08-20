@@ -54,6 +54,26 @@ def test_recommend_config_explicit_missingness_warns() -> None:
         recommend_config(n=100, p=20, missingness="mcar")
 
 
+def test_recommend_config_warns_beyond_validated_p() -> None:
+    """p past the trade study's max (200) warns it's an extrapolation."""
+    with pytest.warns(UserWarning, match="validated region"):
+        recommend_config(n=200, p=2000)
+
+
+def test_recommend_config_warns_beyond_validated_aspect_ratio() -> None:
+    """p/n past the trade study's max (2.0) warns even if p itself is small."""
+    with pytest.warns(UserWarning, match="validated region"):
+        recommend_config(n=30, p=100)
+
+
+def test_recommend_config_within_validated_region_does_not_warn() -> None:
+    """p and p/n within the trade study's grid stay silent."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        recommend_config(n=100, p=200)
+        recommend_config(n=200, p=150)
+
+
 def test_recommended_config_fits() -> None:
     """A recommended config is accepted by the estimator and fits."""
     rng = np.random.default_rng(0)
