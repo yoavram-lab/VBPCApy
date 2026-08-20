@@ -35,10 +35,20 @@ _BUCKET_ORDER = ["smallp", "trans", "large"]
 _BUCKET_COLOR = {"smallp": "#1f77b4", "trans": "#ff7f0e", "large": "#2ca02c"}
 
 
-def _load_trace() -> list[dict[str, Any]]:
+def _load_trace() -> list[dict[str, Any]] | None:
+    """Load convergence-trace rows, or None if that data isn't present.
+
+    The convergence-characterization paper (and the script that produced
+    this data) moved to its own repo, jcm-sci/vbpca-convergence -- F1/F2
+    skip rather than crash the whole figure suite when it's absent from
+    this one.
+    """
     if not TRACE.exists():
-        msg = f"convergence-trace data missing: {TRACE}"
-        raise SystemExit(msg)
+        print(
+            f"  skipping -- convergence-trace data lives in "
+            f"jcm-sci/vbpca-convergence now, not found at {TRACE}"
+        )
+        return None
     return [
         {k: v for k, v in row.items() if k != "lc"}
         for row in json.loads(TRACE.read_text())
@@ -63,6 +73,8 @@ def fig_f1_knee(fmt: str) -> None:
     import matplotlib.pyplot as plt
 
     rows = _load_trace()
+    if rows is None:
+        return
     metrics = [
         ("holdout_rmse", "Holdout RMSE", False),
         ("holdout_mae", "Holdout MAE", False),
@@ -102,6 +114,8 @@ def fig_f2_broadprior(fmt: str) -> None:
     import matplotlib.pyplot as plt
 
     rows = _load_trace()
+    if rows is None:
+        return
     bps = sorted({r["niter_broadprior"] for r in rows})
     fig, (ax_q, ax_i) = plt.subplots(1, 2, figsize=(11, 4.2))
 
