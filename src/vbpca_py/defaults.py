@@ -35,15 +35,21 @@ small cost in holdout RMSE (+0.4-3.8%). What remains unvalidated is the
 Recommendations are bucketed by the feature count ``p`` — the study's
 primary axis of rank-recovery difficulty.
 
-**Validated range (#116):** the regime grid behind these buckets only
-covers ``p`` up to 200 and ``p/n`` up to 2.0 — ``n`` itself never enters
-the bucketing decision, so nothing distinguishes a balanced 100x100
-matrix from a small-cohort, thousands-of-features genomics matrix
-(``p/n`` of 50-1000x) once ``p`` exceeds the "large" bucket's threshold
-of 70. Empirically the "large" bucket's config does not transfer to that
-shape (wrong rank recovered entirely); ``recommend_config`` warns when
-``p``/``p over n`` fall outside the validated region, but there's no
-tuned alternative to fall back to yet.
+**Validated range (#116) and extreme-aspect-ratio buckets (#120):** the
+dense factorial grid behind ``smallp``/``trans``/``large`` only covers
+``p`` up to 200 and ``p/n`` up to 2.0 (``n/p`` up to 15.0 in the other
+direction) — outside that, e.g. small-cohort, thousands-of-features
+genomics data (``p/n`` of 50-1000x) or large-cohort, few-variable
+ecological/survey data (``n/p`` of 20-100x), the "large" bucket's config
+does not transfer (wrong rank recovered entirely, confirmed empirically).
+``recommend_config`` now routes those regimes to one of four additional
+buckets (``wide_moderate``/``wide_extreme``/``tall_moderate``/
+``tall_extreme``) derived by adaptive (NSGA-II) search over VBPCA's full
+hyperparameter space at one representative example regime per bucket
+(``analysis/trade_study/option_a_aspect_ratio.py``) rather than the dense
+grid the original three buckets were tuned and replicated against — a
+real, validated recommendation for that aspect ratio, just a coarser one
+(warned about accordingly).
 
 The returned dict is intended to be splatted into the estimator, e.g.::
 
@@ -55,12 +61,25 @@ The returned dict is intended to be splatted into the estimator, e.g.::
 
 from __future__ import annotations
 
+import copy
 import warnings
 from typing import Any, Literal
 
 __all__ = ["recommend_config"]
 
 Priority = Literal["balanced", "accuracy", "speed"]
+
+# All six VBPCA convergence criteria enabled -- matches the trade study's
+# "all" active_criteria preset, used by every extreme-aspect-ratio bucket
+# below (#120).
+_ALL_CRITERIA_TRUE: dict[str, bool] = {
+    "angle": True,
+    "earlystop": True,
+    "rms_plateau": True,
+    "cost": True,
+    "composite": True,
+    "slowing_down": True,
+}
 
 # Per-bucket baked recommendations (median of the surrogate's per-regime
 # rank_mae-optimal configs within each p-bucket).
@@ -92,25 +111,163 @@ _BUCKET_CONFIGS: dict[str, dict[str, Any]] = {
         "maxiters": 400,
         "xprobe_fraction": 0.02,
     },
+    # Extreme-aspect-ratio buckets (#116/#120): derived by NSGA-II search
+    # over VBPCA's full ~15-parameter space at a handful of representative
+    # example regimes (analysis/trade_study/option_a_aspect_ratio.py),
+    # not the dense factorial grid smallp/trans/large were tuned and
+    # validated against -- see the module docstring's "Validated range"
+    # note. That richer search is also why these dicts carry more keys
+    # (patience, criterion_order, convergence_criteria, rmsstop, minangle,
+    # cfstop_rel) than smallp/trans/large -- VBPCA fills in its own
+    # defaults for anything a bucket doesn't specify, so the differing
+    # key sets don't matter for `VBPCA(n_components=k, **cfg)` usage.
+    # criterion_order/convergence_criteria are VBPCA constructor kwargs in
+    # their own right (a list and a dict respectively) -- the search
+    # explored them via named presets
+    # (analysis/trade_study/_common.py's CRITERION_ORDER_LEVELS/
+    # ACTIVE_CRITERIA_PRESETS), already resolved to real values below so
+    # every key here is splat-ready, not a preset name needing further
+    # translation.
+    "wide_extreme": {  # validated at bulk_rnaseq: n=30, p=2000, p/n=66.7
+        "hp_va": 0.5031412272175019,
+        "hp_vb": 0.8564912762899104,
+        "hp_v": 0.6586970446826288,
+        "va_init": 1637.7149265434825,
+        "xprobe_fraction": 0.01764218685010746,
+        "niter_broadprior": 100,
+        "criterion_order": [
+            "cost",
+            "angle",
+            "rms_plateau",
+            "composite",
+            "earlystop",
+            "slowing_down",
+        ],
+        "convergence_criteria": _ALL_CRITERIA_TRUE,
+        "maxiters": 500,
+        "patience": 3,
+        "rmsstop": [50, 0.008774842663257003, 0.007353359727600819],
+        "minangle": 6.967374686269853e-05,
+        "cfstop_rel": 0.0006289465573514163,
+    },
+    # validated at microbiome (n=50, p=300, p/n=6) and single_cell
+    # (n=500, p=500, p/n=1 -- large in absolute p, not aspect ratio);
+    # both independently converged to this same config during search.
+    "wide_moderate": {
+        "hp_va": 0.5487383020286924,
+        "hp_vb": 0.6918982787407163,
+        "hp_v": 0.6519647398900055,
+        "va_init": 2250.4504015109924,
+        "xprobe_fraction": 0.17804480533688397,
+        "niter_broadprior": 200,
+        "criterion_order": [
+            "angle",
+            "earlystop",
+            "rms_plateau",
+            "cost",
+            "composite",
+            "slowing_down",
+        ],
+        "convergence_criteria": _ALL_CRITERIA_TRUE,
+        "maxiters": 200,
+        "patience": 2,
+        "rmsstop": [200, 0.003702216843854189, 0.0001644115991233856],
+        "minangle": 9.539286230740105e-05,
+        "cfstop_rel": 0.0009148652415765465,
+    },
+    "tall_extreme": {  # validated at ecological: n=3000, p=30, n/p=100
+        "hp_va": 0.695977246351637,
+        "hp_vb": 0.40895885488482575,
+        "hp_v": 0.1733025871276451,
+        "va_init": 1572.8060562841497,
+        "xprobe_fraction": 0.06256072454114883,
+        "niter_broadprior": 200,
+        "criterion_order": [
+            "angle",
+            "earlystop",
+            "rms_plateau",
+            "cost",
+            "composite",
+            "slowing_down",
+        ],
+        "convergence_criteria": _ALL_CRITERIA_TRUE,
+        "maxiters": 100,
+        "patience": 2,
+        "rmsstop": [200, 0.0037467515336500863, 0.006262340557985221],
+        "minangle": 6.35094015773993e-05,
+        "cfstop_rel": 4.53135567319468e-05,
+    },
+    "tall_moderate": {  # validated at cultural: n=1000, p=50, n/p=20
+        "hp_va": 0.5487383020286924,
+        "hp_vb": 0.6918982787407163,
+        "hp_v": 0.6519647398900055,
+        "va_init": 2250.4504015109924,
+        "xprobe_fraction": 0.17804480533688397,
+        "niter_broadprior": 200,
+        "criterion_order": [
+            "angle",
+            "earlystop",
+            "rms_plateau",
+            "cost",
+            "composite",
+            "slowing_down",
+        ],
+        "convergence_criteria": _ALL_CRITERIA_TRUE,
+        "maxiters": 200,
+        "patience": 2,
+        "rmsstop": [200, 0.003702216843854189, 0.0001644115991233856],
+        "minangle": 9.539286230740105e-05,
+        "cfstop_rel": 0.0009148652415765465,
+    },
 }
 
 _SMALLP_MAX_P = 30
 _TRANS_MAX_P = 70
 
-# Widest values actually present in the Option A trade study's regime
-# grid, analysis/trade_study -- recommendations for anything past these
-# bounds extrapolate rather than interpolate.
+# Widest values actually present in the ORIGINAL Option A trade study's
+# regime grid, analysis/trade_study -- beyond these, smallp/trans/large
+# extrapolate rather than interpolate, so _bucket() instead routes to a
+# wide_moderate/tall_moderate bucket (#120).
 _MAX_VALIDATED_P = 200
 _MAX_VALIDATED_P_OVER_N = 2.0
+_MAX_VALIDATED_N_OVER_P = 15.0
+
+# Beyond these, even wide_moderate/tall_moderate are themselves
+# extrapolating past their own validated example regime -- _bucket()
+# routes to wide_extreme/tall_extreme instead (still just one validated
+# point each, per #120, but closer than reusing a moderate-ratio bucket).
+_WIDE_EXTREME_RATIO = 10.0
+_TALL_EXTREME_RATIO = 50.0
+
+# Buckets outside the dense, thoroughly-validated smallp/trans/large grid
+# -- recommend_config() warns when it returns one of these (#120).
+_ASPECT_RATIO_BUCKETS = frozenset({
+    "wide_moderate", "wide_extreme", "tall_moderate", "tall_extreme",
+})  # fmt: skip
 
 
-def _bucket(p: int) -> str:
-    """Return the feature-count bucket for ``p`` features."""
+def _p_only_bucket(p: int) -> str:
+    """Return the feature-count-only bucket for ``p`` features."""
     if p <= _SMALLP_MAX_P:
         return "smallp"
     if p <= _TRANS_MAX_P:
         return "trans"
     return "large"
+
+
+def _bucket(n: int, p: int) -> str:
+    """Return the recommendation bucket for an ``(n, p)`` data regime."""
+    p_over_n = p / n
+    if p_over_n > _WIDE_EXTREME_RATIO:
+        return "wide_extreme"
+    if p > _MAX_VALIDATED_P or p_over_n > _MAX_VALIDATED_P_OVER_N:
+        return "wide_moderate"
+    n_over_p = n / p
+    if n_over_p > _TALL_EXTREME_RATIO:
+        return "tall_extreme"
+    if n_over_p > _MAX_VALIDATED_N_OVER_P:
+        return "tall_moderate"
+    return _p_only_bucket(p)
 
 
 def recommend_config(
@@ -123,7 +280,11 @@ def recommend_config(
     """Recommend VBPCA keyword arguments for a data regime.
 
     Args:
-        n: Number of samples (columns of the ``p x n`` data matrix).
+        n: Number of samples (columns of the ``p x n`` data matrix). Used
+            (alongside ``p``) to select an aspect-ratio-aware bucket when
+            ``p/n`` or ``n/p`` falls outside the ``smallp``/``trans``/
+            ``large`` buckets' validated range (#116/#120) -- otherwise
+            only ``p`` selects the bucket.
         p: Number of features (rows).  Selects the recommendation bucket.
         missingness: Missingness descriptor. **Not currently branched on** —
             recommendations are bucketed by ``p`` only. The Option A trade
@@ -150,16 +311,15 @@ def recommend_config(
             is not a recognised preset.
 
     Warns:
-        UserWarning: If ``p`` or the ``p/n`` aspect ratio falls outside
-            what the Option A trade study's regime grid covered (``p`` up
-            to 200, ``p/n`` up to 2.0). Buckets are keyed on ``p`` alone
-            with no upper bound, so e.g. genomics-scale data (small
-            cohorts, thousands of features -- ``p/n`` of 50-1000x) gets
-            the same config as a balanced 100x100 matrix despite being
-            nowhere near the validated region; empirically this can pick
-            the wrong rank entirely (see #116). There's no shape-aware
-            recommendation to fall back to yet -- this only flags that
-            the one returned is an extrapolation, not a fix.
+        UserWarning: If ``(n, p)`` resolves to a ``wide_moderate``/
+            ``wide_extreme``/``tall_moderate``/``tall_extreme`` bucket
+            rather than ``smallp``/``trans``/``large`` -- those four are
+            each derived from adaptive search at a single representative
+            example regime (#120: bulk_rnaseq, microbiome + single_cell,
+            ecological, cultural respectively), not the dense factorial
+            grid ``smallp``/``trans``/``large`` were tuned and replicated
+            against (#111). Still a real, validated recommendation for
+            that specific aspect ratio -- just a coarser one.
     """
     if n <= 0 or p <= 0:
         msg = f"n and p must be positive; got n={n}, p={p}"
@@ -176,20 +336,21 @@ def recommend_config(
             UserWarning,
             stacklevel=2,
         )
-    if p > _MAX_VALIDATED_P or p / n > _MAX_VALIDATED_P_OVER_N:
+
+    bucket = _bucket(n, p)
+    if bucket in _ASPECT_RATIO_BUCKETS:
         warnings.warn(
-            f"recommend_config(n={n}, p={p}) falls outside the Option A "
-            f"trade study's validated region (p up to {_MAX_VALIDATED_P}, "
-            f"p/n up to {_MAX_VALIDATED_P_OVER_N}); the bucketed "
-            f"recommendation is an extrapolation and has been observed to "
-            f"pick the wrong rank at extreme p/n ratios (e.g. small-cohort "
-            f"genomics data). See "
+            f"recommend_config(n={n}, p={p}) uses the {bucket!r} bucket: "
+            f"derived from adaptive search at a single representative "
+            f"example regime for this aspect ratio (#120), not the dense "
+            f"factorial grid smallp/trans/large were tuned and replicated "
+            f"against (#111). Treat as a coarser approximation. See "
             f"https://github.com/yoavram-lab/VBPCApy/issues/116.",
             UserWarning,
             stacklevel=2,
         )
 
-    cfg = dict(_BUCKET_CONFIGS[_bucket(p)])
+    cfg = copy.deepcopy(_BUCKET_CONFIGS[bucket])
 
     if priority == "speed":
         cfg["maxiters"] = 100
