@@ -95,6 +95,32 @@ def test_select_n_components_rejects_invalid_metric() -> None:
         select_n_components(x, config=cfg)
 
 
+def test_ensure_metric_opts_respects_configured_xprobe_fraction() -> None:
+    """A caller-supplied xprobe_fraction sizes the auto-generated probe set (#122)."""
+    rng = np.random.default_rng(0)
+    x = rng.standard_normal((100, 80))
+    fit_opts: dict[str, object] = {"xprobe_fraction": 0.02}
+
+    ms._ensure_metric_opts(fit_opts, x.copy(), None, SelectionConfig(metric="prms"))
+
+    xprobe = np.asarray(fit_opts["xprobe"])
+    n_probe = int(np.sum(~np.isnan(xprobe)))
+    assert n_probe == pytest.approx(x.size * 0.02, rel=0.1)
+
+
+def test_ensure_metric_opts_falls_back_to_default_probe_fraction() -> None:
+    """No xprobe_fraction configured -> the historical 10% default applies (#122)."""
+    rng = np.random.default_rng(0)
+    x = rng.standard_normal((100, 80))
+    fit_opts: dict[str, object] = {}
+
+    ms._ensure_metric_opts(fit_opts, x.copy(), None, SelectionConfig(metric="prms"))
+
+    xprobe = np.asarray(fit_opts["xprobe"])
+    n_probe = int(np.sum(~np.isnan(xprobe)))
+    assert n_probe == pytest.approx(x.size * ms._PROBE_FRACTION, rel=0.1)
+
+
 def test_select_n_components_normalizes_component_candidates() -> None:
     rng = np.random.default_rng(4)
     x = _low_rank_data(rng, n_features=5, n_samples=7, rank=2)

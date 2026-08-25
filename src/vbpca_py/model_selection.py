@@ -273,11 +273,12 @@ def _ensure_metric_opts(  # noqa: PLR0914
     Mutates *fit_opts* in place:
 
     * **cfstop** — always enabled so the cost learning-curve is populated.
-    * **xprobe** — when the metric is ``"prms"`` and no probe set has been
-      supplied, a random 10 % hold-out of observed entries is created.
-      The corresponding entries are set to NaN in *x_arr* (dense) or
-      removed from the CSR structure (sparse) so the main fit never sees
-      them.
+    * **xprobe** — when no probe set has been supplied, a random hold-out
+      of observed entries is created, sized by *fit_opts*'s own
+      ``xprobe_fraction`` when that's set to a positive value, falling
+      back to a default 10 % otherwise. The corresponding entries are set
+      to NaN in *x_arr* (dense) or removed from the CSR structure
+      (sparse) so the main fit never sees them.
     """
     # --- cost: ensure cfstop is non-empty -----------------------------------
     cfstop_raw = fit_opts.get("cfstop")
@@ -288,11 +289,16 @@ def _ensure_metric_opts(  # noqa: PLR0914
     if fit_opts.get("xprobe") is not None:
         return  # user already supplied a probe set
 
+    configured_fraction = _to_float(fit_opts.get("xprobe_fraction"))
+    probe_fraction = (
+        configured_fraction if configured_fraction > 0.0 else _PROBE_FRACTION
+    )
+
     rng = np.random.default_rng(seed)
 
     if sp.issparse(x_arr):
         x_csr = sp.csr_matrix(x_arr)
-        n_probe = max(1, round(x_csr.nnz * _PROBE_FRACTION))
+        n_probe = max(1, round(x_csr.nnz * probe_fraction))
         probe_idx = rng.choice(x_csr.nnz, size=n_probe, replace=False)
 
         # Build xprobe as a copy, then zero-out non-probe in probe
@@ -321,7 +327,7 @@ def _ensure_metric_opts(  # noqa: PLR0914
             obs_mask = ~np.isnan(x_dense)
 
         obs_rows, obs_cols = np.nonzero(obs_mask)
-        n_probe = max(1, round(len(obs_rows) * _PROBE_FRACTION))
+        n_probe = max(1, round(len(obs_rows) * probe_fraction))
         probe_idx = rng.choice(len(obs_rows), size=n_probe, replace=False)
 
         probe_rows: np.ndarray = obs_rows[probe_idx]
