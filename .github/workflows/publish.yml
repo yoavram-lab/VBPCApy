@@ -10,8 +10,18 @@ permissions:
   id-token: write          # OIDC for trusted publishing
 
 jobs:
+  release-metadata:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check tag, package, citation, and changelog metadata
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: python scripts/check_release_metadata.py
+
   # ── Build source distribution ──────────────────────────────────────
   sdist:
+    needs: release-metadata
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -27,6 +37,7 @@ jobs:
 
   # ── Build wheels via cibuildwheel ──────────────────────────────────
   wheels:
+    needs: release-metadata
     strategy:
       fail-fast: false
       matrix:
@@ -74,7 +85,7 @@ jobs:
 
   # ── Publish to PyPI ────────────────────────────────────────────────
   publish:
-    needs: [sdist, wheels]
+    needs: [release-metadata, sdist, wheels]
     runs-on: ubuntu-latest
     environment: pypi          # configure trusted publisher in this environment
     if: github.event_name == 'release'

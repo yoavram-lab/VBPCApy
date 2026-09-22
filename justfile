@@ -198,3 +198,7 @@ docs:
 # Serve documentation with live reload.
 docs-serve:
 	uv run --extra docs mkdocs serve
+
+# Verify package, citation, changelog, and inferred release tag metadata.
+release-check:
+	uv run python scripts/check_release_metadata.py

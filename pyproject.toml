@@ -51,6 +51,7 @@ dependencies = [
 
 [project.urls]
 Homepage = "https://github.com/yoavram-lab/VBPCApy"
+Documentation = "https://yoavram-lab.github.io/VBPCApy/"
 Repository = "https://github.com/yoavram-lab/VBPCApy"
 Issues = "https://github.com/yoavram-lab/VBPCApy/issues"
 Changelog = "https://github.com/yoavram-lab/VBPCApy/releases"

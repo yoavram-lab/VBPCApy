@@ -56,6 +56,8 @@ jobs:
         run: uv run ruff check --preview src tests scripts analysis
       - name: Type check (strict)
         run: uv run mypy --strict src
+      - name: Release metadata check
+        run: uv run python scripts/check_release_metadata.py
 
   test:
     runs-on: ubuntu-latest

@@ -48,15 +48,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   on `fit()`. Configure `rmsstop`, `cfstop_rel`, or `minangle` explicitly
   instead (#140).
 - **Behavior change:** the default (`random_state=None`) now draws fresh entropy on every `fit()` call. Previously, default initialization was silently seeded with a fixed value regardless of configuration, so repeated fits produced identical results without any way to request a different draw. Pass `random_state=<int>` for reproducible runs (#109).
-- `recommend_config()`'s `missingness` parameter now warns (`UserWarning`) when passed anything other than the default `"auto"`, instead of silently ignoring it. Recommendations are still bucketed by `p` only — the Option A trade study's example recommendations are too sparse per (p-bucket, missingness) cell (23 points across 3 p-buckets x 4 missingness categories) to bucket on responsibly without shipping unreplicated values (#110, see also #111).
+- `recommend_config()`'s `missingness` parameter now warns (`UserWarning`)
+  when passed anything other than the default `"auto"`, instead of silently
+  ignoring it. Recommendations currently use matrix shape, not missingness;
+  the trade-study design is too sparse within missingness-by-shape cells to
+  branch on responsibly (#110, see also #111).
 - `defaults.py`'s docstring corrected the unsupported "`hp_va` is the dominant lever" claim (the trade study's own marginal sensitivity data doesn't support it) and now documents a real validation: replicated (n_reps=8, seeded) rank_mae for the shipped bucket configs is 28-58% lower than the library default across all three p-buckets, at a 0.4-3.8% cost in holdout RMSE (#111).
-- `recommend_config()` now warns (`UserWarning`) when `p` or the `p/n` aspect ratio falls outside the Option A trade study's validated region (`p` up to 200, `p/n` up to 2.0). Buckets are keyed on `p` alone with no upper bound, so genomics-scale data (small cohorts, thousands of features) silently received the same config as a balanced 100x100 matrix and empirically recovered the wrong rank entirely; there's no shape-aware recommendation to fall back to yet, but callers are no longer handed an untested extrapolation without warning (#116).
-- `recommend_config()` now returns an aspect-ratio-aware recommendation instead of just warning: four new buckets (`wide_moderate`/`wide_extreme` for `p >> n` genomics-scale data, `tall_moderate`/`tall_extreme` for `n >> p` ecological/survey-scale data), each derived by adaptive (NSGA-II) search over VBPCA's full hyperparameter space at one representative example regime (`analysis/trade_study/option_a_aspect_ratio.py`, #120) rather than the dense factorial grid `smallp`/`trans`/`large` were tuned and replicated against. `recommend_config()` still warns when it returns one of these four, since they're each validated at only a single example point, not a grid — a real recommendation, just a coarser one (#116).
+- `recommend_config()` now warns when a requested matrix shape falls outside
+  the dense Option A validation grid instead of silently extrapolating a
+  feature-count bucket (#116).
+- `recommend_config()` now routes out-of-grid shapes to five coarse buckets:
+  `wide_moderate`, `wide_extreme`, `tall_moderate`, `tall_extreme`, and
+  `large_scale`. Each is derived from adaptive search at one representative
+  regime, so the function warns that these are coarser than the replicated
+  `smallp`/`trans`/`large` recommendations (#120, #142).
 
 ## [0.3.0] - 2026-08-17
 
 ### Added
-- `recommend_config(n, p, missingness="auto", priority="balanced")`: regime-aware recommended `VBPCA` hyperparameters distilled from the Option A regime-surrogate trade study. The dominant lever is a strong ARD loadings prior (`hp_va` ~0.65-0.75 vs. the library default 0.001), which drives correct rank recovery — the default prior recovers the true rank only ~33% of the time. Exposed as `vbpca_py.recommend_config`.
+- `recommend_config(n, p, missingness="auto", priority="balanced")`:
+  regime-aware `VBPCA` configurations distilled from the Option A
+  regime-surrogate trade study. Exposed as `vbpca_py.recommend_config`.
 - `predictive_variance_` fitted attribute: reconstruction variance including observation noise (`variance_ + noise_variance_`). Prediction intervals built from `variance_` alone under-covered noisy held-out entries (~48-65% at nominal 95%); `predictive_variance_` restores coverage to ~94-96% (#104).
 - scikit-learn estimator compatibility for `VBPCA` (`get_params`/`set_params`, cloning) (#103, closes #34).
 - Configurable convergence-criterion ordering and per-criterion enable/disable via `criterion_order` and `convergence_criteria` constructor kwargs (#102, closes #101).
@@ -94,7 +106,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Skip octave-parity CI job when only irrelevant files changed (#88).
 - Document RMS oscillation workaround (center data before fitting) in Known Limitations.
 
-## [0.1.0] - 2026-02-08
+## [0.1.1] - 2026-04-02
+
+### Added
+- Python 3.14 wheels and CI coverage.
+
+### Fixed
+- Package `__version__` is now read from distribution metadata instead of a
+  separately maintained constant.
+
+## [0.1.0] - 2026-03-31
 
 ### Added
 - Core `VBPCA` estimator with sklearn-like `fit`/`transform`/`inverse_transform` API.
