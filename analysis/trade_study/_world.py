@@ -256,6 +256,11 @@ class VBPCAScorer:
 
         total_iters: int = observations.get("total_iters", 0)
         best_k_iters: int = observations.get("best_k_iters", 0)
+        model = observations["model"]
+        maxiters = int(config.get("maxiters", 200))
+        trace = observations.get("trace", [])
+        candidate_converged = [bool(row.get("converged", False)) for row in trace]
+        candidate_budget_hits = [int(row.get("n_iter", 0)) >= maxiters for row in trace]
 
         return {
             "holdout_rmse": holdout_rmse,
@@ -270,6 +275,15 @@ class VBPCAScorer:
             "wall_seconds": wall_seconds,
             "total_iters": float(total_iters),
             "best_k_iters": float(best_k_iters),
+            "selected_k": float(selected_k),
+            "best_k_converged": float(bool(model.converged_)),
+            "best_k_budget_hit": float(best_k_iters >= maxiters),
+            "candidate_converged_rate": (
+                float(np.mean(candidate_converged)) if candidate_converged else 0.0
+            ),
+            "candidate_budget_hit_rate": (
+                float(np.mean(candidate_budget_hits)) if candidate_budget_hits else 0.0
+            ),
         }
 
 

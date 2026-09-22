@@ -57,6 +57,12 @@ output checksums with every retained result set. Large replicated runs should
 be sharded on Rockfish and merged only after every shard passes schema and
 completeness checks.
 
+The focused post-warmup study for the three cap-invalid routing buckets is
+specified in
+[`trade_study/CONVERGENCE_MARGIN.md`](trade_study/CONVERGENCE_MARGIN.md). Its
+condition-level checkpoints and paired reducer must be used before changing
+the public defaults in `recommend_config()`.
+
 The legacy stability workflow writes to the git-ignored
 `results/stability/` directory by default. Its convenience recipes are
 `just stability-analysis`, `just stability-coverage`, `just stability-plot`,
