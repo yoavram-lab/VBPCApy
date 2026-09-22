@@ -30,6 +30,7 @@ from ._common import (
     generate_low_rank,
     holdout_split,
 )
+from ._vbpca_kwargs import build_vbpca_kwargs
 
 
 class VBPCASimulator:
@@ -89,49 +90,12 @@ class VBPCASimulator:
         train_mask, holdout_mask = holdout_split(obs_mask, HOLDOUT_FRACTION, rng)
 
         # ── Map tunable factors → VBPCA kwargs ─────────────────
-        vbpca_kw: dict[str, Any] = {"verbose": 0, "random_state": init_seed}
-        for key in (
-            "hp_va",
-            "hp_vb",
-            "hp_v",
-            "va_init",
-            "niter_broadprior",
-            "maxiters",
-            "minangle",
-            "patience",
-            "cfstop_rel",
-            "rotate2pca",
-            "bias",
-            "xprobe_fraction",
-        ):
-            if key in config and config[key] is not None:
-                vbpca_kw[key] = config[key]
-
-        # Compound rmsstop array
-        if "rmsstop_window" in config:
-            vbpca_kw["rmsstop"] = [
-                config["rmsstop_window"],
-                config.get("rmsstop_atol", 1e-4),
-                config.get("rmsstop_rtol", 1e-3),
-            ]
-
-        # Criterion ordering (v2) — resolve preset name to list.
-        if "criterion_order" in config and config["criterion_order"] is not None:
-            co = config["criterion_order"]
-            vbpca_kw["criterion_order"] = (
-                CRITERION_ORDER_LEVELS[co]
-                if isinstance(co, str) and co in CRITERION_ORDER_LEVELS
-                else co
-            )
-
-        # Active criteria (v2) — resolve preset name to dict.
-        if "active_criteria" in config and config["active_criteria"] is not None:
-            ac = config["active_criteria"]
-            vbpca_kw["convergence_criteria"] = (
-                ACTIVE_CRITERIA_PRESETS[ac]
-                if isinstance(ac, str) and ac in ACTIVE_CRITERIA_PRESETS
-                else ac
-            )
+        vbpca_kw = build_vbpca_kwargs(
+            config,
+            random_state=init_seed,
+            criterion_order_levels=CRITERION_ORDER_LEVELS,
+            active_criteria_presets=ACTIVE_CRITERIA_PRESETS,
+        )
 
         # ── Model selection ─────────────────────────────────────
         max_k = min(true_rank + 5, min(p, n) - 1)

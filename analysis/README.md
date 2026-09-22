@@ -18,6 +18,9 @@ Do not cite or reuse the result snapshots and figures that were formerly under
 - convergence rules could accept worsening or steep trajectories, and probe
   early stopping returned the worsened terminal state
   ([#141](https://github.com/yoavram-lab/VBPCApy/issues/141)).
+- the trade-study simulator dropped the public ``rmsstop`` and
+  ``convergence_criteria`` fields while claiming to validate the exact shipped
+  recommendation ([#154](https://github.com/yoavram-lab/VBPCApy/issues/154)).
 
 These changes can alter fitted endpoints, selected ranks, and held-out metrics.
 Historical files remain recoverable from git, but they are not valid evidence
