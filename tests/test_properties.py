@@ -55,7 +55,7 @@ def test_elbo_monotonicity(data: tuple[np.ndarray, int]) -> None:
     x, rank = data
     k = min(rank + 2, min(x.shape) - 1)
 
-    result = pca_full(x, k, bias=True, maxiters=50, verbose=0)
+    result = pca_full(x, k, bias=True, maxiters=50, verbose=0, random_state=0)
     costs = np.asarray(result.get("Costs", []), dtype=float)
 
     # Skip if fewer than 5 cost values recorded
@@ -83,7 +83,7 @@ def test_reconstruction_is_finite(data: tuple[np.ndarray, int]) -> None:
     x, rank = data
     k = min(rank + 2, min(x.shape) - 1)
 
-    model = VBPCA(n_components=k, maxiters=50)
+    model = VBPCA(n_components=k, maxiters=50, random_state=0)
     model.fit(x)
     recon = model.inverse_transform()
 
@@ -103,7 +103,7 @@ def test_explained_variance_ratio_sums_to_at_most_one(
     x, rank = data
     k = min(rank + 2, min(x.shape) - 1)
 
-    model = VBPCA(n_components=k, maxiters=50)
+    model = VBPCA(n_components=k, maxiters=50, random_state=0)
     model.fit(x)
 
     evr = model.explained_variance_ratio_
@@ -125,7 +125,11 @@ def test_model_selection_returns_valid_k(data: tuple[np.ndarray, int]) -> None:
 
     cfg = SelectionConfig(metric="cost", patience=1, max_trials=len(candidates))
     best_k, metrics, trace, _ = select_n_components(
-        x, components=candidates, config=cfg, maxiters=30
+        x,
+        components=candidates,
+        config=cfg,
+        maxiters=30,
+        random_state=0,
     )
 
     assert best_k in candidates, f"selected k={best_k} not in candidates {candidates}"
@@ -140,7 +144,7 @@ def test_bias_recovery(data: tuple[np.ndarray, int]) -> None:
     x, rank = data
     k = min(rank + 2, min(x.shape) - 1)
 
-    model = VBPCA(n_components=k, bias=True, maxiters=80)
+    model = VBPCA(n_components=k, bias=True, maxiters=80, random_state=0)
     model.fit(x)
 
     assert model.mean_ is not None
@@ -166,7 +170,7 @@ def test_noise_variance_positive(n_components: int, seed: int) -> None:
     rng = np.random.default_rng(seed)
     x = rng.standard_normal((20, 50))
 
-    model = VBPCA(n_components=n_components, maxiters=30)
+    model = VBPCA(n_components=n_components, maxiters=30, random_state=seed)
     model.fit(x)
 
     assert model.noise_variance_ is not None

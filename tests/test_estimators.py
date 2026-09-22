@@ -301,7 +301,13 @@ def test_predictive_variance_improves_coverage() -> None:
     x_train = x.copy()
     x_train[holdout] = np.nan
 
-    model = VBPCA(n_components=k, maxiters=100, niter_broadprior=0, verbose=0)
+    model = VBPCA(
+        n_components=k,
+        maxiters=100,
+        niter_broadprior=0,
+        verbose=0,
+        random_state=0,
+    )
     model.fit(x_train, mask=mask)
 
     def coverage(var: np.ndarray) -> float:
@@ -346,8 +352,22 @@ def test_niter_broadprior_affects_iteration_count() -> None:
 
     from vbpca_py._pca_full import pca_full
 
-    r_default = pca_full(x, 2, bias=True, maxiters=200, niter_broadprior=100)
-    r_low = pca_full(x, 2, bias=True, maxiters=200, niter_broadprior=5)
+    r_default = pca_full(
+        x,
+        2,
+        bias=True,
+        maxiters=200,
+        niter_broadprior=100,
+        random_state=42,
+    )
+    r_low = pca_full(
+        x,
+        2,
+        bias=True,
+        maxiters=200,
+        niter_broadprior=5,
+        random_state=42,
+    )
 
     iters_default = len(r_default["lc"]["rms"])
     iters_low = len(r_low["lc"]["rms"])
@@ -386,8 +406,22 @@ def test_va_init_affects_initial_prior() -> None:
 
     from vbpca_py._pca_full import pca_full
 
-    r_default = pca_full(x, 2, bias=True, maxiters=10, va_init=1000.0)
-    r_custom = pca_full(x, 2, bias=True, maxiters=10, va_init=100.0)
+    r_default = pca_full(
+        x,
+        2,
+        bias=True,
+        maxiters=10,
+        va_init=1000.0,
+        random_state=42,
+    )
+    r_custom = pca_full(
+        x,
+        2,
+        bias=True,
+        maxiters=10,
+        va_init=100.0,
+        random_state=42,
+    )
 
     # The RMS traces should differ when starting from different priors
     rms_default = r_default["lc"]["rms"]

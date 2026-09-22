@@ -407,6 +407,7 @@ def test_pca_full_hyperprior_warmup_delays_va_update() -> None:
         compat_mode="strict_legacy",
         rotate2pca=1,
         verbose=0,
+        random_state=4242,
     )
     long = pca_full(
         x,
@@ -415,6 +416,7 @@ def test_pca_full_hyperprior_warmup_delays_va_update() -> None:
         compat_mode="strict_legacy",
         rotate2pca=1,
         verbose=0,
+        random_state=4242,
     )
 
     va_short = np.asarray(short["Va"], dtype=float)
@@ -577,6 +579,7 @@ def test_pca_full_rotate2pca_bias_toggle_parity_on_zero_mean() -> None:
         rotate2pca=1,
         bias=1,
         verbose=0,
+        random_state=5757,
     )
     out_nobias = pca_full(
         x,
@@ -586,6 +589,7 @@ def test_pca_full_rotate2pca_bias_toggle_parity_on_zero_mean() -> None:
         rotate2pca=1,
         bias=0,
         verbose=0,
+        random_state=5757,
     )
 
     rms_bias = float(np.asarray(out_bias["lc"]["rms"], dtype=float)[-1])
@@ -1179,6 +1183,7 @@ def test_pca_full_bias_toggle_mean_shift_effect() -> None:
         autosave=0,
         display=0,
         verbose=0,
+        random_state=1200,
     )
     out_nobias = pca_full(
         x,
@@ -1189,6 +1194,7 @@ def test_pca_full_bias_toggle_mean_shift_effect() -> None:
         autosave=0,
         display=0,
         verbose=0,
+        random_state=1200,
     )
 
     assert np.linalg.norm(out_bias["Mu"]) > np.linalg.norm(out_nobias["Mu"])
@@ -1487,6 +1493,7 @@ def test_pca_full_hp_params_are_passed_from_opts() -> None:
         maxiters=30,
         verbose=0,
         rotate2pca=1,
+        random_state=99,
     )
     out_strong = pca_full(
         x,
@@ -1495,6 +1502,7 @@ def test_pca_full_hp_params_are_passed_from_opts() -> None:
         verbose=0,
         rotate2pca=1,
         hp_v=10.0,
+        random_state=99,
     )
 
     nv_default = float(out_default["V"])
@@ -1516,6 +1524,7 @@ def test_pca_full_hp_va_affects_ard_pruning() -> None:
         rotate2pca=1,
         hp_va=1e-6,
         niter_broadprior=0,
+        random_state=77,
     )
     out_strong = pca_full(
         x,
@@ -1525,6 +1534,7 @@ def test_pca_full_hp_va_affects_ard_pruning() -> None:
         rotate2pca=1,
         hp_va=10.0,
         niter_broadprior=0,
+        random_state=77,
     )
 
     va_weak = np.asarray(out_weak["Va"], dtype=float)

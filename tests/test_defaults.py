@@ -136,7 +136,7 @@ def test_recommended_config_fits() -> None:
     x += 0.3 * rng.standard_normal((p, n))
 
     cfg = recommend_config(n=n, p=p)
-    model = VBPCA(n_components=k, verbose=0, **cfg)
+    model = VBPCA(n_components=k, verbose=0, random_state=0, **cfg)
     model.fit(x)
     assert model.components_ is not None
     assert model.components_.shape == (p, k)
@@ -161,7 +161,7 @@ def test_aspect_ratio_bucket_configs_fit(n: int, p: int) -> None:
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", UserWarning)
         cfg = recommend_config(n=n, p=p)
-    model = VBPCA(n_components=k, verbose=0, **cfg)
+    model = VBPCA(n_components=k, verbose=0, random_state=0, **cfg)
     model.fit(x)
     assert model.components_ is not None
 

@@ -38,7 +38,7 @@ class TestHighMissingness:
         mask = rng.random(x.shape) > 0.6  # 60% missing
         x_obs = np.where(mask, x, np.nan)
 
-        model = VBPCA(n_components=3, maxiters=200, bias=True)
+        model = VBPCA(n_components=3, maxiters=200, bias=True, random_state=1)
         model.fit(x_obs, mask=mask)
 
         assert model.rms_ is not None
@@ -53,7 +53,7 @@ class TestHighMissingness:
         mask = rng.random(x.shape) > 0.7
         x_obs = np.where(mask, x, np.nan)
 
-        model = VBPCA(n_components=3, maxiters=200, bias=True)
+        model = VBPCA(n_components=3, maxiters=200, bias=True, random_state=2)
         model.fit(x_obs, mask=mask)
         recon = model.inverse_transform()
         assert np.all(np.isfinite(recon))
@@ -69,7 +69,7 @@ class TestAllMissingRowCol:
         mask[0, :] = False  # Row 0 all missing
         x_obs = np.where(mask, x, np.nan)
 
-        model = VBPCA(n_components=3, maxiters=100, bias=True)
+        model = VBPCA(n_components=3, maxiters=100, bias=True, random_state=10)
         # The model may handle this gracefully or raise — either is valid
         try:
             model.fit(x_obs, mask=mask)
@@ -86,7 +86,7 @@ class TestAllMissingRowCol:
         mask[:, 0] = False  # Column 0 all missing
         x_obs = np.where(mask, x, np.nan)
 
-        model = VBPCA(n_components=3, maxiters=100, bias=True)
+        model = VBPCA(n_components=3, maxiters=100, bias=True, random_state=11)
         try:
             model.fit(x_obs, mask=mask)
             recon = model.inverse_transform()
@@ -101,7 +101,7 @@ class TestAllMissingRowCol:
         mask[:3, :] = False  # First 3 rows all missing
         x_obs = np.where(mask, x, np.nan)
 
-        model = VBPCA(n_components=3, maxiters=100, bias=True)
+        model = VBPCA(n_components=3, maxiters=100, bias=True, random_state=12)
         try:
             model.fit(x_obs, mask=mask)
             recon = model.inverse_transform()
@@ -123,7 +123,7 @@ class TestSparseObservationPatterns:
             mask[i, j] = True
         x_obs = np.where(mask, x, np.nan)
 
-        model = VBPCA(n_components=2, maxiters=100, bias=True)
+        model = VBPCA(n_components=2, maxiters=100, bias=True, random_state=20)
         try:
             model.fit(x_obs, mask=mask)
             recon = model.inverse_transform()
@@ -142,7 +142,7 @@ class TestSparseObservationPatterns:
             mask[i, cols] = True
         x_obs = np.where(mask, x, np.nan)
 
-        model = VBPCA(n_components=2, maxiters=100, bias=True)
+        model = VBPCA(n_components=2, maxiters=100, bias=True, random_state=21)
         try:
             model.fit(x_obs, mask=mask)
             recon = model.inverse_transform()
@@ -158,7 +158,7 @@ class TestSparseObservationPatterns:
         mask[5:15, 10:30] = False
         x_obs = np.where(mask, x, np.nan)
 
-        model = VBPCA(n_components=3, maxiters=200, bias=True)
+        model = VBPCA(n_components=3, maxiters=200, bias=True, random_state=30)
         model.fit(x_obs, mask=mask)
         recon = model.inverse_transform()
 
@@ -178,7 +178,7 @@ class TestMinimalDimensions:
         mask = np.array([[True, True], [True, False]])
         x_obs = np.where(mask, x, np.nan)
 
-        model = VBPCA(n_components=1, maxiters=100, bias=True)
+        model = VBPCA(n_components=1, maxiters=100, bias=True, random_state=0)
         model.fit(x_obs, mask=mask)
         recon = model.inverse_transform()
         assert np.all(np.isfinite(recon))
@@ -190,7 +190,7 @@ class TestMinimalDimensions:
         mask = rng.random(x.shape) > 0.2
         x_obs = np.where(mask, x, np.nan)
 
-        model = VBPCA(n_components=2, maxiters=100, bias=True)
+        model = VBPCA(n_components=2, maxiters=100, bias=True, random_state=40)
         model.fit(x_obs, mask=mask)
         recon = model.inverse_transform()
         assert np.all(np.isfinite(recon))
@@ -202,7 +202,7 @@ class TestMinimalDimensions:
         mask = rng.random(x.shape) > 0.2
         x_obs = np.where(mask, x, np.nan)
 
-        model = VBPCA(n_components=2, maxiters=100, bias=True)
+        model = VBPCA(n_components=2, maxiters=100, bias=True, random_state=41)
         model.fit(x_obs, mask=mask)
         recon = model.inverse_transform()
         assert np.all(np.isfinite(recon))

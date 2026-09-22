@@ -50,7 +50,12 @@ def test_dense_fit_transform_inverse_roundtrip(
     """fit → transform → inverse_transform recovers data within noise."""
     _x_clean, x_noisy, true_rank, noise_std = low_rank_dense
 
-    model = VBPCA(n_components=true_rank, maxiters=200, bias=True)
+    model = VBPCA(
+        n_components=true_rank,
+        maxiters=200,
+        bias=True,
+        random_state=12345,
+    )
     scores = model.fit_transform(x_noisy)
     recon = model.inverse_transform(scores)
 
@@ -69,7 +74,12 @@ def test_dense_roundtrip_with_mask(
     mask = rng.random(x_noisy.shape) > 0.2  # True = observed
     x_masked = np.where(mask, x_noisy, np.nan)
 
-    model = VBPCA(n_components=true_rank, maxiters=200, bias=True)
+    model = VBPCA(
+        n_components=true_rank,
+        maxiters=200,
+        bias=True,
+        random_state=12345,
+    )
     model.fit(x_masked, mask=mask)
     recon = model.inverse_transform()
 
@@ -92,13 +102,22 @@ def test_select_then_fit_roundtrip(
 
     cfg = SelectionConfig(metric="cost", patience=2, max_trials=10)
     best_k, _metrics, _trace, _ = select_n_components(
-        x_noisy, components=range(1, 12), config=cfg, maxiters=100
+        x_noisy,
+        components=range(1, 12),
+        config=cfg,
+        maxiters=100,
+        random_state=12345,
     )
 
     # Selected k should be reasonable (not wildly off from true rank)
     assert 1 <= best_k <= 11
 
-    model = VBPCA(n_components=best_k, maxiters=200, bias=True)
+    model = VBPCA(
+        n_components=best_k,
+        maxiters=200,
+        bias=True,
+        random_state=12345,
+    )
     model.fit(x_noisy)
     recon = model.inverse_transform()
 
@@ -128,7 +147,12 @@ def test_sparse_fit_transform_roundtrip() -> None:
     mask_csr = x_csr.copy()
     mask_csr.data = np.ones_like(mask_csr.data)
 
-    model = VBPCA(n_components=true_rank, maxiters=150, bias=True)
+    model = VBPCA(
+        n_components=true_rank,
+        maxiters=150,
+        bias=True,
+        random_state=42,
+    )
     model.fit(x_csr, mask=mask_csr)
     recon = model.inverse_transform()
 
@@ -152,7 +176,12 @@ def test_standard_scaler_vbpca_roundtrip(
     scaler = MissingAwareStandardScaler()
     x_scaled = scaler.fit_transform(x_noisy)
 
-    model = VBPCA(n_components=true_rank, maxiters=200, bias=True)
+    model = VBPCA(
+        n_components=true_rank,
+        maxiters=200,
+        bias=True,
+        random_state=12345,
+    )
     model.fit(x_scaled)
     recon_scaled = model.inverse_transform()
 
@@ -185,7 +214,7 @@ def test_autoencoder_vbpca_roundtrip() -> None:
 
     # Transpose for VBPCA (features × samples)
     x_vbpca = encoded.T
-    model = VBPCA(n_components=3, maxiters=100, bias=True)
+    model = VBPCA(n_components=3, maxiters=100, bias=True, random_state=777)
     model.fit(x_vbpca)
     recon_vbpca = model.inverse_transform()
 
@@ -222,6 +251,7 @@ def test_cfstop_rel_terminates_fit(
         cfstop_rel=1.0,
         minangle=0,
         rmsstop=None,
+        random_state=12345,
         convergence_criteria={
             "angle": False,
             "earlystop": False,
@@ -251,6 +281,7 @@ def test_cfstop_curv_populates_cost_and_terminates_fit(
         cfstop_curv=1e9,
         minangle=0,
         rmsstop=None,
+        random_state=12345,
         convergence_criteria={
             "angle": False,
             "earlystop": False,
@@ -278,6 +309,7 @@ def test_composite_stop_terminates_fit(
         minangle=0,
         rmsstop=None,
         composite_stop={"elbo_rel": 1.0},
+        random_state=12345,
         convergence_criteria={
             "angle": False,
             "earlystop": False,
@@ -300,10 +332,22 @@ def test_patience_delays_convergence(
     _x_clean, x_noisy, true_rank, _noise_std = low_rank_dense
 
     r1 = pca_full(
-        x_noisy, true_rank, bias=True, maxiters=500, cfstop_rel=1e-6, patience=1
+        x_noisy,
+        true_rank,
+        bias=True,
+        maxiters=500,
+        cfstop_rel=1e-6,
+        patience=1,
+        random_state=12345,
     )
     r5 = pca_full(
-        x_noisy, true_rank, bias=True, maxiters=500, cfstop_rel=1e-6, patience=5
+        x_noisy,
+        true_rank,
+        bias=True,
+        maxiters=500,
+        cfstop_rel=1e-6,
+        patience=5,
+        random_state=12345,
     )
 
     assert len(r5["lc"]["rms"]) >= len(r1["lc"]["rms"])
