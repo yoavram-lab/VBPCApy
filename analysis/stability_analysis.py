@@ -4,7 +4,7 @@ Generates synthetic low-rank data and runs ``select_n_components`` with each
 metric (cost, prms) over a grid of (n, p, true_rank) settings under four
 missingness patterns (complete, mcar, mnar_censored, block).
 
-Produces nine figures for the JOSS paper:
+Produces nine diagnostic figures for development-time validation:
 
 1. **Figure 1 -- Model Selection Accuracy**: 2x4 exact-rate heatmaps
    comparing VBPCApy (cost) vs sklearn PCA (EVR95) across missingness.
@@ -23,8 +23,12 @@ Results are also saved as JSON (and Parquet when pandas is available).
 Usage::
 
     python analysis/stability_analysis.py                # full grid
-    python analysis/stability_analysis.py --smoke        # fast CI check
-    python analysis/stability_analysis.py --fmt pdf      # publication quality
+    python analysis/stability_analysis.py --smoke        # fast check
+    python analysis/stability_analysis.py --fmt pdf      # vector figures
+
+By default, generated data and figures are written below ``results/``, which is
+git-ignored. They are not evidence for the JOSS software paper; see
+``analysis/README.md`` for the publication boundary and provenance requirements.
 """
 
 from __future__ import annotations
@@ -1420,7 +1424,7 @@ def main() -> None:
     parser.add_argument(
         "--output-dir",
         type=pathlib.Path,
-        default=pathlib.Path("paper"),
+        default=pathlib.Path("results/stability"),
     )
     parser.add_argument("--fmt", default="pdf", choices=["png", "pdf", "svg"])
     parser.add_argument(

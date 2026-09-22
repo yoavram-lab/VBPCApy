@@ -125,20 +125,20 @@ build-test:
 # Build, test, and check — full pre-publish dry run.
 build-all: build-check build-test
 
-# Generate the JOSS paper stability figure (full grid, ~10-20 min).
-paper-figure:
+# Run the development-time stability analysis (full grid, ~10-20 min).
+stability-analysis:
 	uv run --extra analysis python analysis/stability_analysis.py --fmt png
 
 # Rerun only the coverage sweep (coverage + RMSE figures); reuse existing stability JSON.
-paper-coverage:
+stability-coverage:
 	uv run --extra analysis python analysis/stability_analysis.py --coverage-only --fmt png
 
 # Regenerate all figures from existing JSON results (no simulation).
-paper-plot:
+stability-plot:
 	uv run --extra analysis python analysis/stability_analysis.py --plot-only --fmt png
 
 # Quick smoke run of the stability analysis (~1-2 min).
-paper-figure-smoke:
+stability-smoke:
 	uv run --extra analysis python analysis/stability_analysis.py --smoke --fmt png
 
 # ── Trade study (hyperparameter optimisation) ────────────────────

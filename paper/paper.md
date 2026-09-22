@@ -25,194 +25,128 @@ affiliations:
     index: 1
   - name: Johns Hopkins University, Baltimore, MD, USA
     index: 2
-date: 24 March 2026
+date: 22 September 2026
 bibliography: paper.bib
 ---
 
 # Summary
 
-VBPCApy is a Python package that implements Variational Bayesian Principal
-Component Analysis (VB-PCA) following the formulation of @Ilin2010, with
-native support for incomplete observations, sparse masks, and posterior
-uncertainty quantification. The package provides a scikit-learn-compatible
-estimator (`VBPCA`) with `fit`/`transform`/`inverse_transform` semantics,
-missing-aware preprocessing utilities that preserve NaN structure through
-encode–decode round-trips, and empirical model selection for the number of
-latent components. The numerical backend builds on NumPy [@Harris2020] and
-SciPy [@Virtanen2020], while performance-critical update equations are
-implemented as C++ extensions via pybind11 [@pybind11] with runtime
-autotuning for thread counts and memory access patterns.
+VBPCApy is an open-source Python implementation of variational Bayesian
+principal component analysis (VB-PCA) for incomplete matrices. It estimates a
+low-dimensional representation from observed entries while retaining
+posterior uncertainty for the latent scores, loadings, and reconstructed
+values. The package supports dense arrays, sparse matrices, and explicit
+observation masks; supplies missing-aware preprocessing for continuous and
+categorical variables; and provides held-out and cross-validated utilities for
+choosing the number of components. A Python orchestration layer combines
+NumPy [@Harris2020] and SciPy [@Virtanen2020] with six compiled C++ extension
+modules implemented through pybind11 [@pybind11].
 
-# Statement of Need
+# Statement of need
 
-Missing values are pervasive in scientific and industrial tabular data, yet
-standard dimensionality-reduction workflows typically either impute first
-and then apply PCA—masking the uncertainty introduced by imputation—or
-discard incomplete rows and features. This impute-then-analyze pattern is
-widespread across ecology, genomics, cultural evolution, and survey research,
-where incomplete observations are the norm rather than the exception.
+Scientists often apply PCA to tables that contain unrecorded measurements,
+inapplicable variables, or structurally absent observations. Dropping every
+incomplete row can discard much of a dataset, whereas filling values before
+PCA treats estimated values as if they had been observed and separates the
+dimension-reduction step from its uncertainty. These problems occur in fields
+including ecology, genomics, morphology, behavioural science, and comparative
+cultural research.
 
-VBPCApy addresses this gap by modelling missingness directly within the
-variational inference loop, so that latent factors and noise parameters are
-estimated only from observed entries, and by exposing per-entry posterior
-uncertainty on reconstructions and scores rather than the point predictions
-an impute-then-PCA pipeline provides.
-\autoref{fig:accuracy} illustrates the practical consequence on a factorial
-stability study (16,800 trials spanning sample size, feature count, true
-rank, and four missingness patterns): VBPCApy's built-in model selection
-recovers the true latent rank far more reliably than scikit-learn's
-explained-variance threshold applied after mean imputation, which collapses
-under incomplete data. Held-out reconstruction error is correspondingly
-31--56\% lower across the same grid.
-As with other mean-field variational approximations, VBPCApy's posterior
-intervals show a calibration gap under nominal coverage
-[@Bishop1999; @Ilin2010]; extended results—error decomposition, detection
-power, coverage calibration, and an accuracy/coverage tradeoff analysis
-across data regimes—are documented in the project repository's `analysis/`
-directory.
-The posterior covariances produced by the variational E-step also enable
-downstream uncertainty-aware analyses, such as the posterior predictive
-eigenvalue tests of @Macdonald2024a, which use VBPCApy's posterior as a
-generative engine for formal, calibrated dimensionality selection beyond
-the heuristic empirical metrics provided here.
+VBPCApy is intended for researchers and developers who need a reusable
+latent-factor implementation that conditions its updates on the observed set
+and exposes uncertainty alongside point reconstructions. It packages the full
+variational formulation described by @Ilin2010, including automatic relevance
+determination [@Bishop1999], optional bias estimation, posterior covariances,
+and rotation to a PCA-aligned basis. Its public interface adds data checks,
+convergence diagnostics, deterministic random-state control, probe holdouts,
+component-selection helpers, and preprocessing that preserves missing-value
+masks through encoding and inverse transformation. The estimator follows
+scikit-learn conventions for parameter inspection, cloning, fitting, and
+training-data reconstruction without claiming support for out-of-sample
+projection that is not yet implemented.
 
-# State of the Field
+# State of the field
 
-@Bishop1999 introduced Bayesian PCA with automatic relevance
-determination; @Ilin2010 extended this to the missing-data setting with
-a full variational treatment and released a MATLAB reference
-implementation. However, that code is not pip-installable, lacks a stable
-API, and ships without automated model selection or missing-aware
-preprocessing. The R/Bioconductor package `pcaMethods`
-[@Stacklies2007] provides probabilistic PCA variants but omits the full
-VB-PCA formulation with hierarchical noise, optional bias estimation, and
-posterior covariances on both scores and loadings. The scikit-learn `PCA`
-class [@Pedregosa2011] does not handle missing entries at all, forcing
-users into impute-then-analyze workflows. VBPCApy fills this gap by
-combining the complete @Ilin2010 algorithm with modern Python packaging,
-type-checked interfaces, compiled C++ kernels, and an empirical
-model-selection layer with early stopping.
+The original MATLAB implementation accompanying @Ilin2010 is the closest
+algorithmic reference, but it is not distributed through the Python package
+ecosystem and does not provide current testing, packaging, or estimator
+interfaces. Scikit-learn's PCA implementation [@Pedregosa2011] requires a
+complete input matrix, so incomplete data must be handled by a separate
+imputation or row-removal step. The R/Bioconductor package `pcaMethods`
+[@Stacklies2007] offers several PCA methods for incomplete biological data,
+but it does not provide this full Python VB-PCA implementation and its
+posterior outputs.
 
-# Key Features
+VBPCApy was developed as a maintained port rather than an extension to one of
+those projects because its core contribution joins three requirements:
+numerical continuity with the Ilin--Raiko formulation, explicit dense and
+sparse missing-data contracts, and Python-native access to posterior
+uncertainty. It complements, rather than replaces, conventional PCA and the
+broader collection of incomplete-data methods in `pcaMethods`.
 
-**Scikit-learn-compatible estimator.** The `VBPCA` class exposes
-`fit`, `transform`, and `inverse_transform` methods with access to
-reconstructions (`reconstruction_`), marginal variances (`variance_`),
-and convergence diagnostics (`rms_`, `prms_`, `cost_`).
+# Software design
 
-**Missing-aware preprocessing.** `AutoEncoder` routes mixed-type columns
-through `MissingAwareOneHotEncoder`, `MissingAwareStandardScaler`, and
-`MissingAwareMinMaxScaler`, each operating only on observed entries and
-preserving NaN masks through `inverse_transform`.
+VBPCApy deliberately retains the reference implementation's features ×
+samples convention. This choice reduces ambiguity when comparing update
+equations and permits optional Octave parity tests, although it differs from
+the samples × features convention common in Python machine learning. A
+`compat_mode` separates strict legacy behaviour from selected modern mask and
+preprocessing semantics.
 
-**Empirical model selection.** `select_n_components` sweeps candidate
-component counts, selecting the rank that minimises a user-chosen
-metric (probe-set RMS or variational cost). The cost criterion is
-regularised by per-component automatic relevance determination (ARD)
-priors [@Bishop1999]: each additional component must reduce the
-data-fit term enough to offset the KL penalty from its
-component-specific precision prior, preventing the monotonic cost
-decrease that would otherwise make the minimum uninformative.
-`SelectionConfig` controls patience, early stopping, and
-metric-reversal detection.
-\autoref{fig:accuracy} shows that this procedure substantially
-outperforms the impute-then-PCA baseline.
+Observation structure is represented independently from numerical values.
+Dense callers may use NaNs or an explicit Boolean mask, while sparse callers
+may provide a sparse mask when stored zeros must remain observable. Probe
+holdouts are removed from both the data and mask before fitting. This design
+avoids interpreting every numerical zero as missing and prevents validation
+entries from leaking into model updates. Memory guards reject operations that
+would silently densify inputs beyond a configurable budget.
 
-**C++ acceleration.** Six pybind11 extension modules implement the
-dense, sparse, noise, and rotation update kernels, with runtime dispatch
-selecting accessor and threading modes based on data shape and sparsity.
+The iterative solver is decomposed into initialization, score, loading, noise,
+rotation, monitoring, and convergence modules. Compiled kernels accelerate
+dense and sparse update paths, while a runtime policy selects thread counts,
+access modes, and covariance writeback strategies for the current workload.
+Convergence criteria are configurable and emit replayable learning-curve
+traces; probe-based stopping restores the state with the best observed probe
+error. The package exposes both latent reconstruction variance and predictive
+variance that includes observation noise, making the intended uncertainty
+interpretation explicit.
 
-# Software Design
+The repository includes typed interfaces, property and regression tests,
+optional reference-parity tests, continuous integration on Python 3.11--3.14,
+binary-wheel workflows, versioned releases, tutorials, and API documentation.
+The mean-field approximation and training-data-only `transform` operation are
+documented limitations rather than hidden compatibility claims.
 
-VBPCApy follows a features × samples data convention matching the
-@Ilin2010 MATLAB reference, enabling bit-for-bit parity verification
-via an optional Octave bridge (`compat_mode="strict_legacy"`).
-Performance-critical update equations are implemented in C++ using
-pybind11 [@pybind11] and Eigen for direct access to BLAS-level matrix
-operations; this provides a 5–10× speedup over equivalent pure-NumPy
-loops while keeping the build portable across Linux, macOS, and Windows.
-A runtime autotuning probe selects per-problem thread counts, memory
-accessor modes (legacy scalar vs. buffered), and covariance writeback
-strategies based on measured wall-clock time.
+# Research impact statement
 
-Preprocessing utilities (`AutoEncoder`, `MissingAwareOneHotEncoder`,
-`MissingAwareStandardScaler`, `MissingAwareMinMaxScaler`) route
-mixed-type columns through encode and decode paths that preserve NaN
-mask structure, so that generative reconstructions can be mapped back to
-the original feature space. A sparse variant,
-`MissingAwareSparseOneHotEncoder`, keeps CSR structure end-to-end for
-high-cardinality categoricals.
+The legacy VB-PCA workflow ported by VBPCApy was used in an analysis of
+incomplete comparative cultural data by @Macdonald2024. VBPCApy also provides
+the posterior quantities and reproducible Python infrastructure used by the
+ongoing dimensionality-selection work reported by @Macdonald2024a. These use
+cases require more than a point PCA solution: they depend on observed-entry
+updates, posterior covariance propagation, and consistent handling of mixed
+data encodings.
 
-The project ships with a GitHub Actions CI pipeline (lint, type check,
-test across Python 3.11–3.13), a `justfile` command runner with
-benchmark and Octave-parity recipes, and a `cibuildwheel` workflow
-for platform wheel publication.
+The project has public releases on PyPI, cross-platform wheels, a maintained
+documentation site, and external contributions merged through its public
+issue and pull-request workflow. Together with reusable preprocessing,
+diagnostic, and model-selection interfaces, these provide a path for adoption
+outside the analyses that motivated the port.
 
-# Example
+# AI usage disclosure
 
-```python
-import numpy as np
-from vbpca_py import VBPCA, SelectionConfig, select_n_components
-
-rng = np.random.default_rng(42)
-x = rng.standard_normal((50, 200))          # features × samples
-mask = rng.random(x.shape) > 0.2            # 20 % missing
-
-cfg = SelectionConfig(metric="cost", patience=2, max_trials=10)
-best_k, metrics, trace, _ = select_n_components(x, mask=mask, config=cfg)
-
-model = VBPCA(n_components=best_k, maxiters=200)
-model.fit(x, mask=mask)
-print(f"Selected k={best_k}, final cost={model.cost_:.4f}")
-```
-
-Sparse CSR data with structural missingness can be handled directly:
-
-```python
-import scipy.sparse as sp
-from vbpca_py import VBPCA
-
-x_sparse = sp.random(80, 300, density=0.6, format="csr", random_state=0)
-model = VBPCA(n_components=4, maxiters=150)
-scores = model.fit_transform(x_sparse)  # mask inferred from sparsity
-x_hat = model.inverse_transform()       # dense reconstruction
-```
-
-# Research Impact
-
-The legacy MATLAB implementation of VB-PCA was used by @Macdonald2024 to
-analyse cultural-transmission networks among Austronesian-speaking
-peoples, where incomplete ethnographic records make standard PCA
-inapplicable. VBPCApy is the Python successor to that codebase and was
-developed to support the posterior predictive eigenvalue tests of
-@Macdonald2024a, which require posterior covariances produced by the
-variational E-step. The scikit-learn-compatible API is designed to
-integrate directly into existing analysis pipelines.
-
-![Exact rank-recovery rate for VBPCApy (cost metric, top row) versus
-scikit-learn PCA with a 95\% explained-variance threshold (EVR95, bottom
-row) across four missingness patterns (Complete, MCAR, MNAR-censored,
-Block), from a factorial stability study (16,800 trials: 7 sample sizes
-$\times$ 7 feature counts $\times$ 3 true ranks $\times$ 4 missingness
-patterns $\times$ 10 replicates; full grid and methodology in the project
-repository).  Each cell shows the fraction of simulations in which the
-selected rank exactly matched the true rank for a given sample size $n$
-and feature count $p$.  VBPCApy maintains 5–100\% recovery across all
-patterns, while the impute-then-PCA baseline collapses to near-zero under
-incomplete data.\label{fig:accuracy}](figure_accuracy.png)
-
-# AI Usage Disclosure
-
-Development of VBPCApy was assisted by GitHub Copilot, which provided code
-formatting suggestions and implementation scaffolding powered by Claude
-Opus 4.6 (Anthropic) and GPT-5.1/5.3 Codex (OpenAI). All generated code
-was reviewed, edited, and validated by the authors, who made all core
-algorithmic and architectural design decisions.
+GitHub Copilot and OpenAI Codex were used during software development for code
+completion, refactoring suggestions, test scaffolding, and documentation.
+Claude Opus 4.6 and GPT-5-family Codex models were used in that tooling;
+OpenAI Codex (GPT-5) also assisted with editorial review and revision of this
+manuscript. The human authors reviewed, edited, and tested all AI-assisted
+outputs, verified the technical claims against the implementation and cited
+sources, and made all scientific, algorithmic, and architectural decisions.
 
 # Acknowledgements
 
 This research was supported in part by the John Templeton Foundation (YR),
-the Minerva Stiftung Center for Lab Evolution (YR), and the Zuckerman
-STEM Leadership Program (JCM).
+the Minerva Stiftung Center for Lab Evolution (YR), and the Zuckerman STEM
+Leadership Program (JCM).
 
 # References
