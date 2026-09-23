@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `random_state` constructor kwarg on `VBPCA`: seeds parameter initialization and any auto-generated xprobe mask (`int`, `np.random.Generator`, or `None`, following the sklearn convention). Surfaced via `get_params()`/`set_params()`/`get_options()` (#109).
 
 ### Fixed
+- Dense probe generation now copies an explicit observation mask before
+  intersecting it with finite data, so caller-owned and read-only masks are
+  preserved (#157).
 - Recommendation routing now evaluates both aspect-ratio directions before the
   absolute feature-count guard, so large-but-tall matrices no longer receive a
   wide-data configuration. Large balanced matrices have a distinct

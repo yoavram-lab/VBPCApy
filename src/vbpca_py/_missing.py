@@ -186,7 +186,7 @@ def _xprobe_dense(
         if sp.issparse(mask):
             msg = "mask must be dense when x is dense"
             raise ValueError(msg)
-        observed = np.asarray(mask, dtype=bool)
+        observed = np.array(mask, dtype=bool, copy=True)
         if observed.shape != x_dense.shape:
             msg = "mask must have the same shape as x"
             raise ValueError(msg)

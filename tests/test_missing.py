@@ -246,6 +246,38 @@ def test_make_xprobe_mask_dense_respects_explicit_mask() -> None:
     assert not np.any(probe_mask & ~mask)
 
 
+def test_make_xprobe_mask_dense_does_not_mutate_explicit_mask() -> None:
+    x = np.arange(30, dtype=float).reshape(5, 6)
+    x[0, 0] = np.nan
+    mask = np.ones_like(x, dtype=bool)
+    original = mask.copy()
+
+    make_xprobe_mask(
+        x,
+        fraction=0.2,
+        rng=np.random.default_rng(12),
+        mask=mask,
+    )
+
+    np.testing.assert_array_equal(mask, original)
+
+
+def test_make_xprobe_mask_dense_accepts_read_only_mask() -> None:
+    x = np.arange(30, dtype=float).reshape(5, 6)
+    mask = np.ones_like(x, dtype=bool)
+    mask.setflags(write=False)
+
+    x_train, xprobe = make_xprobe_mask(
+        x,
+        fraction=0.2,
+        rng=np.random.default_rng(12),
+        mask=mask,
+    )
+
+    assert np.sum(np.isfinite(xprobe)) == 6
+    assert np.sum(np.isnan(x_train)) == 6
+
+
 def test_make_xprobe_mask_sparse_respects_mask_and_preserves_observed_zero() -> None:
     x = sp.csr_matrix(np.array([[0.0, 2.0], [3.0, 0.0]]))
     mask = sp.csr_matrix(np.ones((2, 2), dtype=bool))
