@@ -63,6 +63,12 @@ specified in
 condition-level checkpoints and paired reducer must be used before changing
 the public defaults in `recommend_config()`.
 
+The independent released-default follow-up for the residual wide-moderate and
+tall-extreme cap hits is preregistered in
+[`trade_study/RESIDUAL_CONVERGENCE.md`](trade_study/RESIDUAL_CONVERGENCE.md).
+It uses the current release as its only control and must be completed before
+the VBPCA version used by the pp-eigentest paper is frozen.
+
 The legacy stability workflow writes to the git-ignored
 `results/stability/` directory by default. Its convenience recipes are
 `just stability-analysis`, `just stability-coverage`, `just stability-plot`,

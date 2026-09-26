@@ -1,0 +1,86 @@
+{
+  "manifest_version": "vbpca.residual-convergence.v1",
+  "design_version": "v1_vbpca_0_4_residual_caps",
+  "vbpca_release": "0.4.0",
+  "profile": "confirm",
+  "n_reps": 16,
+  "seed": 20260926,
+  "reference_condition": "released",
+  "conditions": [
+    "released",
+    "double_cap",
+    "forced_long"
+  ],
+  "regimes": [
+    {
+      "name": "wide_complete_anchor",
+      "n": 40,
+      "p": 200,
+      "true_rank": 5,
+      "missingness": "complete",
+      "noise_std": 0.3,
+      "bucket": "wide_moderate",
+      "seed": 20260926
+    },
+    {
+      "name": "wide_mcar_anchor",
+      "n": 50,
+      "p": 300,
+      "true_rank": 2,
+      "missingness": "mcar",
+      "noise_std": 0.5,
+      "bucket": "wide_moderate",
+      "seed": 20260927
+    },
+    {
+      "name": "wide_complete_holdout",
+      "n": 64,
+      "p": 320,
+      "true_rank": 5,
+      "missingness": "complete",
+      "noise_std": 0.3,
+      "bucket": "wide_moderate",
+      "seed": 20260928
+    },
+    {
+      "name": "wide_mnar_holdout",
+      "n": 80,
+      "p": 400,
+      "true_rank": 8,
+      "missingness": "mnar_censored",
+      "noise_std": 0.7,
+      "bucket": "wide_moderate",
+      "seed": 20260929
+    },
+    {
+      "name": "tall_extreme_mnar_anchor",
+      "n": 1020,
+      "p": 20,
+      "true_rank": 3,
+      "missingness": "mnar_censored",
+      "noise_std": 1.0,
+      "bucket": "tall_extreme",
+      "seed": 20260930
+    },
+    {
+      "name": "tall_extreme_mnar_holdout",
+      "n": 1275,
+      "p": 25,
+      "true_rank": 4,
+      "missingness": "mnar_censored",
+      "noise_std": 1.0,
+      "bucket": "tall_extreme",
+      "seed": 20260931
+    },
+    {
+      "name": "tall_extreme_complete_holdout",
+      "n": 1800,
+      "p": 30,
+      "true_rank": 3,
+      "missingness": "complete",
+      "noise_std": 0.5,
+      "bucket": "tall_extreme",
+      "seed": 20260932
+    }
+  ]
+}

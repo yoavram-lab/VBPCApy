@@ -52,8 +52,11 @@ def _paired_row(regime: str, rep: int, *, selected_k: int = 2) -> dict[str, obje
         "true_rank": 2,
         "selected_k": selected_k,
         "rank_mae": abs(selected_k - 2),
+        "rank_under": max(0, 2 - selected_k),
+        "rank_over": max(0, selected_k - 2),
         "holdout_rmse": 1.0,
         "coverage_95": 0.95,
+        "interval_score": 1.0,
         "best_k_iters": 10.0,
         "best_k_budget_hit": 0.0,
     }
