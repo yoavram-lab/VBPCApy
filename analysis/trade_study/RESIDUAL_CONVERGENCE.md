@@ -63,6 +63,45 @@ Eliminating cap hits without passing those gates does not justify a defaults
 change. `forced_long` is never a release candidate; disagreement with it is a
 diagnostic for endpoint drift.
 
+## Registered outcome
+
+The registered study completed on Rockfish as Slurm array job `31270353`
+(21/21 shards successful) against VBPCA revision
+`f0c919f3da7fed1d1bbdc676975ded2b06246693` and trade-study revision
+`68753adab5e420629ee0cbc20c319e675029a071`. The reduction used 10,000
+regime-stratified bootstrap resamples. Its `summary.json` SHA-256 is
+`59abe6c1ace7a23d5f9554a677cb5463e5035f945a7beedc0c5020708115c53c`.
+
+The doubled cap does **not** pass the default-change gate:
+
+| Endpoint | Released | Doubled cap | Paired difference or gain (95% CI) |
+|---|---:|---:|---:|
+| Exact-rank recovery | 0.8393 | 0.8304 | -0.0089 (-0.0268, 0.0000) |
+| Rank MAE | 0.2946 | 0.3036 | gain -0.0089 (-0.0268, 0.0000) |
+| Held-out RMSE | 0.6904 | 0.6900 | difference -0.0004 (-0.0013, 0.0001) |
+| Interval score | 3.3612 | 3.3618 | difference 0.0006 (-0.00002, 0.0016) |
+| 95% coverage | 0.9529 | 0.9529 | difference -0.00002 (-0.00005, 0.00001) |
+
+There were no rank rescues and one spoil among 112 paired fits. The held-out
+RMSE point change is only 0.058% of the released mean, far below the
+preregistered 1% threshold, and its interval includes zero. The best-model cap
+hit rate fell from 4.46% to 2.68%, while the all-candidate cap-hit rate fell
+from 11.79% to 6.36%; these are diagnostics and cannot compensate for the lack
+of a quality improvement. In the two wide complete-data regimes, the doubled
+cap changed exact recovery by -0.0625 and 0.0000 and rank-MAE gain by -0.0625
+and 0.0000, respectively.
+
+The forced-long diagnostic confirms that continuing after the released stops
+is harmful rather than beneficial: exact recovery changed by -0.1161 (95% CI
+-0.1786 to -0.0536), rank-MAE gain was -0.4196 (-0.6161 to -0.2321), and both
+held-out RMSE and interval score worsened. Its two wide complete-data regimes
+also satisfy the separate veto, with exact-recovery changes of -0.3750 and
+-0.4375 and rank-MAE gains of -0.875 and -2.000.
+
+**Decision:** retain the VBPCA 0.4.0 released recommendations. No defaults
+patch or 0.4.1 release is justified by this study. Downstream pp-eigentest
+certification therefore pins `vbpca_py==0.4.0`.
+
 ## Local validation
 
 Generate a disposable smoke manifest and run its six shards before submitting
