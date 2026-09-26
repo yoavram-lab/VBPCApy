@@ -64,6 +64,10 @@ bench-compare:
 example:
 	uv run python scripts/example_missing_pca.py
 
+# Run the sparse CSR workflow example.
+example-sparse:
+	uv run python scripts/example_sparse_pca.py
+
 # Ensure Octave + mkoctfile are installed for full legacy parity tests.
 check-octave:
 	command -v octave >/dev/null || (echo "Missing octave. Install Octave first." && exit 1)
