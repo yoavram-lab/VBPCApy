@@ -328,8 +328,21 @@ def _paired_summary(
             float(reference_row["rank_mae"]) - float(candidate_row["rank_mae"])
             for candidate_row, reference_row in pairs
         ]),
+        "rank_under_difference": np.asarray([
+            float(candidate_row["rank_under"]) - float(reference_row["rank_under"])
+            for candidate_row, reference_row in pairs
+        ]),
+        "rank_over_difference": np.asarray([
+            float(candidate_row["rank_over"]) - float(reference_row["rank_over"])
+            for candidate_row, reference_row in pairs
+        ]),
         "holdout_rmse_difference": np.asarray([
             float(candidate_row["holdout_rmse"]) - float(reference_row["holdout_rmse"])
+            for candidate_row, reference_row in pairs
+        ]),
+        "interval_score_difference": np.asarray([
+            float(candidate_row["interval_score"])
+            - float(reference_row["interval_score"])
             for candidate_row, reference_row in pairs
         ]),
         "coverage_95_difference": np.asarray([
