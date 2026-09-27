@@ -913,7 +913,7 @@ def test_cross_validate_components_invalid_splits() -> None:
 def test_cross_validate_components_rejects_more_folds_than_observations() -> None:
     x = np.arange(4, dtype=float).reshape(2, 2)
 
-    with pytest.raises(ValueError, match="exceeds the 4 validation-eligible"):
+    with pytest.raises(ValueError, match="exceeds the 2 validation-eligible"):
         cross_validate_components(
             x,
             components=[1],
@@ -951,10 +951,31 @@ def test_element_folds_keep_singleton_support_in_every_training_fold() -> None:
     folds = ms._make_element_folds(x, 2, np.random.default_rng(8))
 
     probes = np.concatenate([probe for probe, _train in folds])
-    np.testing.assert_array_equal(np.sort(probes), np.arange(4))
+    assert len(probes) == 2
+    assert len(np.unique(probes)) == len(probes)
     for probe, training in folds:
         assert singleton_index not in probe
         assert singleton_index in training
+        masked = x.copy()
+        masked[obs_rows[probe], obs_cols[probe]] = np.nan
+        assert np.all(np.sum(~np.isnan(masked), axis=1) > 0)
+        assert np.all(np.sum(~np.isnan(masked), axis=0) > 0)
+
+
+def test_element_folds_handle_many_degree_two_columns_without_retries() -> None:
+    n_samples = 1000
+    x = np.full((3, n_samples), np.nan)
+    for column in range(n_samples):
+        x[column % 3, column] = float(column)
+        x[(column + 1) % 3, column] = float(column) + 0.5
+    obs_rows, obs_cols = np.nonzero(~np.isnan(x))
+
+    folds = ms._make_element_folds(x, 3, np.random.default_rng(9))
+
+    probes = np.concatenate([probe for probe, _train in folds])
+    assert len(probes) == n_samples
+    assert len(np.unique(probes)) == len(probes)
+    for probe, _training in folds:
         masked = x.copy()
         masked[obs_rows[probe], obs_cols[probe]] = np.nan
         assert np.all(np.sum(~np.isnan(masked), axis=1) > 0)

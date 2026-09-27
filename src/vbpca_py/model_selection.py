@@ -609,49 +609,100 @@ def _make_element_folds(
     observed = ~np.isnan(x)
     obs_rows, obs_cols = np.nonzero(observed)
     n_obs = len(obs_rows)
-    row_counts = np.bincount(obs_rows, minlength=x.shape[0])
-    col_counts = np.bincount(obs_cols, minlength=x.shape[1])
-    eligible = np.flatnonzero((row_counts[obs_rows] > 1) & (col_counts[obs_cols] > 1))
+    support = _training_support_backbone(
+        obs_rows,
+        obs_cols,
+        n_rows=x.shape[0],
+        n_cols=x.shape[1],
+        rng=rng,
+    )
+    eligible = np.flatnonzero(~support)
     if len(eligible) < n_splits:
         msg = (
-            f"n_splits={n_splits} exceeds the {len(eligible)} "
-            "validation-eligible observed entries; entries that are the sole "
-            "support for a row or column must remain in every training fold"
+            f"n_splits={n_splits} exceeds the {len(eligible)} validation-eligible "
+            f"observed entries after reserving {int(np.sum(support))} entries "
+            "that preserve training support in every non-empty row and column"
         )
         raise ValueError(msg)
 
-    for _ in range(256):
-        perm = rng.permutation(eligible)
-        probe_folds = [
-            np.asarray(part, dtype=int) for part in np.array_split(perm, n_splits)
-        ]
-        if all(
-            _fold_preserves_training_coverage(
-                probe_sel,
-                obs_rows,
-                obs_cols,
-                row_counts,
-                col_counts,
-            )
-            for probe_sel in probe_folds
-        ):
-            return [
-                (
-                    probe_sel,
-                    np.setdiff1d(
-                        np.arange(n_obs),
-                        probe_sel,
-                        assume_unique=True,
-                    ),
-                )
-                for probe_sel in probe_folds
-            ]
+    probe_folds = [
+        np.asarray(part, dtype=int)
+        for part in np.array_split(rng.permutation(eligible), n_splits)
+    ]
+    return [
+        (
+            probe_sel,
+            np.setdiff1d(np.arange(n_obs), probe_sel, assume_unique=True),
+        )
+        for probe_sel in probe_folds
+    ]
 
-    msg = (
-        "could not construct entry-wise folds that preserve at least one "
-        "training observation in every non-empty row and column"
+
+def _training_support_backbone(
+    obs_rows: np.ndarray,
+    obs_cols: np.ndarray,
+    *,
+    n_rows: int,
+    n_cols: int,
+    rng: np.random.Generator,
+) -> np.ndarray:
+    """Reserve a minimum edge cover of non-empty rows and columns.
+
+    The returned boolean vector indexes the observed-entry arrays. Reserved
+    entries remain in every training fold. A maximum bipartite matching is
+    extended to an edge cover, which guarantees support without a retry loop
+    and leaves as many observations as possible eligible for validation.
+    Random row and column permutations avoid systematic tie preference.
+
+    Returns:
+        Boolean vector marking the permanent training-support backbone.
+
+    Raises:
+        ValueError: If the observed row and column index shapes differ.
+    """
+    if obs_rows.shape != obs_cols.shape:
+        msg = "observed row and column index arrays must have matching shapes"
+        raise ValueError(msg)
+    support = np.zeros(len(obs_rows), dtype=bool)
+    if len(obs_rows) == 0:
+        return support
+
+    row_order = rng.permutation(n_rows)
+    col_order = rng.permutation(n_cols)
+    row_position = np.empty(n_rows, dtype=int)
+    col_position = np.empty(n_cols, dtype=int)
+    row_position[row_order] = np.arange(n_rows)
+    col_position[col_order] = np.arange(n_cols)
+    graph = sp.csr_matrix(
+        (
+            np.ones(len(obs_rows), dtype=np.int8),
+            (row_position[obs_rows], col_position[obs_cols]),
+        ),
+        shape=(n_rows, n_cols),
     )
-    raise ValueError(msg)
+    matched_columns = sp.csgraph.maximum_bipartite_matching(graph, perm_type="column")
+    edge_index = {
+        (int(row), int(column)): index
+        for index, (row, column) in enumerate(zip(obs_rows, obs_cols, strict=True))
+    }
+    for permuted_row, permuted_column in enumerate(matched_columns):
+        if permuted_column >= 0:
+            row = int(row_order[permuted_row])
+            column = int(col_order[permuted_column])
+            support[edge_index[row, column]] = True
+
+    row_covered = np.bincount(obs_rows[support], minlength=n_rows) > 0
+    col_covered = np.bincount(obs_cols[support], minlength=n_cols) > 0
+    row_counts = np.bincount(obs_rows, minlength=n_rows)
+    col_counts = np.bincount(obs_cols, minlength=n_cols)
+    for row in rng.permutation(np.flatnonzero((row_counts > 0) & ~row_covered)):
+        candidates = np.flatnonzero(obs_rows == row)
+        support[int(rng.choice(candidates))] = True
+    col_covered = np.bincount(obs_cols[support], minlength=n_cols) > 0
+    for column in rng.permutation(np.flatnonzero((col_counts > 0) & ~col_covered)):
+        candidates = np.flatnonzero(obs_cols == column)
+        support[int(rng.choice(candidates))] = True
+    return support
 
 
 def _fold_preserves_training_coverage(
