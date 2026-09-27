@@ -21,7 +21,7 @@ from scipy.linalg import subspace_angles
 
 from vbpca_py import VBPCA, recommend_config
 from vbpca_py import __version__ as vbpca_version
-from vbpca_py._pca_full import (
+from vbpca_py._pca_full import (  # noqa: PLC2701 - analysis resolves internals
     _build_options,
 )
 
@@ -245,18 +245,16 @@ def _fit_checkpoint(
     xprobe = np.full(matrix.shape, np.nan, dtype=float)
     xprobe[holdout_mask] = matrix[holdout_mask]
     options = dict(base_options)
-    options.update(
-        {
-            "maxiters": checkpoint,
-            "random_state": random_state,
-            "convergence_criteria": dict(ALL_CRITERIA_FALSE),
-            "earlystop": False,
-            "record_cost": True,
-            "runtime_tuning": "off",
-            "num_cpu": 1,
-            "verbose": 0,
-        }
-    )
+    options.update({
+        "maxiters": checkpoint,
+        "random_state": random_state,
+        "convergence_criteria": dict(ALL_CRITERIA_FALSE),
+        "earlystop": False,
+        "record_cost": True,
+        "runtime_tuning": "off",
+        "num_cpu": 1,
+        "verbose": 0,
+    })
     started = time.perf_counter()
     model = VBPCA(rank_cap, **options).fit(
         matrix,
@@ -429,23 +427,21 @@ def _evaluate_policies(
     rows: list[dict[str, Any]] = []
     for result in results:
         stop = result.stop_iteration
-        rows.append(
-            {
-                "policy": result.policy,
-                "stop_iteration": stop,
-                "reason": result.reason,
-                "evaluable": evaluable,
-                "premature": bool(evaluable and stop is not None and stop < earliest),
-                "late_or_no_stop": bool(
-                    evaluable and (stop is None or stop > earliest + late_margin)
-                ),
-                "excess_iterations": (
-                    max(0, int(stop) - int(earliest))
-                    if evaluable and stop is not None
-                    else None
-                ),
-            }
-        )
+        rows.append({
+            "policy": result.policy,
+            "stop_iteration": stop,
+            "reason": result.reason,
+            "evaluable": evaluable,
+            "premature": bool(evaluable and stop is not None and stop < earliest),
+            "late_or_no_stop": bool(
+                evaluable and (stop is None or stop > earliest + late_margin)
+            ),
+            "excess_iterations": (
+                max(0, int(stop) - int(earliest))
+                if evaluable and stop is not None
+                else None
+            ),
+        })
     return {"aliases": aliases, "rows": rows}
 
 
@@ -612,9 +608,9 @@ def summarize(manifest_path: Path, output_dir: Path, output: Path) -> None:
             "n": len(rows),
             "n_evaluable": len(evaluable),
             "premature_rate": _mean([float(row["premature"]) for row in evaluable]),
-            "late_or_no_stop_rate": _mean(
-                [float(row["late_or_no_stop"]) for row in evaluable]
-            ),
+            "late_or_no_stop_rate": _mean([
+                float(row["late_or_no_stop"]) for row in evaluable
+            ]),
             "median_excess_iterations": (float(np.median(excess)) if excess else None),
         }
     payload = {

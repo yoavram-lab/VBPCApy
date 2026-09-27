@@ -15,7 +15,7 @@ from typing import Any
 
 import numpy as np
 
-from vbpca_py._converge import (
+from vbpca_py._converge import (  # noqa: PLC2701 - analysis replays internals
     DEFAULT_CRITERION_ORDER,
     convergence_check,
 )

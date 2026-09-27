@@ -1,4 +1,4 @@
-# ruff: noqa: PERF401 - explicit loops keep the factor grid readable
+# ruff: noqa: FURB113, PERF401 - explicit loops keep the factor grid readable
 """Immutable design for posterior-stability convergence validation (#186)."""
 
 from __future__ import annotations
@@ -213,17 +213,15 @@ def build_manifest(profile: str, *, n_reps: int, seed: int) -> dict[str, Any]:
     ):
         n, p = settings["shapes"][shape_name]
         scenario = SCENARIOS[scenario_name]
-        cells.append(
-            {
-                "cell_id": f"{shape_name}__{scenario_name}__{missingness}",
-                "shape": shape_name,
-                "n": n,
-                "p": p,
-                "scenario": scenario_name,
-                "missingness": missingness,
-                **scenario,
-            }
-        )
+        cells.append({
+            "cell_id": f"{shape_name}__{scenario_name}__{missingness}",
+            "shape": shape_name,
+            "n": n,
+            "p": p,
+            "scenario": scenario_name,
+            "missingness": missingness,
+            **scenario,
+        })
     policies = [
         policy
         for warmup in (0, 50, 100, 200)

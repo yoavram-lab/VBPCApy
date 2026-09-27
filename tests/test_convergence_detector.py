@@ -161,7 +161,7 @@ def test_policy_from_options_keeps_only_effectively_configured_criteria() -> Non
     assert policy.patience == 2
     assert policy.warmup == 100
     assert policy.rmsstop == (50, 1e-6, 1e-3)
-    assert policy.cfstop_rel == 1e-5
+    assert np.isclose(policy.cfstop_rel, 1e-5)
     assert "cost" not in without_cost.enabled
     assert without_cost.cfstop_rel is None
 

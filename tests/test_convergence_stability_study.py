@@ -132,14 +132,12 @@ def _production_options() -> dict[str, object]:
 
 
 def test_compact_learning_curve_round_trips_through_replay() -> None:
-    compact = study._compact_learning_curve(
-        {
-            "rms": [1.0, 0.9],
-            "prms": [np.nan, 0.8],
-            "cost": [np.nan, 5.0],
-            "angle": [np.nan, 0.01],
-        }
-    )
+    compact = study._compact_learning_curve({
+        "rms": [1.0, 0.9],
+        "prms": [np.nan, 0.8],
+        "cost": [np.nan, 5.0],
+        "angle": [np.nan, 0.01],
+    })
     policy = DetectorPolicy(
         name="angle",
         enabled=("angle",),
