@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+- Convergence-validation manifests now include the exact policy resolved by
+  `recommend_config()` and leave-one-criterion-out ablations, while shards
+  retain compact versioned learning curves for offline policy replay. Legacy
+  version 1 manifests remain readable (#192).
+
 ### Fixed
 - Entry-wise component cross-validation now reserves a minimum bipartite edge
   cover as permanent training support, then partitions the remaining entries

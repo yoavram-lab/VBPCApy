@@ -1,4 +1,4 @@
-# ruff: noqa: FURB113, PERF401 - explicit loops keep the factor grid readable
+# ruff: noqa: PERF401 - explicit loops keep the factor grid readable
 """Immutable design for posterior-stability convergence validation (#186)."""
 
 from __future__ import annotations
@@ -9,8 +9,11 @@ from typing import Any
 
 from .convergence_detector import DetectorPolicy
 
-DESIGN_VERSION = "v1_posterior_stability_detector"
-MANIFEST_VERSION = "vbpca.convergence-detector.v1"
+LEGACY_DESIGN_VERSION = "v1_posterior_stability_detector"
+LEGACY_MANIFEST_VERSION = "vbpca.convergence-detector.v1"
+DESIGN_VERSION = "v2_replayable_production_detector"
+MANIFEST_VERSION = "vbpca.convergence-detector.v2"
+RESULT_SCHEMA_VERSION = 2
 MISSING_FRACTION = 0.30
 HOLDOUT_FRACTION = 0.10
 
@@ -210,15 +213,17 @@ def build_manifest(profile: str, *, n_reps: int, seed: int) -> dict[str, Any]:
     ):
         n, p = settings["shapes"][shape_name]
         scenario = SCENARIOS[scenario_name]
-        cells.append({
-            "cell_id": f"{shape_name}__{scenario_name}__{missingness}",
-            "shape": shape_name,
-            "n": n,
-            "p": p,
-            "scenario": scenario_name,
-            "missingness": missingness,
-            **scenario,
-        })
+        cells.append(
+            {
+                "cell_id": f"{shape_name}__{scenario_name}__{missingness}",
+                "shape": shape_name,
+                "n": n,
+                "p": p,
+                "scenario": scenario_name,
+                "missingness": missingness,
+                **scenario,
+            }
+        )
     policies = [
         policy
         for warmup in (0, 50, 100, 200)
@@ -227,6 +232,9 @@ def build_manifest(profile: str, *, n_reps: int, seed: int) -> dict[str, Any]:
     manifest = {
         "manifest_version": MANIFEST_VERSION,
         "design_version": DESIGN_VERSION,
+        "result_schema_version": RESULT_SCHEMA_VERSION,
+        "include_production_policies": True,
+        "retain_learning_curve": True,
         "profile": profile,
         "seed": int(seed),
         "n_reps": int(n_reps),
@@ -245,12 +253,27 @@ def build_manifest(profile: str, *, n_reps: int, seed: int) -> dict[str, Any]:
 
 def validate_manifest(manifest: dict[str, Any]) -> None:
     """Reject malformed or internally inconsistent manifests."""
-    if manifest.get("manifest_version") != MANIFEST_VERSION:
-        msg = f"unexpected manifest version: {manifest.get('manifest_version')!r}"
+    version_pair = (
+        manifest.get("manifest_version"),
+        manifest.get("design_version"),
+    )
+    supported = {
+        (LEGACY_MANIFEST_VERSION, LEGACY_DESIGN_VERSION),
+        (MANIFEST_VERSION, DESIGN_VERSION),
+    }
+    if version_pair not in supported:
+        msg = f"unexpected manifest/design version pair: {version_pair!r}"
         raise ValueError(msg)
-    if manifest.get("design_version") != DESIGN_VERSION:
-        msg = f"unexpected design version: {manifest.get('design_version')!r}"
-        raise ValueError(msg)
+    if version_pair[0] == MANIFEST_VERSION:
+        if manifest.get("result_schema_version") != RESULT_SCHEMA_VERSION:
+            msg = "unexpected convergence-detector result schema"
+            raise ValueError(msg)
+        if manifest.get("include_production_policies") is not True:
+            msg = "v2 manifests must include production policies"
+            raise ValueError(msg)
+        if manifest.get("retain_learning_curve") is not True:
+            msg = "v2 manifests must retain replayable learning curves"
+            raise ValueError(msg)
     if int(manifest.get("n_reps", 0)) < 1:
         msg = "manifest n_reps must be positive"
         raise ValueError(msg)

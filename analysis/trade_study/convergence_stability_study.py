@@ -21,13 +21,21 @@ from scipy.linalg import subspace_angles
 
 from vbpca_py import VBPCA, recommend_config
 from vbpca_py import __version__ as vbpca_version
+from vbpca_py._pca_full import (
+    _build_options,
+)
 
 from ._convergence_detector_design import (
     build_manifest,
     policy_from_json,
     validate_manifest,
 )
-from .convergence_detector import collapse_equivalent_policies, replay_policies
+from .convergence_detector import (
+    DetectorPolicy,
+    collapse_equivalent_policies,
+    policy_from_options,
+    replay_policies,
+)
 from .convergence_detector_summary import summaries_by
 
 ALL_CRITERIA_FALSE = {
@@ -237,16 +245,18 @@ def _fit_checkpoint(
     xprobe = np.full(matrix.shape, np.nan, dtype=float)
     xprobe[holdout_mask] = matrix[holdout_mask]
     options = dict(base_options)
-    options.update({
-        "maxiters": checkpoint,
-        "random_state": random_state,
-        "convergence_criteria": dict(ALL_CRITERIA_FALSE),
-        "earlystop": False,
-        "record_cost": True,
-        "runtime_tuning": "off",
-        "num_cpu": 1,
-        "verbose": 0,
-    })
+    options.update(
+        {
+            "maxiters": checkpoint,
+            "random_state": random_state,
+            "convergence_criteria": dict(ALL_CRITERIA_FALSE),
+            "earlystop": False,
+            "record_cost": True,
+            "runtime_tuning": "off",
+            "num_cpu": 1,
+            "verbose": 0,
+        }
+    )
     started = time.perf_counter()
     model = VBPCA(rank_cap, **options).fit(
         matrix,
@@ -361,12 +371,56 @@ def _assess_fidelity(
     }
 
 
+def _production_policies(base_options: dict[str, Any]) -> list[DetectorPolicy]:
+    """Return the exact effective production policy and criterion ablations."""
+    resolved_input = dict(base_options)
+    resolved_input.pop("xprobe_fraction", None)
+    resolved = _build_options(resolved_input)
+    production = policy_from_options("production", resolved)
+    ablations = [
+        policy_from_options(
+            f"production_without_{criterion}",
+            resolved,
+            disabled=(criterion,),
+        )
+        for criterion in production.enabled
+    ]
+    return [production, *ablations]
+
+
+def _compact_learning_curve(learning_curve: dict[str, Any]) -> dict[str, Any]:
+    """Retain only versioned scalar series required for offline replay."""
+    names = ("rms", "prms", "cost", "angle")
+    arrays = {
+        name: np.asarray(learning_curve.get(name, []), dtype=float) for name in names
+    }
+    lengths = {len(array) for array in arrays.values() if array.ndim == 1}
+    if any(array.ndim != 1 for array in arrays.values()) or len(lengths) != 1:
+        msg = "replay learning-curve series must be one-dimensional and aligned"
+        raise ValueError(msg)
+    length = lengths.pop()
+    if length < 2:
+        msg = "replay learning curve must include initialization and one iteration"
+        raise ValueError(msg)
+    return {
+        "schema_version": 1,
+        **{
+            name: [float(value) if np.isfinite(value) else None for value in array]
+            for name, array in arrays.items()
+        },
+    }
+
+
 def _evaluate_policies(
     learning_curve: dict[str, Any],
     manifest: dict[str, Any],
     fidelity: dict[str, Any],
+    *,
+    base_options: dict[str, Any],
 ) -> dict[str, Any]:
     policies = [policy_from_json(payload) for payload in manifest["policies"]]
+    if manifest.get("include_production_policies") is True:
+        policies.extend(_production_policies(base_options))
     representatives, aliases = collapse_equivalent_policies(policies)
     results = replay_policies(learning_curve, representatives)
     earliest = fidelity["earliest_fidelity_checkpoint"]
@@ -375,21 +429,23 @@ def _evaluate_policies(
     rows: list[dict[str, Any]] = []
     for result in results:
         stop = result.stop_iteration
-        rows.append({
-            "policy": result.policy,
-            "stop_iteration": stop,
-            "reason": result.reason,
-            "evaluable": evaluable,
-            "premature": bool(evaluable and stop is not None and stop < earliest),
-            "late_or_no_stop": bool(
-                evaluable and (stop is None or stop > earliest + late_margin)
-            ),
-            "excess_iterations": (
-                max(0, int(stop) - int(earliest))
-                if evaluable and stop is not None
-                else None
-            ),
-        })
+        rows.append(
+            {
+                "policy": result.policy,
+                "stop_iteration": stop,
+                "reason": result.reason,
+                "evaluable": evaluable,
+                "premature": bool(evaluable and stop is not None and stop < earliest),
+                "late_or_no_stop": bool(
+                    evaluable and (stop is None or stop > earliest + late_margin)
+                ),
+                "excess_iterations": (
+                    max(0, int(stop) - int(earliest))
+                    if evaluable and stop is not None
+                    else None
+                ),
+            }
+        )
     return {"aliases": aliases, "rows": rows}
 
 
@@ -435,8 +491,13 @@ def _run_one(
     if not isinstance(endpoint_curve, dict):
         msg = "forced-long fit did not return a learning curve"
         raise TypeError(msg)
-    policies = _evaluate_policies(endpoint_curve, manifest, fidelity)
-    return {
+    policies = _evaluate_policies(
+        endpoint_curve,
+        manifest,
+        fidelity,
+        base_options=base_options,
+    )
+    payload = {
         "status": "ok",
         "cell": cell,
         "rep": rep,
@@ -447,6 +508,9 @@ def _run_one(
         "fidelity": fidelity,
         "policies": policies,
     }
+    if manifest.get("retain_learning_curve") is True:
+        payload["learning_curve"] = _compact_learning_curve(endpoint_curve)
+    return payload
 
 
 def run_shard(
@@ -482,6 +546,10 @@ def run_shard(
         "numpy": np.__version__,
         "scipy": scipy.__version__,
     }
+    result_schema = manifest.get("result_schema_version")
+    if result_schema is not None:
+        envelope["result_schema_version"] = int(result_schema)
+
     try:
         payload = {**envelope, **_run_one(manifest, cell, rep)}
     except Exception as error:
@@ -544,9 +612,9 @@ def summarize(manifest_path: Path, output_dir: Path, output: Path) -> None:
             "n": len(rows),
             "n_evaluable": len(evaluable),
             "premature_rate": _mean([float(row["premature"]) for row in evaluable]),
-            "late_or_no_stop_rate": _mean([
-                float(row["late_or_no_stop"]) for row in evaluable
-            ]),
+            "late_or_no_stop_rate": _mean(
+                [float(row["late_or_no_stop"]) for row in evaluable]
+            ),
             "median_excess_iterations": (float(np.median(excess)) if excess else None),
         }
     payload = {

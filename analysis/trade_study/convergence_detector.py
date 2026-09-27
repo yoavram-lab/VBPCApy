@@ -9,12 +9,13 @@ it cannot change the first iteration on which any rule becomes eligible.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
 
-from vbpca_py._converge import (  # noqa: PLC2701 - analysis replays internals
+from vbpca_py._converge import (
     DEFAULT_CRITERION_ORDER,
     convergence_check,
 )
@@ -121,6 +122,95 @@ class ReplayResult:
     reason: str
     message: str
     terminal_iteration: int
+
+
+def _triple_or_none(value: object) -> tuple[int, float, float] | None:
+    """Normalize one three-value convergence option."""
+    if value is None:
+        return None
+    array = np.asarray(value, dtype=float).ravel()
+    if array.size == 0:
+        return None
+    if array.size != 3:
+        msg = f"expected a three-value convergence option, got {array.size}"
+        raise ValueError(msg)
+    return int(array[0]), float(array[1]), float(array[2])
+
+
+def policy_from_options(
+    name: str,
+    options: Mapping[str, object],
+    *,
+    disabled: tuple[str, ...] = (),
+) -> DetectorPolicy:
+    """Build the effective replay policy from resolved VBPCA options.
+
+    Criteria that are nominally enabled but lack their required configuration
+    remain inactive, matching :func:`convergence_check`. The slowing-down
+    criterion remains in the policy when enabled; callers reproduce current
+    live behavior by supplying no slowing-down event iterations.
+    """
+    order_raw = options.get("criterion_order")
+    order = tuple(order_raw or DEFAULT_CRITERION_ORDER)
+    enabled_raw = options.get("convergence_criteria")
+    if enabled_raw is not None and not isinstance(enabled_raw, Mapping):
+        msg = "convergence_criteria must be a mapping"
+        raise TypeError(msg)
+    enabled_map = enabled_raw or {}
+    disabled_set = set(disabled)
+    unknown = disabled_set.difference(VALID_CRITERIA)
+    if unknown:
+        msg = f"unknown disabled criteria: {sorted(unknown)}"
+        raise ValueError(msg)
+
+    minangle_raw = options.get("minangle")
+    minangle = float(minangle_raw) if minangle_raw is not None else None
+    rmsstop = _triple_or_none(options.get("rmsstop"))
+    cfstop = _triple_or_none(options.get("cfstop"))
+    cfstop_rel_raw = options.get("cfstop_rel")
+    cfstop_rel = float(cfstop_rel_raw) if cfstop_rel_raw is not None else None
+    cfstop_curv_raw = options.get("cfstop_curv")
+    cfstop_curv = float(cfstop_curv_raw) if cfstop_curv_raw is not None else None
+    composite_raw = options.get("composite_stop")
+    if composite_raw is None:
+        composite: tuple[tuple[str, float], ...] = ()
+    elif isinstance(composite_raw, Mapping):
+        composite = tuple(
+            sorted((str(key), float(value)) for key, value in composite_raw.items())
+        )
+    else:
+        msg = "composite_stop must be a mapping or None"
+        raise TypeError(msg)
+
+    configured = {
+        "angle": minangle is not None,
+        "earlystop": bool(options.get("earlystop", False)),
+        "rms_plateau": rmsstop is not None,
+        "cost": any(value is not None for value in (cfstop, cfstop_rel, cfstop_curv)),
+        "composite": bool(composite),
+        "slowing_down": True,
+    }
+    enabled = tuple(
+        criterion
+        for criterion in order
+        if bool(enabled_map.get(criterion, True))
+        and configured[criterion]
+        and criterion not in disabled_set
+    )
+    return DetectorPolicy(
+        name=name,
+        enabled=enabled,
+        minangle=minangle if "angle" in enabled else None,
+        earlystop="earlystop" in enabled,
+        rmsstop=rmsstop if "rms_plateau" in enabled else None,
+        cfstop=cfstop if "cost" in enabled else None,
+        cfstop_rel=cfstop_rel if "cost" in enabled else None,
+        cfstop_curv=cfstop_curv if "cost" in enabled else None,
+        composite_stop=composite if "composite" in enabled else (),
+        patience=int(options.get("patience") or 1),
+        warmup=int(options.get("niter_broadprior") or 0),
+        criterion_order=order,
+    )
 
 
 def collapse_equivalent_policies(
