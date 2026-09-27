@@ -1,7 +1,7 @@
 # Convergence-detector validation
 
 **Issue:** #186  
-**Status:** Stage 1 design frozen and local smoke profile validated
+**Status:** Stage 1 screen complete; no stopping-policy change recommended
 
 This study treats convergence as a detector of a stable posterior. A rule
 firing is not itself evidence that the fit is ready to stop.
@@ -43,24 +43,50 @@ The fidelity margins were frozen before the screen:
 | Held-out RMSE relative change | 0.01 |
 | Active components | exact match |
 
-The replay grid contains 208 policies. It crosses angle, RMS-plateau, relative
-cost, probe-deterioration, disjunctive, and composite rules with threshold,
-criterion-specific patience, and warmup values of 0, 50, 100, and 200.
-`criterion_order` is not crossed.
+The prespecified replay grid contains 208 policies. It crosses angle,
+RMS-plateau, relative cost, probe-deterioration, disjunctive, and composite
+rules with threshold, criterion-specific patience, and warmup values of 0, 50,
+100, and 200. `criterion_order` is not crossed.
 
-Stage 2 will freeze the nondominated safe policies and refit them on new seeds.
+Version 2 manifests also evaluate the exact stopping policy resolved by
+`recommend_config()` for each simulated matrix and a leave-one-criterion-out
+ablation of that policy. Each shard retains aligned RMS, probe RMS, cost, and
+angle series in a compact, versioned learning-curve record. These records allow
+additional policies to be replayed without repeating the forced-long VBPCA fit.
+Version 1 manifests remain readable.
+
+## Stage 1 results
+
+The frozen screen completed all 375 shards. The 1600-iteration endpoint passed
+the stable-tail gate in 359 fits (95.7%). Among those evaluable fits, 48 of the
+208 policies never stopped prematurely. The best of these still stopped late
+or reached the iteration limit in 97.2% of fits. The best policy constrained to
+a premature-stop rate no greater than 5% stopped prematurely in 4.7% of fits
+and stopped late or not at all in 67.7%. Its premature-stop rate rose to 13.9%
+under block missingness.
+
+These results do not support changing the production stopping defaults. They
+also show that aggregate error rates can conceal unsafe behavior under
+structured missingness. The follow-up screen therefore includes the production
+policy and its criterion ablations explicitly and preserves the curves needed
+for denser, regime-specific policy replay. Issue #193 separately tracks the
+nominally enabled `slowing_down` criterion, which currently receives no event
+iteration from the training loop and therefore cannot fire.
+
+Stage 2 will proceed only if the production-policy screen identifies a
+nondominated safe policy worth confirming on new seeds.
 Posterior drift, predictive scores, coverage, generator-capacity selection, and
 pp-eigentest PA/Seq decisions are safety gates. Iteration count and wall time
 are descriptive and can choose among policies only after all safety gates pass.
 
 ## Immediate next steps
 
-1. Merge the Stage 1 runner after CI.
-2. Pin the merge revision and screen-manifest checksum on Rockfish.
-3. Run representative wide, square, tall, misspecified, and structured-
-   missingness preflight shards.
-4. Launch the screen only after every preflight shard is valid.
-5. Reduce Stage 1 before defining the held-out Stage 2 seed set.
+1. Merge the versioned production-policy and learning-curve schema after CI.
+2. Pin the merge revision and a new manifest checksum on Rockfish.
+3. Rerun the 375-shard screen to capture production policies and replayable
+   curves, with representative preflight shards first.
+4. Repair and test the unreachable `slowing_down` integration separately.
+5. Define a held-out Stage 2 seed set only if a policy passes every safety gate.
 
 ## Commands
 

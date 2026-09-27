@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).parents[1]))
 from analysis.trade_study.convergence_detector import (
     DetectorPolicy,
     collapse_equivalent_policies,
+    policy_from_options,
     replay_policy,
 )
 from vbpca_py._converge import DEFAULT_CRITERION_ORDER
@@ -127,6 +128,51 @@ def test_relative_cost_rule_replays_with_patience() -> None:
 
     assert result.stop_iteration == 3
     assert result.reason == "cfstop_rel"
+
+
+def test_policy_from_options_keeps_only_effectively_configured_criteria() -> None:
+    options = {
+        "criterion_order": list(DEFAULT_CRITERION_ORDER),
+        "convergence_criteria": dict.fromkeys(DEFAULT_CRITERION_ORDER, True),
+        "minangle": 1e-4,
+        "earlystop": False,
+        "rmsstop": np.array([50, 1e-6, 1e-3]),
+        "cfstop": np.array([]),
+        "cfstop_rel": 1e-5,
+        "cfstop_curv": None,
+        "composite_stop": None,
+        "patience": 2,
+        "niter_broadprior": 100,
+    }
+
+    policy = policy_from_options("production", options)
+    without_cost = policy_from_options(
+        "production_without_cost",
+        options,
+        disabled=("cost",),
+    )
+
+    assert policy.enabled == (
+        "angle",
+        "rms_plateau",
+        "cost",
+        "slowing_down",
+    )
+    assert policy.patience == 2
+    assert policy.warmup == 100
+    assert policy.rmsstop == (50, 1e-6, 1e-3)
+    assert np.isclose(policy.cfstop_rel, 1e-5)
+    assert "cost" not in without_cost.enabled
+    assert without_cost.cfstop_rel is None
+
+
+def test_policy_from_options_rejects_unknown_disabled_criterion() -> None:
+    with pytest.raises(ValueError, match="unknown disabled"):
+        policy_from_options(
+            "invalid",
+            {"minangle": 1e-4},
+            disabled=("not-a-criterion",),
+        )
 
 
 @pytest.mark.parametrize(

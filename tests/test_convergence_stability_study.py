@@ -10,11 +10,17 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).parents[1]))
 from analysis.trade_study import convergence_stability_study as study
 from analysis.trade_study._convergence_detector_design import (
+    DESIGN_VERSION,
     FIDELITY_MARGINS,
+    LEGACY_DESIGN_VERSION,
+    LEGACY_MANIFEST_VERSION,
+    MANIFEST_VERSION,
+    RESULT_SCHEMA_VERSION,
     build_manifest,
     policy_from_json,
     validate_manifest,
 )
+from analysis.trade_study.convergence_detector import DetectorPolicy, replay_policy
 
 
 def test_registered_profiles_freeze_expected_cells_and_policy_grid() -> None:
@@ -28,7 +34,23 @@ def test_registered_profiles_freeze_expected_cells_and_policy_grid() -> None:
     assert len({policy.name for policy in policies}) == 208
     assert {policy.warmup for policy in policies} == {0, 50, 100, 200}
     assert screen["fidelity_margins"] == FIDELITY_MARGINS
+    assert screen["manifest_version"] == MANIFEST_VERSION
+    assert screen["design_version"] == DESIGN_VERSION
+    assert screen["result_schema_version"] == RESULT_SCHEMA_VERSION
+    assert screen["include_production_policies"] is True
+    assert screen["retain_learning_curve"] is True
     validate_manifest(screen)
+
+
+def test_legacy_v1_manifest_remains_readable() -> None:
+    legacy = dict(build_manifest("smoke", n_reps=1, seed=4))
+    legacy["manifest_version"] = LEGACY_MANIFEST_VERSION
+    legacy["design_version"] = LEGACY_DESIGN_VERSION
+    legacy.pop("result_schema_version")
+    legacy.pop("include_production_policies")
+    legacy.pop("retain_learning_curve")
+
+    validate_manifest(legacy)
 
 
 def test_shards_are_cell_major_and_replicate_minor() -> None:
@@ -96,6 +118,68 @@ def test_unstable_tail_is_not_evaluable() -> None:
 
     assert result["endpoint_stable"] is False
     assert result["earliest_fidelity_checkpoint"] is None
+
+
+def _production_options() -> dict[str, object]:
+    return {
+        "convergence_criteria": dict.fromkeys(study.ALL_CRITERIA_FALSE, True),
+        "minangle": 1e-4,
+        "rmsstop": [10, 1e-6, 1e-3],
+        "cfstop_rel": 1e-5,
+        "patience": 2,
+        "niter_broadprior": 0,
+    }
+
+
+def test_compact_learning_curve_round_trips_through_replay() -> None:
+    compact = study._compact_learning_curve({
+        "rms": [1.0, 0.9],
+        "prms": [np.nan, 0.8],
+        "cost": [np.nan, 5.0],
+        "angle": [np.nan, 0.01],
+    })
+    policy = DetectorPolicy(
+        name="angle",
+        enabled=("angle",),
+        minangle=0.05,
+    )
+
+    result = replay_policy(compact, policy)
+
+    assert compact["schema_version"] == 1
+    assert compact["prms"][0] is None
+    assert result.stop_iteration == 1
+
+
+def test_v2_evaluator_includes_exact_production_policy_and_ablations() -> None:
+    manifest = build_manifest("smoke", n_reps=1, seed=4)
+    base_options = _production_options()
+    curve = {
+        "rms": [1.0, 0.9, 0.89],
+        "prms": [np.nan, 0.95, 0.94],
+        "cost": [np.nan, 100.0, 99.999],
+        "angle": [np.nan, 0.2, 0.01],
+    }
+    fidelity = {
+        "endpoint_stable": True,
+        "earliest_fidelity_checkpoint": 1,
+    }
+
+    result = study._evaluate_policies(
+        curve,
+        manifest,
+        fidelity,
+        base_options=base_options,
+    )
+    names = {row["policy"] for row in result["rows"]}
+
+    assert {
+        "production",
+        "production_without_angle",
+        "production_without_rms_plateau",
+        "production_without_cost",
+        "production_without_slowing_down",
+    }.issubset(names)
 
 
 def test_run_shard_reuses_valid_complete_checkpoint(
