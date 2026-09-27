@@ -81,12 +81,12 @@ def _normalize_components(
     uniq: list[int] = []
     for val in components:
         k = int(val)
-        if k <= 0:
+        if k < 0:
             continue
         if k not in uniq:
             uniq.append(k)
     if not uniq:
-        msg = "components must contain at least one positive integer"
+        msg = "components must contain at least one non-negative integer"
         raise ValueError(msg)
     return uniq
 
@@ -137,13 +137,20 @@ def _fit_candidate(
     mask: Matrix | None,
     cfg: SelectionConfig,
     opts: Mapping[str, object],
-) -> tuple[dict[str, object], VBPCA]:
+) -> tuple[dict[str, object], VBPCA | None]:
     from .estimators import VBPCA  # noqa: PLC0415 # Avoid circular dependency
 
     _ = cfg  # keep signature compatibility for injected stubs during tests
 
     candidate_opts = dict(opts)
     xprobe = candidate_opts.pop("xprobe", None)
+    if k == 0:
+        return _fit_mean_only_candidate(
+            x_arr,
+            mask,
+            cast("Matrix | None", xprobe),
+            bias=bool(candidate_opts.get("bias", True)),
+        )
     est = VBPCA(k, **candidate_opts)  # type: ignore[arg-type]
     est.fit(x_arr, mask=mask, xprobe=cast("Matrix | None", xprobe))
 
@@ -160,8 +167,89 @@ def _fit_candidate(
         "n_iter": est.n_iter_ if est.n_iter_ is not None else 0,
         "convergence_reason": est.convergence_reason_ or "maxiters",
         "converged": bool(est.converged_),
+        "candidate_type": "low_rank",
     }
     return entry, est
+
+
+def _fit_mean_only_candidate(
+    x: np.ndarray | sp.csr_matrix,
+    mask: Matrix | None,
+    xprobe: Matrix | None,
+    *,
+    bias: bool,
+) -> tuple[dict[str, object], None]:
+    """Evaluate an explicit rank-zero (mean-only) candidate.
+
+    Rank zero is a closed-form baseline rather than a degenerate call to the
+    positive-rank VBPCA solver.  Its predictive error is therefore comparable
+    with positive-rank candidates, while the variational cost is deliberately
+    unavailable.
+
+    Returns:
+        Metric record and ``None`` because rank zero has no fitted estimator.
+
+    Raises:
+        ValueError: If an input is sparse, shapes differ, or a biased fit has a
+            row without a training observation.
+    """
+    if sp.issparse(x) or sp.issparse(mask) or sp.issparse(xprobe):
+        msg = "the rank-zero candidate currently supports dense input only"
+        raise ValueError(msg)
+
+    x_arr = np.asarray(x, dtype=float)
+    observed = np.isfinite(x_arr)
+    if mask is not None:
+        mask_arr = np.asarray(mask, dtype=bool)
+        if mask_arr.shape != x_arr.shape:
+            msg = "mask must have the same shape as x"
+            raise ValueError(msg)
+        observed &= mask_arr
+
+    probe_arr: np.ndarray | None = None
+    probe_observed = np.zeros(x_arr.shape, dtype=bool)
+    if xprobe is not None:
+        probe_arr = np.asarray(xprobe, dtype=float)
+        if probe_arr.shape != x_arr.shape:
+            msg = "xprobe must have the same shape as x"
+            raise ValueError(msg)
+        probe_observed = np.isfinite(probe_arr)
+        observed &= ~probe_observed
+
+    counts = np.sum(observed, axis=1)
+    if bias and np.any(counts == 0):
+        msg = "rank-zero mean estimation requires a training observation in each row"
+        raise ValueError(msg)
+    means = np.zeros(x_arr.shape[0], dtype=float)
+    if bias:
+        means = np.divide(
+            np.sum(np.where(observed, x_arr, 0.0), axis=1),
+            counts,
+            out=means,
+            where=counts > 0,
+        )
+
+    residual = x_arr - means[:, np.newaxis]
+    rms = float(np.sqrt(np.mean(np.square(residual[observed]))))
+    prms = float("nan")
+    if probe_arr is not None and np.any(probe_observed):
+        probe_residual = probe_arr - means[:, np.newaxis]
+        prms = float(np.sqrt(np.mean(np.square(probe_residual[probe_observed]))))
+
+    return (
+        {
+            "k": 0,
+            "rms": rms,
+            "prms": prms,
+            "cost": float("nan"),
+            "evr": None,
+            "n_iter": 0,
+            "convergence_reason": "closed_form_mean_only",
+            "converged": True,
+            "candidate_type": "mean_only",
+        },
+        None,
+    )
 
 
 def _compute_evr_for_best(
@@ -450,8 +538,6 @@ def _sweep_components(
 
         prev_metric_val = metric_val
         prev_entry = entry
-        if best_est is None or state.best_k == int(k):
-            best_est = est
 
     return state.best_k, state.best_metrics, trace, state.best_model, best_est
 
@@ -469,7 +555,8 @@ def select_n_components(
     Args:
         x: Data matrix (dense or sparse).
         mask: Optional boolean mask with the same shape as ``x``.
-        components: Candidate component counts. Defaults to
+        components: Candidate component counts. Include ``0`` to compare an
+            explicit mean-only model. Defaults to positive ranks
             ``1..min(n_features, n_samples)``.
         config: Selection parameters controlling metric, stopping behavior,
             patience, trials, and whether to compute explained variance or
@@ -481,7 +568,8 @@ def select_n_components(
         - ``best_k``: chosen component count.
         - ``best_metrics``: scalar metrics for the best candidate.
         - ``trace``: list of per-k endpoint metrics.
-        - ``best_model``: the best ``VBPCA`` instance, or None if not requested.
+        - ``best_model``: the best ``VBPCA`` instance, or ``None`` if it was
+          not requested or the mean-only candidate won.
 
     Raises:
         ValueError: If ``metric`` is invalid or no valid ``components`` are provided.
@@ -503,6 +591,9 @@ def select_n_components(
         opts,
     )
     k_values = _normalize_components(components, x_arr.shape[0], x_arr.shape[1])
+    if cfg.metric == "cost" and 0 in k_values:
+        msg = "rank zero has no variational cost; select it with metric='rms' or 'prms'"
+        raise ValueError(msg)
 
     fit_opts: dict[str, object] = dict(opts)
     verbose_enabled = _verbose_enabled(
@@ -875,9 +966,14 @@ def _aggregate_cv_results(
         cast("float", cv_results[min_idx][f"se_{selection_metric}"])
     )
 
-    for r in cv_results:
-        if float(cast("float", r[f"mean_{selection_metric}"])) <= threshold:
-            return int(cast("int", r["k"])), cv_results
+    eligible = [
+        r
+        for r in cv_results
+        if float(cast("float", r[f"mean_{selection_metric}"])) <= threshold
+    ]
+    if eligible:
+        best = min(eligible, key=lambda r: int(cast("int", r["k"])))
+        return int(cast("int", best["k"])), cv_results
 
     return int(cast("int", cv_results[min_idx]["k"])), cv_results
 
@@ -907,7 +1003,8 @@ def cross_validate_components(
     Args:
         x: Dense data matrix with shape ``(n_features, n_samples)``.
         mask: Optional boolean mask with the same shape as ``x``.
-        components: Candidate component counts.  Defaults to
+        components: Candidate component counts. Include ``0`` to compare an
+            explicit mean-only model. Defaults to positive ranks
             ``1 .. min(n_features, n_samples)``.
         config: Cross-validation parameters.  Uses ``CVConfig()``
             defaults when ``None``.
@@ -1000,8 +1097,14 @@ def cross_validate_components(
     best_k, cv_results = _aggregate_cv_results(k_list, all_fold_metrics, cv_cfg.metric)
 
     if not cv_cfg.one_se_rule:
-        means = [float(cast("float", r[f"mean_{cv_cfg.metric}"])) for r in cv_results]
-        best_k = int(cast("int", cv_results[int(np.argmin(means))]["k"]))
+        best_entry = min(
+            cv_results,
+            key=lambda r: (
+                float(cast("float", r[f"mean_{cv_cfg.metric}"])),
+                int(cast("int", r["k"])),
+            ),
+        )
+        best_k = int(cast("int", best_entry["k"]))
 
     if verbose_level:
         min_entry = min(

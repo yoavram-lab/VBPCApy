@@ -44,7 +44,7 @@ cfg = CVConfig(
 best_k, results = cross_validate_components(
     X_obs,
     mask=mask,
-    components=range(1, 10),
+    components=range(0, 10),  # include the mean-only model
     config=cfg,
     maxiters=200,
 )
@@ -67,9 +67,16 @@ for entry in results:
 
 When `one_se_rule=True`, the selected $k$ is the smallest value whose mean
 metric is within one standard error of the overall best. This guards against
-overfitting by favouring parsimony.
+overfitting by favouring parsimony. Rank zero denotes a mean-only model and
+is a valid result when the held-out data do not support a latent component. The
+one-standard-error rule is a model-selection heuristic rather than a hypothesis
+test.
 
 ## Fit the final model
+
+The simulated example has positive latent rank. If `best_k == 0` on another
+dataset, report the mean-only result; there is no positive-rank `VBPCA` object
+to fit. Otherwise, fit the selected positive-rank model as below.
 
 ```python
 from vbpca_py import VBPCA, make_xprobe_mask

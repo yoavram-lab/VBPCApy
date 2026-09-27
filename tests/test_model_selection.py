@@ -274,13 +274,13 @@ def test_select_n_components_normalizes_component_candidates() -> None:
 
     best_k, _, trace, _ = select_n_components(
         x,
-        components=[0, -1, 2, 2, 1],
+        components=[-1, 2, 2, 1],
         config=SelectionConfig(metric="cost", compute_explained_variance=False),
         maxiters=30,
         verbose=0,
     )
 
-    # _normalize_components keeps only unique positive values in input order.
+    # Negative values are dropped; unique values keep their input order.
     assert [entry["k"] for entry in trace] == [2, 1]
     assert best_k in {1, 2}
 
@@ -289,8 +289,8 @@ def test_select_n_components_empty_after_normalization_raises() -> None:
     rng = np.random.default_rng(5)
     x = _low_rank_data(rng, n_features=4, n_samples=5, rank=1)
 
-    with pytest.raises(ValueError, match="at least one positive integer"):
-        select_n_components(x, components=[0, -2, -3])
+    with pytest.raises(ValueError, match="at least one non-negative integer"):
+        select_n_components(x, components=[-2, -3])
 
 
 def test_select_n_components_rejects_negative_patience() -> None:
