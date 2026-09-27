@@ -911,13 +911,13 @@ def test_cross_validate_components_invalid_splits() -> None:
 
 
 def test_cross_validate_components_rejects_more_folds_than_observations() -> None:
-    x = np.array([[1.0, np.nan], [np.nan, 2.0]])
+    x = np.arange(4, dtype=float).reshape(2, 2)
 
-    with pytest.raises(ValueError, match="exceeds the 2 observed entries"):
+    with pytest.raises(ValueError, match="exceeds the 4 validation-eligible"):
         cross_validate_components(
             x,
             components=[1],
-            config=CVConfig(n_splits=3),
+            config=CVConfig(n_splits=5),
         )
 
 
@@ -928,15 +928,37 @@ def test_cross_validate_components_rejects_sparse_input() -> None:
         cross_validate_components(x, components=[1], config=CVConfig(n_splits=2))
 
 
-def test_cross_validate_components_rejects_uncoverable_rows_or_columns() -> None:
+def test_cross_validate_components_rejects_no_validation_eligible_entries() -> None:
     x = np.array([[1.0, np.nan], [np.nan, 2.0]])
 
-    with pytest.raises(ValueError, match="at least two observed entries"):
+    with pytest.raises(ValueError, match="0 validation-eligible"):
         cross_validate_components(
             x,
             components=[1],
             config=CVConfig(n_splits=2),
         )
+
+
+def test_element_folds_keep_singleton_support_in_every_training_fold() -> None:
+    x = np.array([
+        [1.0, 2.0, np.nan],
+        [3.0, 4.0, np.nan],
+        [np.nan, np.nan, 5.0],
+    ])
+    obs_rows, obs_cols = np.nonzero(~np.isnan(x))
+    singleton_index = int(np.flatnonzero((obs_rows == 2) & (obs_cols == 2))[0])
+
+    folds = ms._make_element_folds(x, 2, np.random.default_rng(8))
+
+    probes = np.concatenate([probe for probe, _train in folds])
+    np.testing.assert_array_equal(np.sort(probes), np.arange(4))
+    for probe, training in folds:
+        assert singleton_index not in probe
+        assert singleton_index in training
+        masked = x.copy()
+        masked[obs_rows[probe], obs_cols[probe]] = np.nan
+        assert np.all(np.sum(~np.isnan(masked), axis=1) > 0)
+        assert np.all(np.sum(~np.isnan(masked), axis=0) > 0)
 
 
 def test_element_folds_preserve_training_row_and_column_coverage() -> None:

@@ -609,23 +609,19 @@ def _make_element_folds(
     observed = ~np.isnan(x)
     obs_rows, obs_cols = np.nonzero(observed)
     n_obs = len(obs_rows)
-    if n_obs < n_splits:
-        msg = f"n_splits={n_splits} exceeds the {n_obs} observed entries"
-        raise ValueError(msg)
-
     row_counts = np.bincount(obs_rows, minlength=x.shape[0])
     col_counts = np.bincount(obs_cols, minlength=x.shape[1])
-    if np.any((row_counts > 0) & (row_counts < 2)) or np.any(
-        (col_counts > 0) & (col_counts < 2)
-    ):
+    eligible = np.flatnonzero((row_counts[obs_rows] > 1) & (col_counts[obs_cols] > 1))
+    if len(eligible) < n_splits:
         msg = (
-            "entry-wise CV requires at least two observed entries in every "
-            "non-empty row and column so each training fold retains coverage"
+            f"n_splits={n_splits} exceeds the {len(eligible)} "
+            "validation-eligible observed entries; entries that are the sole "
+            "support for a row or column must remain in every training fold"
         )
         raise ValueError(msg)
 
     for _ in range(256):
-        perm = rng.permutation(n_obs)
+        perm = rng.permutation(eligible)
         probe_folds = [
             np.asarray(part, dtype=int) for part in np.array_split(perm, n_splits)
         ]
@@ -640,7 +636,14 @@ def _make_element_folds(
             for probe_sel in probe_folds
         ):
             return [
-                (probe_sel, np.setdiff1d(perm, probe_sel, assume_unique=True))
+                (
+                    probe_sel,
+                    np.setdiff1d(
+                        np.arange(n_obs),
+                        probe_sel,
+                        assume_unique=True,
+                    ),
+                )
                 for probe_sel in probe_folds
             ]
 
