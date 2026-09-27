@@ -5,8 +5,9 @@ a sequential sweep and K-fold cross-validation.
 
 ## `select_n_components` — sequential sweep
 
-Fits VB-PCA for each candidate $k$ and selects the best according to a
-chosen metric.
+Fits VB-PCA for each positive candidate $k$ and selects the best according to a
+chosen metric. An explicitly requested rank zero is evaluated as a closed-form
+mean-only model.
 
 ```python
 from vbpca_py import select_n_components, SelectionConfig
@@ -30,6 +31,15 @@ metric is unavailable instead of silently substituting another metric. For a
 cost sweep, VBPCApy records cost without enabling a cost-based convergence
 stop, so choosing the objective does not change when candidate fits terminate.
 
+### Rank zero
+
+Include `0` in `components` to compare against a mean-only model, for example
+`components=range(0, 10)`. The mean is estimated separately for each feature
+from the training entries. Rank zero can be selected with held-out probe RMS or
+training RMS. It has no variational free energy, so a candidate set containing
+zero cannot use `metric="cost"`. Positive ranks remain the default when
+`components` is omitted. Rank-zero selection currently supports dense input.
+
 ### `SelectionConfig` fields
 
 | Field | Default | Description |
@@ -48,7 +58,7 @@ stop, so choosing the objective does not change when candidate fits terminate.
 1. `best_k` — the selected number of components.
 2. `best_metrics` — endpoint metrics dict for the winning $k$.
 3. `trace` — list of per-$k$ metric dicts.
-4. `best_model` — the fitted `VBPCA` instance (if `return_best_model=True`, else `None`).
+4. `best_model` — the fitted `VBPCA` instance when requested and a positive rank wins; otherwise `None`.
 
 ## `cross_validate_components` — K-fold CV
 
@@ -66,7 +76,7 @@ from vbpca_py import cross_validate_components, CVConfig
 
 cfg = CVConfig(n_splits=5, metric="prms", one_se_rule=True)
 best_k, results = cross_validate_components(
-    x, mask=mask, components=range(1, 10), config=cfg, maxiters=200
+    x, mask=mask, components=range(0, 10), config=cfg, maxiters=200
 )
 ```
 
@@ -83,8 +93,9 @@ best_k, results = cross_validate_components(
 
 When `one_se_rule=True`, the selected $k$ is the smallest value whose mean
 CV metric is within one standard error of the overall best. This favours
-simpler models — fewer components — when the improvement from additional
-components is not statistically significant.
+simpler models with fewer components when cross-validation uncertainty does
+not clearly support the additional complexity. The rule is a selection heuristic,
+not a hypothesis test.
 
 ## Choosing between the two
 
@@ -92,4 +103,4 @@ components is not statistically significant.
 |---|---|---|
 | **Speed** | Faster — one fit per $k$ | Slower — $k \times \text{n\_splits}$ fits |
 | **Reliability** | Good with probe set | More robust variance estimate |
-| **Best for** | Quick exploration, large data | Publication-quality model selection |
+| **Best for** | Quick exploration, large data | Repeated-fold comparisons and uncertainty summaries |

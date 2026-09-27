@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- Component sweeps and entry-wise cross-validation accept an explicit rank-zero
+  candidate, evaluated as a dense mean-only model with held-out predictive RMS.
+  Existing defaults remain positive-rank only; variational-cost selection rejects
+  rank zero because the objectives are not comparable (#199).
 - Convergence-validation manifests now include the exact policy resolved by
   `recommend_config()` and leave-one-criterion-out ablations, while shards
   retain compact versioned learning curves for offline policy replay. Legacy
