@@ -6,7 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.4.1] - 2026-09-27
+
 ### Added
+- The package exports `RANK_ZERO_SELECTION_SUPPORTED` so downstream tools can
+  require the explicit mean-only model-selection contract without inspecting
+  private APIs (#201).
 - Component sweeps and entry-wise cross-validation accept an explicit rank-zero
   candidate, evaluated as a dense mean-only model with held-out predictive RMS.
   Existing defaults remain positive-rank only; variational-cost selection rejects

@@ -25,6 +25,7 @@ if TYPE_CHECKING:  # pragma: no cover
     from .estimators import VBPCA
 
 __all__ = [
+    "RANK_ZERO_SELECTION_SUPPORTED",
     "CVConfig",
     "SelectionConfig",
     "cross_validate_components",
@@ -32,6 +33,8 @@ __all__ = [
 ]
 
 logger = logging.getLogger(__name__)
+
+RANK_ZERO_SELECTION_SUPPORTED = True
 
 _Metric = Literal["rms", "prms", "cost"]
 _CVMetric = Literal["prms"]

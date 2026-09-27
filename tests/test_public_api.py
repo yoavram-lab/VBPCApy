@@ -14,6 +14,7 @@ def test_public_symbols_are_exported() -> None:
         "MissingAwareMinMaxScaler",
         "MissingAwareOneHotEncoder",
         "MissingAwareStandardScaler",
+        "RANK_ZERO_SELECTION_SUPPORTED",
         "SelectionConfig",
         "select_n_components",
     }
@@ -23,6 +24,7 @@ def test_public_symbols_are_exported() -> None:
 
     for name in expected:
         assert hasattr(vbpca_py, name)
+    assert vbpca_py.RANK_ZERO_SELECTION_SUPPORTED is True
 
 
 def test_package_version_matches_distribution_metadata() -> None:
