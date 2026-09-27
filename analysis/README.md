@@ -69,6 +69,16 @@ tall-extreme cap hits is preregistered in
 It uses the current release as its only control and must be completed before
 the VBPCA version used by the pp-eigentest paper is frozen.
 
+The subsequent detector screen and its held-out safety confirmation are
+documented in
+[`trade_study/CONVERGENCE_DETECTOR.md`](trade_study/CONVERGENCE_DETECTOR.md)
+and
+[`trade_study/CONVERGENCE_POLICY_SAFETY.md`](trade_study/CONVERGENCE_POLICY_SAFETY.md).
+The screen evaluated 208 stopping-rule combinations. The held-out study
+compares only the released policy with the prespecified no-RMS candidate and
+gates any recommendation on prediction, generator capacity, posterior drift,
+and downstream pp-eigentest PA/Seq decisions.
+
 The legacy stability workflow writes to the git-ignored
 `results/stability/` directory by default. Its convenience recipes are
 `just stability-analysis`, `just stability-coverage`, `just stability-plot`,
