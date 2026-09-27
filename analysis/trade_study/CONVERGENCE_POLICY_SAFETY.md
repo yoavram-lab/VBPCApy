@@ -1,8 +1,8 @@
 # Held-out convergence-policy safety confirmation
 
 **Issue:** #195
-**Status:** implementation and local smoke validation complete; confirmatory
-Rockfish run not yet launched
+**Status:** confirmatory Rockfish run complete; the no-RMS candidate failed the
+frozen safety gate and the released production policy is retained
 
 The convergence-detector screen found that the released production policy
 often fired before its fitted posterior reached the prespecified stable-tail
@@ -77,6 +77,57 @@ Passing the gate would show that disabling RMS plateau is a safe conservative
 configuration. It would not by itself make that slower policy the balanced
 default. Failure retains the released default and identifies which endpoint
 blocked promotion.
+
+## Confirmatory results
+
+Rockfish array job `31303092` completed all 375 paired shards with exit code
+zero. Every record reported `status: ok`. The run pinned VBPCApy revision
+`50c8cd27b6930fb3b3f2a96241578beedfe68895`, pp-eigentest revision
+`4dad92307240284a1925d098a129db95444c073b`, and manifest SHA-256
+`a8250e2b14301c2976d764e7af862ff0f1066a55f658b06597eabe2dd9888b28`.
+The reduced `summary.json` has SHA-256
+`a1ab5eb096762bacde24a273395bebcf4d650f8770ad4ea0820d69f7e1a673b5`.
+
+| Outcome | Production | Without RMS plateau |
+|---|---:|---:|
+| Held-out RMSE | 0.8258 | 0.8273 |
+| Predictive interval score | 4.1710 | 4.1849 |
+| 95% predictive coverage | 0.9501 | 0.9503 |
+| Selected capacity | 2.995 | 3.043 |
+| PA exact-rank recovery | 0.781 | 0.771 |
+| PA rank MAE | 0.373 | 0.384 |
+| Seq exact-rank recovery | 0.781 | 0.773 |
+| Seq rank MAE | 0.384 | 0.397 |
+| Candidate-fit iteration-budget rate | 0.023 | 0.701 |
+| Selected-fit convergence rate | 0.984 | 0.288 |
+| Mean selection wall time, seconds | 8.77 | 16.71 |
+
+The no-RMS candidate failed three frozen checks. The 95% upper bound for its
+relative interval-score increase was 0.0137, above the 0.01 margin. The lower
+bounds for its exact-recovery differences were -0.0293 for PA and -0.0267 for
+Seq, below the -0.02 margin. The remaining seven checks passed, including
+held-out RMSE, predictive coverage, selected capacity, rank MAE, and null
+positive-selection rates.
+
+Rank decisions were usually unchanged: PA agreement was 0.979 and Seq
+agreement was 0.976. The candidate rescued two exact decisions for each
+selector, but spoiled six PA decisions and five Seq decisions. Most spoils
+occurred for wide, strong-signal matrices, where continued fitting tended to
+add one selected component. Averaged over wide matrices, removing RMS plateau
+increased held-out RMSE by 0.78%, increased interval score by 1.55%, and
+reduced PA and Seq exact recovery by 4 percentage points. Strong Gaussian
+signals accounted for the largest degradation; square and tall matrices had
+negligible predictive changes.
+
+The detector screen correctly showed that RMS plateau can stop before the
+posterior reaches a stable tail under its diagnostic definition. The held-out
+study shows that disabling it is not a safe general correction: it roughly
+doubled fitting time, exhausted the iteration budget in most candidate fits,
+and did not preserve the frozen uncertainty and downstream-rank margins. The
+released production policy therefore remains the recommended default. The
+no-RMS configuration may still be useful as a sensitivity analysis, but it
+should not replace the default or be described as a generally safer stopping
+rule.
 
 ## Local validation
 
