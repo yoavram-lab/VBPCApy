@@ -65,28 +65,54 @@ a premature-stop rate no greater than 5% stopped prematurely in 4.7% of fits
 and stopped late or not at all in 67.7%. Its premature-stop rate rose to 13.9%
 under block missingness.
 
-These results do not support changing the production stopping defaults. They
-also show that aggregate error rates can conceal unsafe behavior under
-structured missingness. The follow-up screen therefore includes the production
-policy and its criterion ablations explicitly and preserves the curves needed
-for denser, regime-specific policy replay. Issue #193 separately tracks the
-nominally enabled `slowing_down` criterion, which currently receives no event
-iteration from the training loop and therefore cannot fire.
+The version 2 follow-up repeated all 375 fits and reproduced the 95.7% stable-
+endpoint rate. The exact production policy stopped prematurely in 50.4% of
+the 359 evaluable fits. Its criterion ablations identify RMS plateau as the
+main early-stop lever:
 
-Stage 2 will proceed only if the production-policy screen identifies a
-nondominated safe policy worth confirming on new seeds.
+| Policy | Evaluable fits | Premature | Late or no stop | Median excess iterations |
+|---|---:|---:|---:|---:|
+| Production | 359 | 0.504 | 0.136 | 0 |
+| Without RMS plateau | 359 | 0.039 | 0.833 | 494 |
+| Without angle | 359 | 0.474 | 0.279 | 6 |
+| Without cost | 119 | 0.160 | 0.387 | 77.5 |
+| Without `slowing_down` | 359 | 0.504 | 0.136 | 0 |
+
+Production-policy premature stopping was 69.7% for square matrices, 65.3% for
+tall matrices, and 16.0% for wide matrices. Removing RMS plateau eliminated
+premature stops in the square and tall groups, but every evaluable fit in those
+groups then stopped late or reached the limit. The unchanged
+`production_without_slowing_down` row confirms that the nominally enabled
+criterion has no event input from the current training loop; issue #193 tracks
+that integration defect.
+
+Neither screen identifies a stopping policy that balances posterior-fidelity
+safety and efficiency. Version 2 also rejects the current production rule as a
+validated posterior-fidelity detector in this design. No replacement should be
+promoted from the training screen alone. The results show that aggregate error
+rates can conceal unsafe behavior by matrix shape or missingness mechanism.
+Version 2 shards preserve the curves needed for denser, regime-specific policy
+replay without another forced-long fit. The run used VBPCApy revision
+`869eef8`, manifest SHA-256 prefix `7a688859ad59`, and summary SHA-256 prefix
+`a4c8ddcb8057`.
+
+Stage 2 will proceed only if subsequent replay identifies a nondominated safe
+policy worth confirming on new seeds.
 Posterior drift, predictive scores, coverage, generator-capacity selection, and
 pp-eigentest PA/Seq decisions are safety gates. Iteration count and wall time
 are descriptive and can choose among policies only after all safety gates pass.
 
 ## Immediate next steps
 
-1. Merge the versioned production-policy and learning-curve schema after CI.
-2. Pin the merge revision and a new manifest checksum on Rockfish.
-3. Rerun the 375-shard screen to capture production policies and replayable
-   curves, with representative preflight shards first.
-4. Repair and test the unreachable `slowing_down` integration separately.
-5. Define a held-out Stage 2 seed set only if a policy passes every safety gate.
+1. Do not promote any screened rule as a replacement default.
+2. Quantify downstream rank and predictive effects of disabling RMS plateau,
+   accepting that the safer candidate may require substantially more work.
+3. Add a policy-only command that replays new registered policies from the
+   retained version 2 curves.
+4. Repair the unreachable `slowing_down` integration separately and keep it
+   disabled until it passes the same detector safety gates.
+5. Define a held-out Stage 2 seed set only if a replayed policy passes every
+   safety gate.
 
 ## Commands
 
