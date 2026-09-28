@@ -32,8 +32,8 @@ keywords:
   - variational inference
   - machine learning
 license: MIT
-version: "0.4.2"
-date-released: "2026-09-27"
+version: "0.4.3"
+date-released: "2026-09-28"
 identifiers:
   - type: doi
     value: "10.5281/zenodo.19389250"

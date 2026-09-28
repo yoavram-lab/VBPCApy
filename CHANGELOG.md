@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.3] - 2026-09-28
+
 ### Added
 - Dense masked score and loading updates can use exact
   complete-minus-missing sufficient statistics. A conservative density- and
@@ -15,17 +17,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `bias_update_order` selects the MATLAB-compatible mean-first iteration or a
   post-factor mean update that evaluates mean, RMS, and noise from one current
   factor state. Modern mode selects the post-factor order automatically (#222).
+- Fitted estimators expose the resolved runtime policy through
+  `runtime_policy_report_`, including worker limits and dense-kernel choices
+  used by the fit (#211).
+- `check_data()` accepts an explicit observation mask, so preprocessing
+  diagnostics use the same missing-data contract as model fitting (#213).
+- New genomics-dosage and sparse-CSR tutorials document missing-value semantics,
+  filtering, scaling, and memory-aware workflows (#181, #213).
 
 ### Changed
 - `recommend_config()` now selects post-factor mean/RMS ordering after the
   registered modern-defaults study found equal or lower rank error with
   effectively unchanged prediction and calibration. The estimator's
   strict-legacy default remains unchanged (#214, #226, #237).
+- Explained-variance diagnostics use fitted low-rank factors instead of forming
+  a dense reconstruction, reducing peak memory and work while preserving the
+  reported quantity (#212).
+- Runtime tuning respects scheduler CPU allocations and reuses one resolved
+  policy across compatible component candidates, avoiding oversubscription and
+  repeated calibration during rank sweeps (#211).
+- Dense masked updates reuse compact masks and workspaces, write covariance
+  results directly into NumPy buffers, and select exact
+  complete-minus-missing sufficient statistics when density and rank make that
+  formulation favorable (#208, #209, #210).
 
 ### Fixed
 - Bias and centered-data state now persist across iterations, absent means are
   initialized from observed row means, and explicit dense masks exclude masked
   values from that initialization (#222).
+- Native extension worker limits now follow the resolved scheduler allocation
+  consistently across dense, sparse, rotation, noise, and subtraction kernels
+  (#211).
 
 ## [0.4.2] - 2026-09-27
 
