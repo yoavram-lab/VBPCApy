@@ -50,6 +50,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (#211).
 - Registered study manifests retain LF line endings on every platform, keeping
   their byte-level provenance hashes stable in Windows wheel builds (#241).
+- CPU-allocation tests isolate every host CPU-count source, including
+  `os.process_cpu_count()`, so wheel validation is portable across runners
+  (#243).
 
 ## [0.4.2] - 2026-09-27
 
