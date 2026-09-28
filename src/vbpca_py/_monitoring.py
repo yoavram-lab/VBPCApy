@@ -266,10 +266,13 @@ def _init_mu_muv_v(
     Raises:
         ValueError: If ``Muv`` has an incompatible shape.
     """
-    mu = np.asarray(
-        init_dict.get("Mu", np.zeros(n_features)),
-        dtype=float,
-    ).reshape(n_features)
+    mu_raw = init_dict.get("Mu")
+    if mu_raw is None or np.size(mu_raw) == 0:
+        # Preserve the MATLAB empty sentinel. The solver uses it to initialize
+        # Mu from observed row means before the first centering operation.
+        mu = np.array([], dtype=float)
+    else:
+        mu = np.asarray(mu_raw, dtype=float).reshape(n_features)
 
     muv = np.asarray(
         init_dict.get("Muv", np.ones((n_features, 1))),

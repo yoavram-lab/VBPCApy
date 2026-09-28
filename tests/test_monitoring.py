@@ -156,8 +156,10 @@ def test_init_mu_muv_v_shape_and_empty_branches() -> None:
     assert muv.shape == (3, 1)
     assert v == pytest.approx(2.0)
 
-    _mu2, muv2, _v2 = mon._init_mu_muv_v({"Muv": np.array([])}, 2)
+    mu2, muv2, _v2 = mon._init_mu_muv_v({"Muv": np.array([])}, 2)
+    assert mu2.size == 0
     assert np.array_equal(muv2, np.zeros((2, 1)))
+    assert mon._init_mu_muv_v({"Mu": []}, 2)[0].size == 0
 
     with pytest.raises(ValueError, match=re.escape(ERR_MUV_SHAPE)):
         mon._init_mu_muv_v({"Muv": np.zeros((2, 2))}, 2)

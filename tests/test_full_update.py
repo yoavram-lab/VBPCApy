@@ -715,6 +715,9 @@ def test_initialize_parameters_basic_centering() -> None:
     assert x_centered.shape == x_data.shape
     assert np.all(np.isfinite(x_centered))
     assert x_probe_centered is None
+    expected_mu = np.mean(x_data, axis=1, keepdims=True)
+    assert_allclose(mu, expected_mu)
+    assert_allclose(np.mean(x_centered, axis=1), 0.0, atol=1e-14)
 
 
 def test_initialize_parameters_respects_provided_init_without_rng() -> None:
