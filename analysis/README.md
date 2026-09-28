@@ -79,6 +79,12 @@ compares only the released policy with the prespecified no-RMS candidate and
 gates any recommendation on prediction, generator capacity, posterior drift,
 and downstream pp-eigentest PA/Seq decisions.
 
+The post-backend settings screen and independent confirmation gates are
+preregistered in
+[`trade_study/MODERN_DEFAULTS.md`](trade_study/MODERN_DEFAULTS.md). The design
+includes explicit MAR data, heavy-tailed misspecification, rank-zero regimes,
+and a paired legacy/post-factor bias-order comparison.
+
 ## Genomics storage benchmark
 
 `benchmark_genomics_storage.py` compares the supported dense masked genotype
