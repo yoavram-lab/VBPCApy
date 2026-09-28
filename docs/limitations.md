@@ -8,8 +8,17 @@
 
 - **Data convention.** `AutoEncoder` expects samples × features; `VBPCA` expects features × samples. Transpose as needed.
 
-- **RMS oscillation with uncentered data.** When `bias=True` (the default) and the input data has non-zero feature means, the RMS convergence trace can exhibit a stable period-2 oscillation caused by a one-iteration lag between the mean update and the reconstruction error.
+- **Legacy RMS ordering with uncentered data.** The original MATLAB update
+  order estimates the mean before updating the latent factors. With
+  `bias=True` and non-zero feature means, this one-step lag can produce a
+  period-2 RMS trace. It remains available as
+  `bias_update_order="legacy"` and is selected automatically by
+  `compat_mode="strict_legacy"`.
 
-    **Workaround:** center your data before fitting — use `MissingAwareStandardScaler` (or `AutoEncoder`) as a preprocessing step. Pre-centered data eliminates the oscillation entirely, even with `bias=True`.
+    Use `bias_update_order="post_factor"` to estimate the mean and evaluate
+    RMS from the same factor state. `compat_mode="modern"` selects that order
+    automatically. Pre-centering with `MissingAwareStandardScaler` remains a
+    useful conditioning step, but it is no longer required solely to align
+    the mean and RMS diagnostics.
 
 - **Fits are non-reproducible unless seeded.** `VBPCA(random_state=None)` (the default) draws fresh entropy for parameter initialization and any auto-generated xprobe mask on every call to `fit()`, so repeated fits on the same data can converge to different results. Pass an `int` or `np.random.Generator` via `random_state` for reproducible runs. Prior to #109, the default initialization was silently seeded with a fixed value; this is no longer the case.

@@ -76,8 +76,11 @@ probe iteration. Inspect `best_probe_iteration_`, `best_probe_rms_`, and
 1. **Check the data scale.** Very large or very small values can cause numerical
    issues. Use `MissingAwareStandardScaler` or `AutoEncoder` to normalise.
 
-2. **Center the data.** Uncentered data with `bias=True` can cause RMS
-   oscillation. Pre-center with `MissingAwareStandardScaler`.
+2. **Check the bias update order.** The MATLAB-compatible order can produce an
+   alternating RMS trace on uncentered data. Use
+   `bias_update_order="post_factor"`, or `compat_mode="modern"`, to update the
+   mean after the current factor updates. Pre-centering with
+   `MissingAwareStandardScaler` can still improve conditioning.
 
 3. **Increase `maxiters`.** The default (1000) may not be enough for large or
    noisy data.
@@ -86,7 +89,8 @@ probe iteration. Inspect `best_probe_iteration_`, `best_probe_rms_`, and
    near-singular problems. Try `minangle=1e-10` or disable it.
 
 5. **Inspect the learning curve.** Set `verbose=1` to watch RMS and cost per
-   iteration. Oscillation suggests a data-conditioning issue.
+   iteration. Alternation can indicate legacy bias ordering as well as poor
+   data conditioning.
 
 ## Troubleshooting: model converges too slowly
 

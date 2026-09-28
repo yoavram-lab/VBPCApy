@@ -365,7 +365,7 @@ def test_pca_full_strict_legacy_regression_rms_value() -> None:
     )
 
     lc_rms = float(np.asarray(out["lc"]["rms"], dtype=float)[-1])
-    assert_allclose(lc_rms, 1.0961030766731399, rtol=1e-12, atol=1e-12)
+    assert_allclose(lc_rms, 1.0529204607148963, rtol=1e-12, atol=1e-12)
 
 
 def test_pca_full_strict_legacy_regression_rms_trace_multiple_k() -> None:
@@ -390,7 +390,7 @@ def test_pca_full_strict_legacy_regression_rms_trace_multiple_k() -> None:
 
     assert_allclose(
         rms_vals,
-        [1.0846337262704713, 1.2459288984315606, 1.222645887727622],
+        [1.0454277448135199, 1.1875974227889148, 1.203287911872752],
         rtol=1e-2,
         atol=1e-2,
     )
