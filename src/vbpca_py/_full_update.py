@@ -163,6 +163,7 @@ class ScoreState:
     pattern_batch_size: int = 0
     sparse_num_cpu: int = 0
     dense_num_cpu: int = 0
+    dense_use_complement: bool = False
     x_csr: sp.csr_matrix | None = None
     x_csc: sp.csc_matrix | None = None
     use_python_scores: bool = False
@@ -237,6 +238,7 @@ class LoadingsUpdateState:
     verbose: int
     sparse_num_cpu: int = 0
     dense_num_cpu: int = 0
+    dense_use_complement: bool = False
     x_csr: sp.csr_matrix | None = None
     x_csc: sp.csc_matrix | None = None
     cov_writeback_mode: str = "python"
@@ -1820,6 +1822,7 @@ def _score_update_general_dense_ext(state: ScoreState) -> ScoreState:
         loading_covariances=av_arg,
         noise_var=float(state.noise_var),
         return_covariances=return_score_covariances,
+        use_complement=bool(state.dense_use_complement),
         num_cpu=int(state.dense_num_cpu),
     )
 
@@ -1884,6 +1887,7 @@ def _loadings_update_general_dense_ext(
         prior_prec=np.asarray(prior_prec, dtype=np.float64),
         noise_var=float(state.noise_var),
         return_covariances=return_loading_covariances,
+        use_complement=bool(state.dense_use_complement),
         num_cpu=int(state.dense_num_cpu),
     )
 
