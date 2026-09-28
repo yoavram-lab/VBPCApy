@@ -2054,12 +2054,19 @@ def _pack_result(
         # Predictive variance for a new observed entry adds the observation
         # noise variance to the latent-reconstruction (mean) uncertainty.
         vr_pred = vr + float(final.noise_var)
-        ev, evr = _explained_variance(
-            xrec,
-            final.a.shape[1],
-            solver=explained_var_solver,
-            gram_ratio=explained_var_gram_ratio,
-        )
+        if explained_var_solver == "auto":
+            ev, evr = _explained_variance_from_factors(
+                final.a,
+                final.s,
+                final.a.shape[1],
+            )
+        else:
+            ev, evr = _explained_variance(
+                xrec,
+                final.a.shape[1],
+                solver=explained_var_solver,
+                gram_ratio=explained_var_gram_ratio,
+            )
     else:
         xrec = None
         vr = None

@@ -16,7 +16,12 @@ import scipy.sparse as sp
 
 from ._memory import exceeds_budget, format_bytes, resolve_max_dense_bytes
 from ._missing import make_xprobe_mask
-from ._pca_full import _explained_variance, _marginal_variance, _reconstruct_data
+from ._pca_full import (
+    _explained_variance,
+    _explained_variance_from_factors,
+    _marginal_variance,
+    _reconstruct_data,
+)
 
 if TYPE_CHECKING:  # pragma: no cover
     from collections.abc import Iterable, Mapping, Sequence
@@ -264,12 +269,19 @@ def _compute_evr_for_best(
     if est.components_ is None or est.scores_ is None or est.mean_ is None:
         return None
     xrec = _reconstruct_data(est.components_, est.scores_, est.mean_)
-    ev, evr = _explained_variance(
-        xrec,
-        est.components_.shape[1],
-        solver=solver,
-        gram_ratio=gram_ratio,
-    )
+    if solver == "auto":
+        ev, evr = _explained_variance_from_factors(
+            est.components_,
+            est.scores_,
+            est.components_.shape[1],
+        )
+    else:
+        ev, evr = _explained_variance(
+            xrec,
+            est.components_.shape[1],
+            solver=solver,
+            gram_ratio=gram_ratio,
+        )
     # Retain reconstruction for downstream consumers (e.g., posterior tests).
     est.reconstruction_ = xrec
     est.explained_variance_ = ev
