@@ -310,20 +310,21 @@ py::dict score_update_dense_masked_nopattern(
     const int actual_threads = vbpca_threads::resolve_thread_count(num_cpu, n_samples);
 
     auto worker = [&](int start, int end) {
+        Eigen::VectorXd component(n_components);
+        Eigen::VectorXd rhs(n_components);
         for (int j = start; j < end; ++j) {
             Eigen::MatrixXd psi = noise_var * identity;
-            Eigen::VectorXd rhs = Eigen::VectorXd::Zero(n_components);
+            rhs.setZero();
 
             for (int i = 0; i < n_features; ++i) {
                 if (!mask.observed(i, j)) {
                     continue;
                 }
-                Eigen::VectorXd a(n_components);
                 for (int r = 0; r < n_components; ++r) {
-                    a(r) = loadings(i, r);
+                    component(r) = loadings(i, r);
                 }
-                psi.noalias() += a * a.transpose();
-                rhs.noalias() += a * x_data(i, j);
+                psi.noalias() += component * component.transpose();
+                rhs.noalias() += component * x_data(i, j);
 
                 if (av_ptr != nullptr) {
                     const std::size_t base =
@@ -465,6 +466,8 @@ py::dict loadings_update_dense_masked_nopattern(
     const int actual_threads = vbpca_threads::resolve_thread_count(num_cpu, n_features);
 
     auto worker = [&](int start, int end) {
+        Eigen::VectorXd component(n_components);
+        Eigen::VectorXd rhs(n_components);
         for (int i = start; i < end; ++i) {
             Eigen::MatrixXd phi(n_components, n_components);
             for (int r = 0; r < n_components; ++r) {
@@ -472,18 +475,17 @@ py::dict loadings_update_dense_masked_nopattern(
                     phi(r, c) = prior_prec(r, c);
                 }
             }
-            Eigen::VectorXd rhs = Eigen::VectorXd::Zero(n_components);
+            rhs.setZero();
 
             for (int j = 0; j < n_samples; ++j) {
                 if (!mask.observed(i, j)) {
                     continue;
                 }
-                Eigen::VectorXd s(n_components);
                 for (int r = 0; r < n_components; ++r) {
-                    s(r) = scores(r, j);
+                    component(r) = scores(r, j);
                 }
-                phi.noalias() += s * s.transpose();
-                rhs.noalias() += s * x_data(i, j);
+                phi.noalias() += component * component.transpose();
+                rhs.noalias() += component * x_data(i, j);
 
                 if (sv_ptr != nullptr) {
                     const std::size_t base =
