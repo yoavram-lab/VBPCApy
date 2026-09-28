@@ -95,15 +95,13 @@ def resolve_candidate(
             CRITERION_POLICIES[str(candidate["criterion_policy"])]
         )
 
-    options.update(
-        {
-            "random_state": init_seed,
-            "num_cpu": num_cpu,
-            "runtime_tuning": "off",
-            "runtime_report": True,
-            "verbose": 0,
-        }
-    )
+    options.update({
+        "random_state": init_seed,
+        "num_cpu": num_cpu,
+        "runtime_tuning": "off",
+        "runtime_report": True,
+        "verbose": 0,
+    })
     return options
 
 
@@ -209,31 +207,29 @@ def run_trial(
         int(item.get("n_iter", 0)) for item in trace if int(item["k"]) > 0
     ]
     scores = predictive_scores(data, reconstruction, predictive_variance)
-    scores.update(
-        {
-            "rep": rep,
-            "selected_rank": int(selected_rank),
-            "true_rank": int(regime["true_rank"]),
-            "rank_mae": abs(int(selected_rank) - int(regime["true_rank"])),
-            "exact_rank": int(selected_rank) == int(regime["true_rank"]),
-            "null_selected": int(regime["true_rank"]) == 0 and int(selected_rank) > 0,
-            "subspace_distance": projection_distance(
-                data.true_loadings,
-                loadings,
-            ),
-            "selection_total_iters": int(sum(trace_iterations)),
-            "candidate_budget_hit_rate": float(
-                np.mean(np.asarray(positive_iterations) >= maxiters)
-                if positive_iterations
-                else 0.0
-            ),
-            "selection_prms": float(best_metrics["prms"]),
-            "diagnostic_refit_iters": diagnostics["n_iter"],
-            "convergence_reason": diagnostics["convergence_reason"],
-            "selected_budget_hit": diagnostics["selected_budget_hit"],
-            "rms_increase_fraction": diagnostics["rms_increase_fraction"],
-            "rms_two_cycle_amplitude": diagnostics["rms_two_cycle_amplitude"],
-            "wall_seconds": wall_seconds,
-        }
-    )
+    scores.update({
+        "rep": rep,
+        "selected_rank": int(selected_rank),
+        "true_rank": int(regime["true_rank"]),
+        "rank_mae": abs(int(selected_rank) - int(regime["true_rank"])),
+        "exact_rank": int(selected_rank) == int(regime["true_rank"]),
+        "null_selected": int(regime["true_rank"]) == 0 and int(selected_rank) > 0,
+        "subspace_distance": projection_distance(
+            data.true_loadings,
+            loadings,
+        ),
+        "selection_total_iters": int(sum(trace_iterations)),
+        "candidate_budget_hit_rate": float(
+            np.mean(np.asarray(positive_iterations) >= maxiters)
+            if positive_iterations
+            else 0.0
+        ),
+        "selection_prms": float(best_metrics["prms"]),
+        "diagnostic_refit_iters": diagnostics["n_iter"],
+        "convergence_reason": diagnostics["convergence_reason"],
+        "selected_budget_hit": diagnostics["selected_budget_hit"],
+        "rms_increase_fraction": diagnostics["rms_increase_fraction"],
+        "rms_two_cycle_amplitude": diagnostics["rms_two_cycle_amplitude"],
+        "wall_seconds": wall_seconds,
+    })
     return scores
