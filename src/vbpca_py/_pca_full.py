@@ -1947,6 +1947,50 @@ def _explained_variance(
     return eigvals_top, ratios
 
 
+def _explained_variance_from_factors(  # noqa: PLR0914
+    loadings: np.ndarray,
+    scores: np.ndarray,
+    n_components: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Compute reconstruction variance from a small exact factorization.
+
+    Centering ``loadings @ scores + mean`` across samples removes the mean
+    term. Thin QR factorizations leave orthonormal outer factors, so the
+    nonzero singular values are those of ``R_loadings @ R_scores.T``.
+
+    Returns:
+        Raw eigenvalues and normalized explained-variance ratios.
+
+    Raises:
+        ValueError: If the factor dimensions are incompatible.
+    """
+    a = np.asarray(loadings, dtype=float)
+    s = np.asarray(scores, dtype=float)
+    if a.ndim != 2 or s.ndim != 2 or a.shape[1] != s.shape[0]:
+        msg = "loadings and scores must be compatible 2-D factor matrices"
+        raise ValueError(msg)
+    if n_components <= 0 or a.size == 0 or s.size == 0:
+        empty = np.zeros((0,), dtype=float)
+        return empty, empty
+
+    n_samples = s.shape[1]
+    output_size = min(n_components, a.shape[0], n_samples)
+    if n_samples <= 1:
+        zeros = np.zeros((output_size,), dtype=float)
+        return zeros, zeros.copy()
+
+    centered_scores = s - np.mean(s, axis=1, keepdims=True)
+    _, r_loadings = np.linalg.qr(a, mode="reduced")
+    _, r_scores = np.linalg.qr(centered_scores.T, mode="reduced")
+    core = r_loadings @ r_scores.T
+    singular_values = np.linalg.svd(core, compute_uv=False)
+    eigvals = np.maximum((singular_values**2) / float(n_samples - 1), 0.0)
+    eigvals_top = eigvals[:output_size]
+    total = float(np.sum(eigvals))
+    ratios = np.zeros_like(eigvals_top) if total <= 0.0 else eigvals_top / total
+    return eigvals_top, ratios
+
+
 def _explained_variance_tall(
     *,
     x_centered: np.ndarray,
@@ -2010,12 +2054,19 @@ def _pack_result(
         # Predictive variance for a new observed entry adds the observation
         # noise variance to the latent-reconstruction (mean) uncertainty.
         vr_pred = vr + float(final.noise_var)
-        ev, evr = _explained_variance(
-            xrec,
-            final.a.shape[1],
-            solver=explained_var_solver,
-            gram_ratio=explained_var_gram_ratio,
-        )
+        if explained_var_solver == "auto":
+            ev, evr = _explained_variance_from_factors(
+                final.a,
+                final.s,
+                final.a.shape[1],
+            )
+        else:
+            ev, evr = _explained_variance(
+                xrec,
+                final.a.shape[1],
+                solver=explained_var_solver,
+                gram_ratio=explained_var_gram_ratio,
+            )
     else:
         xrec = None
         vr = None
