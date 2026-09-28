@@ -109,6 +109,11 @@ The follow-up allocation and direct covariance-writeback comparison is in
 [`DENSE_KERNEL_WORKSPACE_REPORT.md`](DENSE_KERNEL_WORKSPACE_REPORT.md). It
 reports kernel-phase and end-to-end timing separately across three ranks.
 
+The exact observed-cell versus complete-minus-missing crossover and conservative
+automatic dispatch policy are documented in
+[`DENSE_SUFFICIENT_STATISTICS_REPORT.md`](DENSE_SUFFICIENT_STATISTICS_REPORT.md).
+The accompanying benchmark checks numerical agreement before recording timings.
+
 The legacy stability workflow writes to the git-ignored
 `results/stability/` directory by default. Its convenience recipes are
 `just stability-analysis`, `just stability-coverage`, `just stability-plot`,

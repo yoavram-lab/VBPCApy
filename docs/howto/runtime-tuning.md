@@ -94,3 +94,22 @@ after each update:
 
 When `runtime_tuning` is `"safe"` or `"aggressive"`, the writeback mode is
 benchmarked and selected automatically.
+
+## Dense sufficient statistics
+
+Masked dense score and loading updates support two exact accumulation forms:
+
+- `"observed"` iterates over observed cells.
+- `"complement"` computes complete-data sufficient statistics and subtracts
+  missing-cell contributions.
+
+Set `dense_sufficient_statistics="auto"` (the default) to use the
+benchmarked density and rank policy. The policy is conservative and keeps the
+observed-cell implementation for the genomics study workload:
+
+```python
+model = VBPCA(n_components=10, dense_sufficient_statistics="auto")
+```
+
+The runtime report records the requested mode, resolved score/loading modes,
+observed fraction, and thresholds. Explicit modes are useful for benchmarking.
