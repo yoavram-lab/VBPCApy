@@ -736,7 +736,7 @@ def test_resolve_thread_count_uses_env_global_then_default() -> None:
 
 
 def test_safe_autotune_rms_threads_thresholds_and_caps(monkeypatch) -> None:
-    monkeypatch.setattr("vbpca_py._runtime_policy.os.cpu_count", lambda: 4)
+    monkeypatch.setattr("vbpca_py._runtime_policy._available_cpu_count", lambda: 4)
 
     sparse_60k = RuntimeWorkloadProfile(
         n_features=200,
