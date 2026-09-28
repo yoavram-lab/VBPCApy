@@ -54,6 +54,11 @@ def test_apply_runtime_policy_defaults_normalizes_fields() -> None:
 def test_available_cpu_count_respects_affinity_and_scheduler(monkeypatch) -> None:
     monkeypatch.setattr("vbpca_py._runtime_policy.os.cpu_count", lambda: 32)
     monkeypatch.setattr(
+        "vbpca_py._runtime_policy.os.process_cpu_count",
+        lambda: 32,
+        raising=False,
+    )
+    monkeypatch.setattr(
         "vbpca_py._runtime_policy.os.sched_getaffinity",
         lambda _pid: set(range(8)),
         raising=False,
@@ -65,6 +70,11 @@ def test_available_cpu_count_respects_affinity_and_scheduler(monkeypatch) -> Non
 
 def test_available_cpu_count_ignores_invalid_limits(monkeypatch) -> None:
     monkeypatch.setattr("vbpca_py._runtime_policy.os.cpu_count", lambda: 12)
+    monkeypatch.setattr(
+        "vbpca_py._runtime_policy.os.process_cpu_count",
+        lambda: 12,
+        raising=False,
+    )
     monkeypatch.setattr(
         "vbpca_py._runtime_policy.os.sched_getaffinity",
         lambda _pid: set(range(6)),
