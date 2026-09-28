@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-import vbpca_py._pca_full as pca_module
+import vbpca_py._pca_full as pca_module  # noqa: PLC2701
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
