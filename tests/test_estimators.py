@@ -44,6 +44,20 @@ def test_deprecated_tol_warns_at_fit() -> None:
         model.fit(x)
 
 
+def test_runtime_report_is_exposed_after_fit() -> None:
+    x = np.random.default_rng(141).standard_normal((5, 7))
+    model = VBPCA(
+        n_components=2,
+        maxiters=2,
+        runtime_report=True,
+        runtime_tuning="off",
+        verbose=0,
+    ).fit(x)
+
+    assert model.runtime_report_ is not None
+    assert model.runtime_report_["runtime_tuning"] == "off"
+
+
 def test_explicit_probe_remains_active_with_explicit_mask() -> None:
     rng = np.random.default_rng(145)
     x = rng.standard_normal((6, 12))
