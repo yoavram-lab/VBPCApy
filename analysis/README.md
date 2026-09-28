@@ -79,6 +79,24 @@ compares only the released policy with the prespecified no-RMS candidate and
 gates any recommendation on prediction, generator capacity, posterior drift,
 and downstream pp-eigentest PA/Seq decisions.
 
+## Genomics storage benchmark
+
+`benchmark_genomics_storage.py` compares the supported dense masked genotype
+representation with CSR that explicitly stores observed zeros. The default is
+a local smoke workload. Run the study-shaped comparison with:
+
+```bash
+just bench-genomics-storage --features 5846 --samples 2504 \
+  --iterations 3 --repeats 3 --output results/genomics-storage.json
+```
+
+Generated JSON belongs under the git-ignored `results/` directory. Run dense
+and sparse representations separately under `/usr/bin/time -v` when recording
+process-level peak memory.
+
+The frozen local comparison and representation decision are in
+[`GENOMICS_STORAGE_REPORT.md`](GENOMICS_STORAGE_REPORT.md).
+
 The legacy stability workflow writes to the git-ignored
 `results/stability/` directory by default. Its convenience recipes are
 `just stability-analysis`, `just stability-coverage`, `just stability-plot`,

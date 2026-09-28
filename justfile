@@ -40,6 +40,10 @@ test-cov:
 bench:
 	uv run pytest -q -m perf --benchmark-only --benchmark-sort=mean
 
+# Compare dense masked and explicit-zero CSR genotype storage.
+bench-genomics-storage *args:
+	uv run --extra analysis python analysis/benchmark_genomics_storage.py {{args}}
+
 # Run a lightweight smoke subset (parity + sparse preprocessing).
 test-smoke:
 	uv run pytest -q tests/test_octave_parity_smoke.py tests/test_preprocessing_sparse.py
