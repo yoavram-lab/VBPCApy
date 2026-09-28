@@ -21,7 +21,11 @@ from ._modern_defaults_io import (
     validate_checkpoint,
     write_manifest,
 )
-from ._modern_defaults_reduction import summarize_confirmation, summarize_screen
+from ._modern_defaults_reduction import (
+    summarize_confirmation,
+    summarize_scale,
+    summarize_screen,
+)
 from ._modern_defaults_spec import (
     PROFILE_REGIMES,
     REGISTERED_CONFIRM_REPS,
@@ -158,6 +162,13 @@ def _summary_command(args: argparse.Namespace) -> None:
     print(f"Saved screen summary -> {args.output}")
 
 
+def _scale_summary_command(args: argparse.Namespace) -> None:
+    manifest = load_manifest(args.manifest)
+    summary = summarize_scale(args.manifest, manifest, args.output_dir)
+    atomic_json(args.output, summary)
+    print(f"Saved scale summary -> {args.output}")
+
+
 def _promote_command(args: argparse.Namespace) -> None:
     screen_manifest = load_manifest(args.screen_manifest)
     summary = summarize_screen(args.screen_manifest, screen_manifest, args.output_dir)
@@ -233,6 +244,11 @@ def main() -> None:
     summary_parser.add_argument("--output-dir", type=Path, required=True)
     summary_parser.add_argument("--output", type=Path, required=True)
 
+    scale_summary_parser = subparsers.add_parser("summarize-scale")
+    scale_summary_parser.add_argument("--manifest", type=Path, required=True)
+    scale_summary_parser.add_argument("--output-dir", type=Path, required=True)
+    scale_summary_parser.add_argument("--output", type=Path, required=True)
+
     promote_parser = subparsers.add_parser("promote-confirm")
     promote_parser.add_argument("--screen-manifest", type=Path, required=True)
     promote_parser.add_argument("--output-dir", type=Path, required=True)
@@ -254,6 +270,8 @@ def main() -> None:
         _list_command(args)
     elif args.command == "summarize-screen":
         _summary_command(args)
+    elif args.command == "summarize-scale":
+        _scale_summary_command(args)
     elif args.command == "promote-confirm":
         _promote_command(args)
     else:

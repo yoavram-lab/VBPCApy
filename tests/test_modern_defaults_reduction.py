@@ -17,6 +17,7 @@ from analysis.trade_study._modern_defaults_io import (
 from analysis.trade_study._modern_defaults_reduction import (
     paired_bootstrap,
     summarize_confirmation,
+    summarize_scale,
     summarize_screen,
 )
 from analysis.trade_study._modern_defaults_results import (
@@ -272,6 +273,33 @@ def test_confirmation_requires_safety_and_material_improvement(tmp_path) -> None
         "recommended_legacy",
         "screen_000",
     ]
+
+
+def test_scale_summary_reports_paired_effects_without_new_gates(tmp_path) -> None:
+    manifest_path, manifest, output_dir = _write_complete_study(
+        tmp_path,
+        profile="scale",
+    )
+
+    summary = summarize_scale(manifest_path, manifest, output_dir)
+
+    comparison = summary["paired_vs_reference"]["screen_000"]
+    assert "eligible" not in comparison
+    assert set(comparison["effects"]) == {
+        "holdout_rmse_relative",
+        "interval_score_relative",
+        "coverage_difference",
+        "rank_mae_difference",
+        "iteration_ratio",
+    }
+    assert comparison["effects"]["iteration_ratio"]["estimate"] == pytest.approx(0.8)
+
+
+def test_scale_summary_rejects_non_scale_profile(tmp_path) -> None:
+    manifest_path, manifest, output_dir = _write_complete_study(tmp_path)
+
+    with pytest.raises(ValueError, match="scale-profile"):
+        summarize_scale(manifest_path, manifest, output_dir)
 
 
 def test_promote_command_recomputes_rules_and_writes_confirm_manifest(

@@ -20,6 +20,7 @@ _EFFECTS: tuple[tuple[str, str, str, str], ...] = (
     ("null_selection_rate_difference", "null_selected", "difference", "null"),
     ("iteration_ratio", "selection_total_iters", "ratio", "all"),
 )
+_SCALE_EFFECTS = tuple(effect for effect in _EFFECTS if effect[3] == "all")
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -184,6 +185,38 @@ def _paired_comparisons(
     return comparisons
 
 
+def _scale_comparisons(
+    rows: list[dict[str, Any]],
+    manifest: dict[str, Any],
+) -> dict[str, Any]:
+    reference_rows = [row for row in rows if row["candidate_id"] == REFERENCE_CANDIDATE]
+    bootstrap = manifest["bootstrap"]
+    comparisons: dict[str, Any] = {}
+    candidate_ids = [str(item["id"]) for item in manifest["candidates"]]
+    for candidate_index, candidate_id in enumerate(candidate_ids):
+        if candidate_id == REFERENCE_CANDIDATE:
+            continue
+        candidate_rows = [row for row in rows if row["candidate_id"] == candidate_id]
+        comparisons[candidate_id] = {
+            "effects": {
+                name: paired_bootstrap(
+                    candidate_rows,
+                    reference_rows,
+                    field=field,
+                    mode=mode,
+                    subset=subset,
+                    n_resamples=int(bootstrap["n_resamples"]),
+                    confidence=float(bootstrap["confidence"]),
+                    seed=int(bootstrap["seed"]) + candidate_index * 1009 + effect_index,
+                )
+                for effect_index, (name, field, mode, subset) in enumerate(
+                    _SCALE_EFFECTS
+                )
+            }
+        }
+    return comparisons
+
+
 def summarize_screen(
     manifest_path: Path,
     manifest: dict[str, Any],
@@ -269,4 +302,25 @@ def summarize_confirmation(
         "paired_vs_reference": comparisons,
         "adopted_optional_candidates": adopted,
         "scale_candidate_ids": [*MANDATORY_CANDIDATES, *adopted],
+    }
+
+
+def summarize_scale(
+    manifest_path: Path,
+    manifest: dict[str, Any],
+    output_dir: Path,
+) -> dict[str, Any]:
+    """Summarize final scale validation without applying new selection gates."""
+    if manifest["profile"] != "scale":
+        msg = "scale summary requires a scale-profile manifest"
+        raise ValueError(msg)
+    rows = load_complete_records(manifest_path, manifest, output_dir)
+    return {
+        "manifest_sha256": manifest_sha256(manifest_path),
+        "design_version": manifest["design_version"],
+        "profile": manifest["profile"],
+        "n_reps": manifest["n_reps"],
+        "reference_candidate": REFERENCE_CANDIDATE,
+        "descriptive": descriptive_summary(rows),
+        "paired_vs_reference": _scale_comparisons(rows, manifest),
     }
