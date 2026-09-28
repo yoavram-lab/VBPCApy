@@ -50,6 +50,16 @@ zero cannot use `metric="cost"`. Positive ranks remain the default when
 | `max_trials` | `None` | Cap on the number of $k$ values tried |
 | `compute_explained_variance` | `True` | Compute explained variance for the best model |
 | `return_best_model` | `False` | Include the fitted `VBPCA` object in the return |
+| `reuse_runtime_policy` | `True` | Reuse measured execution settings within compatible component-count regimes |
+
+With runtime tuning enabled, a sweep measures execution settings once per
+power-of-two component range, such as 4–7 or 8–15, and reuses those settings
+for the remaining candidates in that range. Shape, observed-entry count, dense
+or sparse representation, mask representation, and runtime options are part of
+the compatibility key. The fitted posterior is never reused. Set
+`reuse_runtime_policy=False` to tune every candidate independently. Trace
+entries report `runtime_policy_source`, `runtime_policy_regime`, and
+`runtime_tuning_sec`.
 
 ### Return value
 

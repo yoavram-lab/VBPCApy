@@ -785,6 +785,152 @@ def test_select_n_components_deterministic_across_num_cpu() -> None:
     assert_allclose(res[0][1], res[1][1], rtol=1e-12, atol=1e-12)
 
 
+def test_runtime_policy_cache_reuses_only_compatible_rank_regimes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[int, dict[str, object]]] = []
+
+    class _DummyModel:
+        def __init__(self, k: int) -> None:
+            self.runtime_report_ = {
+                "kernel_values": {
+                    "score_update_dense": 2,
+                    "loadings_update_dense": 3,
+                    "noise_sxv_sum": 2,
+                    "rms": 1,
+                },
+                "workload": {"is_sparse": False},
+                "cov_writeback_mode": "bulk",
+                "log_progress_stride": 0,
+                "accessor_mode": "buffered",
+                "autotune_dense_masked": {"elapsed_sec": 0.05 * k},
+            }
+
+    def _fake_fit_candidate(k, x_arr, mask, cfg, opts):
+        calls.append((int(k), dict(opts)))
+        return (
+            {
+                "k": int(k),
+                "rms": float(k),
+                "prms": float(k),
+                "cost": float(k),
+                "evr": None,
+                "n_iter": 1,
+                "convergence_reason": "maxiters",
+                "converged": False,
+                "candidate_type": "low_rank",
+            },
+            _DummyModel(int(k)),
+        )
+
+    monkeypatch.setattr(ms, "_fit_candidate", _fake_fit_candidate)
+    cfg = SelectionConfig(
+        metric="cost",
+        compute_explained_variance=False,
+        reuse_runtime_policy=True,
+    )
+    _, _, trace, _ = select_n_components(
+        np.ones((8, 12)),
+        components=[2, 3, 4, 5],
+        config=cfg,
+        runtime_tuning="safe",
+        verbose=0,
+    )
+
+    assert [entry["runtime_policy_source"] for entry in trace] == [
+        "measured",
+        "selection_cache",
+        "measured",
+        "selection_cache",
+    ]
+    assert [entry["runtime_policy_regime"] for entry in trace] == [
+        "2-3",
+        "2-3",
+        "4-7",
+        "4-7",
+    ]
+    assert [opts["runtime_tuning"] for _, opts in calls] == [
+        "safe",
+        "off",
+        "safe",
+        "off",
+    ]
+    assert calls[1][1]["num_cpu_score_update"] == 2
+    assert calls[1][1]["num_cpu_loadings_update"] == 3
+
+
+def test_runtime_policy_key_invalidates_on_workload_or_option_change() -> None:
+    x = np.arange(24.0).reshape(4, 6)
+    opts = {"runtime_tuning": "safe", "num_cpu": 4}
+    base = ms._runtime_policy_key(k=2, x=x, mask=None, opts=opts)
+
+    assert ms._runtime_policy_key(k=3, x=x, mask=None, opts=opts) == base
+    assert ms._runtime_policy_key(k=4, x=x, mask=None, opts=opts) != base
+    assert (
+        ms._runtime_policy_key(
+            k=2,
+            x=x,
+            mask=np.ones_like(x, dtype=bool),
+            opts=opts,
+        )
+        != base
+    )
+    assert ms._runtime_policy_key(k=2, x=sp.csr_matrix(x), mask=None, opts=opts) != base
+    assert (
+        ms._runtime_policy_key(
+            k=2,
+            x=x,
+            mask=None,
+            opts={"runtime_tuning": "safe", "num_cpu": 2},
+        )
+        != base
+    )
+
+
+def test_reused_and_independently_tuned_sweeps_are_equivalent() -> None:
+    rng = np.random.default_rng(211)
+    x = _low_rank_data(rng, n_features=7, n_samples=12, rank=2)
+    x[rng.random(x.shape) < 0.15] = np.nan
+    common = {
+        "maxiters": 6,
+        "niter_broadprior": 0,
+        "verbose": 0,
+        "rotate2pca": 0,
+        "runtime_tuning": "safe",
+        "random_state": 211,
+    }
+
+    best_reused, _, trace_reused, _ = select_n_components(
+        x,
+        components=[2, 3],
+        config=SelectionConfig(
+            metric="cost",
+            compute_explained_variance=False,
+            reuse_runtime_policy=True,
+        ),
+        **common,
+    )
+    best_independent, _, trace_independent, _ = select_n_components(
+        x,
+        components=[2, 3],
+        config=SelectionConfig(
+            metric="cost",
+            compute_explained_variance=False,
+            reuse_runtime_policy=False,
+        ),
+        **common,
+    )
+
+    assert best_reused == best_independent
+    assert trace_reused[1]["runtime_policy_source"] == "selection_cache"
+    assert_allclose(
+        [entry["cost"] for entry in trace_reused],
+        [entry["cost"] for entry in trace_independent],
+        rtol=1e-10,
+        atol=1e-12,
+    )
+
+
 # ============================================================
 # cross_validate_components tests
 # ============================================================
