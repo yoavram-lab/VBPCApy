@@ -62,6 +62,11 @@ def _parser() -> argparse.ArgumentParser:
         choices=("off", "safe", "aggressive"),
         default="off",
     )
+    parser.add_argument(
+        "--dense-sufficient-statistics",
+        choices=("auto", "observed", "complement"),
+        default="auto",
+    )
     parser.add_argument("--skip-diagnostics", action="store_true")
     parser.add_argument("--output", type=Path)
     return parser
@@ -151,6 +156,7 @@ def _run_once(
             record_cost=False,
             return_diagnostics=not args.skip_diagnostics,
             runtime_tuning=args.runtime_tuning,
+            dense_sufficient_statistics=args.dense_sufficient_statistics,
             runtime_report=True,
             num_cpu=args.threads,
             compat_mode="modern",
@@ -172,6 +178,7 @@ def _run_once(
         "threads": args.threads,
         "iterations": args.iterations,
         "runtime_tuning": args.runtime_tuning,
+        "dense_sufficient_statistics": args.dense_sufficient_statistics,
         "diagnostics": not args.skip_diagnostics,
         "wall_seconds": wall_seconds,
         "max_rss_before_kib": int(rss_before),

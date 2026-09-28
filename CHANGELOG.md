@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Dense masked score and loading updates can use exact
+  complete-minus-missing sufficient statistics. A conservative density- and
+  rank-aware policy selects the formulation automatically and records the
+  resolved modes in the runtime report (#210).
+
 ## [0.4.2] - 2026-09-27
 
 ### Fixed

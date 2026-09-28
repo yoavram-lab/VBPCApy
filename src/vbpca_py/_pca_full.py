@@ -555,6 +555,65 @@ def _initialize_model(
     )
 
 
+_DENSE_COMPLEMENT_MIN_CELLS = 100_000
+
+
+def _dense_complement_thresholds(n_components: int) -> tuple[float, float]:
+    """Return conservative score and loading density crossovers.
+
+    The safety margin above the direct-kernel crossover keeps ``auto`` on the
+    observed-cell path unless both complement kernels have a clear advantage.
+    """
+    components = max(1, int(n_components))
+    threshold = min(0.99, max(0.75, 1.02 - 0.01 * components))
+    return threshold, threshold
+
+
+def _resolve_dense_sufficient_statistics(
+    *,
+    prepared: PreparedProblem,
+    workload: RuntimeWorkloadProfile,
+    opts: MutableMapping[str, object],
+    runtime_report: dict[str, object],
+) -> None:
+    """Resolve observed-cell versus complete-minus-missing accumulation."""
+    mode = str(opts.get("dense_sufficient_statistics", "auto")).strip().lower()
+    total_cells = max(1, workload.n_features * workload.n_samples)
+    observed_fraction = float(workload.n_observed) / float(total_cells)
+    score_threshold, loading_threshold = _dense_complement_thresholds(
+        workload.n_components
+    )
+    dense_no_patterns = not workload.is_sparse and prepared.pattern_index is None
+
+    if mode == "complement":
+        score_use_complement = dense_no_patterns
+        loading_use_complement = dense_no_patterns
+        source = "user"
+    elif mode == "observed":
+        score_use_complement = False
+        loading_use_complement = False
+        source = "user"
+    else:
+        eligible = dense_no_patterns and total_cells >= _DENSE_COMPLEMENT_MIN_CELLS
+        score_use_complement = eligible and observed_fraction >= score_threshold
+        loading_use_complement = eligible and observed_fraction >= loading_threshold
+        source = "density_heuristic"
+
+    opts["_dense_score_use_complement"] = score_use_complement
+    opts["_dense_loading_use_complement"] = loading_use_complement
+    runtime_report["dense_sufficient_statistics"] = {
+        "requested": mode,
+        "score_mode": "complement" if score_use_complement else "observed",
+        "loading_mode": ("complement" if loading_use_complement else "observed"),
+        "observed_fraction": observed_fraction,
+        "score_density_threshold": score_threshold,
+        "loading_density_threshold": loading_threshold,
+        "minimum_cells": _DENSE_COMPLEMENT_MIN_CELLS,
+        "eligible": dense_no_patterns,
+        "source": source,
+    }
+
+
 def _resolve_runtime_threads_for_training(
     *,
     prepared: PreparedProblem,
@@ -611,6 +670,12 @@ def _resolve_runtime_threads_for_training(
             cov_source_override=cov_source_override,
             accessor_source_override=accessor_source_override,
         )
+    )
+    _resolve_dense_sufficient_statistics(
+        prepared=prepared,
+        workload=workload,
+        opts=opts,
+        runtime_report=runtime_report,
     )
     runtime_report["cov_writeback_mode"] = cov_writeback_mode
     runtime_report["log_progress_stride"] = int(log_stride)
@@ -1450,6 +1515,7 @@ def _score_and_rotate(
         x_csc=score_x_csc,
         sparse_num_cpu=cfg.runtime_threads.score_update_sparse,
         dense_num_cpu=cfg.runtime_threads.score_update_dense,
+        dense_use_complement=bool(cfg.opts.get("_dense_score_use_complement", False)),
         cov_writeback_mode=str(cfg.opts.get("cov_writeback_mode", "python")),
         log_progress_stride=max(
             0, _int_opt(cfg.opts.get("log_progress_stride", 1), default=1)
@@ -1497,6 +1563,9 @@ def _update_loadings_phase(ctx: IterationContext, x_data: Matrix) -> float:
             x_csc=loadings_x_csc,
             sparse_num_cpu=cfg.runtime_threads.loadings_update_sparse,
             dense_num_cpu=cfg.runtime_threads.loadings_update_dense,
+            dense_use_complement=bool(
+                cfg.opts.get("_dense_loading_use_complement", False)
+            ),
             cov_writeback_mode=str(cfg.opts.get("cov_writeback_mode", "python")),
             log_progress_stride=max(
                 0, _int_opt(cfg.opts.get("log_progress_stride", 1), default=1)
@@ -2198,6 +2267,7 @@ def _build_options(kwargs: Mapping[str, object]) -> dict[str, object]:
         "num_cpu_rms": None,
         "runtime_tuning": "safe",
         "runtime_profile": None,
+        "dense_sufficient_statistics": "auto",
         "masked_batch_size": 0,
         "cov_writeback_mode": None,
         "log_progress_stride": None,
@@ -2227,6 +2297,17 @@ def _build_options(kwargs: Mapping[str, object]) -> dict[str, object]:
     opts["angle_every"] = max(1, _int_opt(opts.get("angle_every", 1), default=1))
     opts["return_diagnostics"] = int(bool(opts.get("return_diagnostics", 1)))
     opts = apply_runtime_policy_defaults(opts)
+
+    dense_statistics_raw = str(opts.get("dense_sufficient_statistics", "auto"))
+    dense_statistics = dense_statistics_raw.strip().lower()
+    if dense_statistics not in {"auto", "observed", "complement"}:
+        msg = (
+            "dense_sufficient_statistics must be one of "
+            "{'auto', 'observed', 'complement'} "
+            f"(got {dense_statistics_raw!r})."
+        )
+        raise ValueError(msg)
+    opts["dense_sufficient_statistics"] = dense_statistics
 
     solver_raw = str(opts.get("explained_var_solver", "auto"))
     solver = solver_raw.strip().lower()
