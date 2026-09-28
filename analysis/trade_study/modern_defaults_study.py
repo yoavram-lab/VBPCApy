@@ -21,11 +21,13 @@ from ._modern_defaults_io import (
     validate_checkpoint,
     write_manifest,
 )
-from ._modern_defaults_reduction import summarize_screen
+from ._modern_defaults_reduction import summarize_confirmation, summarize_screen
 from ._modern_defaults_spec import (
     PROFILE_REGIMES,
     REGISTERED_CONFIRM_REPS,
     REGISTERED_CONFIRM_SEED,
+    REGISTERED_SCALE_REPS,
+    REGISTERED_SCALE_SEED,
 )
 from ._modern_defaults_trial import run_trial
 
@@ -175,6 +177,28 @@ def _promote_command(args: argparse.Namespace) -> None:
     )
 
 
+def _promote_scale_command(args: argparse.Namespace) -> None:
+    confirm_manifest = load_manifest(args.confirm_manifest)
+    summary = summarize_confirmation(
+        args.confirm_manifest,
+        confirm_manifest,
+        args.output_dir,
+    )
+    if args.summary_output is not None:
+        atomic_json(args.summary_output, summary)
+    manifest = write_manifest(
+        args.output,
+        profile="scale",
+        n_reps=REGISTERED_SCALE_REPS,
+        seed=REGISTERED_SCALE_SEED,
+        candidate_ids=tuple(summary["scale_candidate_ids"]),
+    )
+    print(
+        f"Wrote {args.output}: {len(shards(manifest))} shards; "
+        f"sha256={manifest_sha256(args.output)}"
+    )
+
+
 def main() -> None:
     """Run the modern-defaults study command-line interface."""
     parser = argparse.ArgumentParser(description=__doc__)
@@ -215,6 +239,12 @@ def main() -> None:
     promote_parser.add_argument("--summary-output", type=Path)
     promote_parser.add_argument("--output", type=Path, required=True)
 
+    scale_parser = subparsers.add_parser("promote-scale")
+    scale_parser.add_argument("--confirm-manifest", type=Path, required=True)
+    scale_parser.add_argument("--output-dir", type=Path, required=True)
+    scale_parser.add_argument("--summary-output", type=Path)
+    scale_parser.add_argument("--output", type=Path, required=True)
+
     args = parser.parse_args()
     if args.command == "manifest":
         _manifest_command(args)
@@ -224,8 +254,10 @@ def main() -> None:
         _list_command(args)
     elif args.command == "summarize-screen":
         _summary_command(args)
-    else:
+    elif args.command == "promote-confirm":
         _promote_command(args)
+    else:
+        _promote_scale_command(args)
 
 
 if __name__ == "__main__":

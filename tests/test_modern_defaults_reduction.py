@@ -16,13 +16,17 @@ from analysis.trade_study._modern_defaults_io import (
 )
 from analysis.trade_study._modern_defaults_reduction import (
     paired_bootstrap,
+    summarize_confirmation,
     summarize_screen,
 )
 from analysis.trade_study._modern_defaults_results import (
     descriptive_summary,
     load_complete_records,
 )
-from analysis.trade_study.modern_defaults_study import _promote_command
+from analysis.trade_study.modern_defaults_study import (
+    _promote_command,
+    _promote_scale_command,
+)
 
 
 def _row(
@@ -94,6 +98,15 @@ def _manifest() -> dict[str, Any]:
             "rank_mae_difference_upper": 0.10,
             "null_selection_rate_difference_upper": 0.05,
         },
+        "confirm_gates": {
+            "holdout_rmse_relative_upper": 0.01,
+            "interval_score_relative_upper": 0.02,
+            "coverage_difference_lower": -0.02,
+            "rank_mae_difference_upper": 0.10,
+            "null_selection_rate_difference_upper": 0.05,
+            "material_rank_mae_improvement": 0.10,
+            "material_iteration_reduction": 0.20,
+        },
     }
 
 
@@ -134,8 +147,9 @@ def _records(candidate_id: str, regime: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
-def _write_complete_study(tmp_path):
+def _write_complete_study(tmp_path, *, profile: str = "screen"):
     manifest = _manifest()
+    manifest["profile"] = profile
     manifest_path = tmp_path / "manifest.json"
     output_dir = tmp_path / "results"
     atomic_json(manifest_path, manifest)
@@ -242,6 +256,24 @@ def test_screen_summary_rejects_non_screen_profile(tmp_path) -> None:
         summarize_screen(manifest_path, manifest, output_dir)
 
 
+def test_confirmation_requires_safety_and_material_improvement(tmp_path) -> None:
+    manifest_path, manifest, output_dir = _write_complete_study(
+        tmp_path,
+        profile="confirm",
+    )
+
+    summary = summarize_confirmation(manifest_path, manifest, output_dir)
+
+    assert summary["paired_vs_reference"]["screen_000"]["adopt"] is True
+    assert summary["paired_vs_reference"]["screen_001"]["adopt"] is False
+    assert summary["paired_vs_reference"]["recommended_legacy"]["adopt"] is False
+    assert summary["scale_candidate_ids"] == [
+        "recommended_post_factor",
+        "recommended_legacy",
+        "screen_000",
+    ]
+
+
 def test_promote_command_recomputes_rules_and_writes_confirm_manifest(
     tmp_path, monkeypatch
 ) -> None:
@@ -268,3 +300,32 @@ def test_promote_command_recomputes_rules_and_writes_confirm_manifest(
         "screen_000",
     ]
     assert summary["promoted_finalists"] == ["screen_000"]
+
+
+def test_promote_scale_writes_registered_scale_manifest(tmp_path, monkeypatch) -> None:
+    manifest_path, manifest, output_dir = _write_complete_study(
+        tmp_path,
+        profile="confirm",
+    )
+    scale_path = tmp_path / "scale.json"
+    summary_path = tmp_path / "confirm-summary.json"
+    monkeypatch.setattr(study_module, "load_manifest", lambda path: manifest)
+
+    _promote_scale_command(
+        Namespace(
+            confirm_manifest=manifest_path,
+            output_dir=output_dir,
+            summary_output=summary_path,
+            output=scale_path,
+        )
+    )
+
+    scale = json.loads(scale_path.read_text())
+    summary = json.loads(summary_path.read_text())
+    assert scale["profile"] == "scale"
+    assert [item["id"] for item in scale["candidates"]] == [
+        "recommended_post_factor",
+        "recommended_legacy",
+        "screen_000",
+    ]
+    assert summary["adopted_optional_candidates"] == ["screen_000"]
