@@ -48,6 +48,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Native extension worker limits now follow the resolved scheduler allocation
   consistently across dense, sparse, rotation, noise, and subtraction kernels
   (#211).
+- Registered study manifests retain LF line endings on every platform, keeping
+  their byte-level provenance hashes stable in Windows wheel builds (#241).
 
 ## [0.4.2] - 2026-09-27
 
