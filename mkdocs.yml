@@ -78,6 +78,7 @@ nav:
     - Basic Dense PCA: tutorials/basic-dense-pca.md
     - Missing Data & Model Selection: tutorials/missing-data-model-selection.md
     - Preprocessing Mixed Data: tutorials/preprocessing-mixed-data.md
+    - Genomics Dosage Data: tutorials/genomics-dosage.md
     - Sparse Data Workflows: tutorials/sparse-data.md
     - Cross-Validation & Diagnostics: tutorials/cv-diagnostics.md
   - How-To Guides:

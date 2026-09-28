@@ -7,6 +7,7 @@ from vbpca_py.preprocessing import (
     DataReport,
     MissingAwareLogTransformer,
     MissingAwarePowerTransformer,
+    MissingAwareStandardScaler,
     MissingAwareWinsorizer,
     check_data,
 )
@@ -182,6 +183,51 @@ class TestCheckData:
         report = check_data(x, missing_fraction_warn=0.5)
         assert not report.passed
         assert any("missing" in w for w in report.warnings)
+
+    def test_explicit_mask_controls_observed_summary(self):
+        x = np.array([[0.0, 10.0], [1.0, 20.0], [2.0, 30.0], [99.0, np.nan]])
+        mask = np.array(
+            [[True, True], [True, False], [True, True], [False, True]], dtype=bool
+        )
+
+        report = check_data(x, mask=mask)
+
+        assert report.summary["0"]["n_obs"] == pytest.approx(3.0)
+        assert report.summary["0"]["variance"] == pytest.approx(2.0 / 3.0)
+        assert report.summary["1"]["n_obs"] == pytest.approx(2.0)
+
+    def test_explicit_mask_shape_must_match(self):
+        x = np.ones((4, 3))
+
+        with pytest.raises(ValueError, match="mask shape"):
+            check_data(x, mask=np.ones((3, 4), dtype=bool))
+
+    @pytest.mark.parametrize("order", ["C", "F"])
+    def test_genomics_dense_scaling_preserves_mask_for_array_order(self, order):
+        dosage = np.array(
+            [[0.0, 1.0, 2.0], [0.0, 2.0, 1.0], [1.0, 1.0, 0.0], [2.0, 0.0, 2.0]],
+            dtype=float,
+            order=order,
+        )
+        mask = np.array(
+            [
+                [True, True, True],
+                [True, False, True],
+                [True, True, False],
+                [True, True, True],
+            ],
+            dtype=bool,
+            order=order,
+        )
+        dosage[3, 2] = np.nan
+
+        scaler = MissingAwareStandardScaler().fit(dosage, mask=mask)
+        transformed = scaler.transform(dosage, mask=mask)
+
+        effective_mask = mask & ~np.isnan(dosage)
+        assert np.all(np.isnan(transformed[~effective_mask]))
+        assert np.all(np.isfinite(transformed[effective_mask]))
+        np.testing.assert_allclose(scaler.mean_, np.array([0.75, 2.0 / 3.0, 1.5]))
 
     def test_detects_outliers(self):
         rng = np.random.default_rng(99)

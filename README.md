@@ -44,7 +44,7 @@ recon = model.reconstruction_
 var = model.variance_
 ```
 
-More examples: [quickstart](https://yoavram-lab.github.io/VBPCApy/getting-started/quickstart/), [dense PCA tutorial](https://yoavram-lab.github.io/VBPCApy/tutorials/basic-dense-pca/), [missing data & model selection](https://yoavram-lab.github.io/VBPCApy/tutorials/missing-data-model-selection/), [sparse data](https://yoavram-lab.github.io/VBPCApy/tutorials/sparse-data/).
+More examples: [quickstart](https://yoavram-lab.github.io/VBPCApy/getting-started/quickstart/), [dense PCA tutorial](https://yoavram-lab.github.io/VBPCApy/tutorials/basic-dense-pca/), [missing data & model selection](https://yoavram-lab.github.io/VBPCApy/tutorials/missing-data-model-selection/), [genomics dosage data](https://yoavram-lab.github.io/VBPCApy/tutorials/genomics-dosage/), and [sparse data](https://yoavram-lab.github.io/VBPCApy/tutorials/sparse-data/).
 
 ## Features
 
