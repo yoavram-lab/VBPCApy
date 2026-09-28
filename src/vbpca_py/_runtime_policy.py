@@ -386,14 +386,48 @@ def normalize_accessor_mode(mode: object | None) -> str:
 def _default_num_cpu() -> int:
     """Conservative default thread count when user did not opt in.
 
-    Uses ``os.cpu_count() - 2`` to avoid oversubscribing shared machines while
-    ensuring at least one worker.
+    Uses the process and scheduler allocation minus two to avoid oversubscribing
+    shared machines while ensuring at least one worker.
 
     Returns:
         Auto-selected worker count respecting a two-core cushion.
     """
-    hw = os.cpu_count() or 1
+    hw = _available_cpu_count()
     return max(1, int(hw) - 2)
+
+
+def _available_cpu_count() -> int:
+    """Return CPUs available to this process and its scheduler task.
+
+    The minimum positive limit is used so a node-wide hardware count cannot
+    override process affinity or a scheduler allocation.
+
+    Returns:
+        Positive effective CPU count.
+    """
+    candidates = [int(os.cpu_count() or 1)]
+
+    process_cpu_count = getattr(os, "process_cpu_count", None)
+    if callable(process_cpu_count):
+        process_count = process_cpu_count()
+        if process_count is not None and process_count > 0:
+            candidates.append(int(process_count))
+
+    get_affinity = getattr(os, "sched_getaffinity", None)
+    if callable(get_affinity):
+        try:
+            affinity_count = len(get_affinity(0))
+        except OSError:
+            affinity_count = 0
+        if affinity_count > 0:
+            candidates.append(int(affinity_count))
+
+    for env_key in ("SLURM_CPUS_PER_TASK", "PBS_NP", "NSLOTS"):
+        allocated = _parse_int_or_none(os.getenv(env_key))
+        if allocated is not None and allocated > 0:
+            candidates.append(int(allocated))
+
+    return max(1, min(candidates))
 
 
 def normalize_num_cpu(num_cpu_value: object | None, *, default: int = 1) -> int:
@@ -520,7 +554,7 @@ def _build_dense_autotune_candidates(
     Returns:
         Sorted list of candidate thread counts.
     """
-    hw = os.cpu_count() or 1
+    hw = _available_cpu_count()
     cap = max(1, min(int(max_threads), int(hw), int(axis_limit)))
 
     seeds = [1, cap]
@@ -608,7 +642,7 @@ def autotune_dense_masked_threads(
     Returns:
         Tuple of (score_threads, loadings_threads, benchmark report).
     """
-    hw_threads = max(1, int(os.cpu_count() or 1))
+    hw_threads = _available_cpu_count()
     score_axis = int(inputs.x_data.shape[1])
     load_axis = int(inputs.x_data.shape[0])
 
@@ -763,7 +797,7 @@ def autotune_sparse_nopattern_threads(
     Returns:
         Tuple of (score_threads, loadings_threads, benchmark report).
     """
-    hw_threads = max(1, int(os.cpu_count() or 1))
+    hw_threads = _available_cpu_count()
 
     cand_score = _normalize_candidate_list(candidates, inputs.n_samples, hw_threads)
     cand_load = _normalize_candidate_list(candidates, inputs.n_features, hw_threads)
@@ -917,8 +951,7 @@ def autotune_cov_writeback_mode_sparse(  # noqa: PLR0913
 
 
 def _safe_autotune_rms_threads(profile: RuntimeWorkloadProfile) -> int:
-    hw_threads = os.cpu_count() or 1
-    hw_threads = max(1, int(hw_threads))
+    hw_threads = _available_cpu_count()
 
     if not profile.is_sparse:
         return 1
@@ -945,8 +978,7 @@ def _safe_autotune_kernel_threads(
     *,
     kind: str,
 ) -> int:
-    hw_threads = os.cpu_count() or 1
-    hw_threads = max(1, int(hw_threads))
+    hw_threads = _available_cpu_count()
 
     if profile.is_sparse:
         n_obs = max(1, int(profile.n_observed))
@@ -1241,6 +1273,7 @@ def resolve_runtime_thread_config_with_report(
 
     report: dict[str, object] = {
         "runtime_tuning": tuning_mode,
+        "available_cpu_count": _available_cpu_count(),
         "runtime_profile_path": str(profile_path) if profile_path is not None else None,
         "runtime_profile_loaded": bool(profile_data is not None),
         "num_cpu_user_set": bool(num_cpu_user_set),

@@ -29,6 +29,12 @@ Set a global thread count:
 model = VBPCA(n_components=5, num_cpu=8)
 ```
 
+Automatic tuning is capped by the CPUs available to the process. On Linux,
+VBPCApy respects process affinity; it also recognizes `SLURM_CPUS_PER_TASK`,
+`PBS_NP`, and `NSLOTS`. Set `VBPCA_NUM_THREADS=$SLURM_CPUS_PER_TASK` in Slurm
+launchers as an explicit native-kernel safeguard.
+
+
 Or use environment variables for per-kernel control:
 
 ```bash
@@ -39,7 +45,9 @@ export VBPCA_NOISE_THREADS=2        # noise update kernel
 export VBPCA_RMS_THREADS=4          # RMS computation kernel
 ```
 
-Environment variables take precedence over the `num_cpu` parameter.
+Kernel-specific options and an explicitly supplied `num_cpu` take precedence.
+Environment overrides apply when the corresponding Python option has not been
+set.
 
 ## Memory budget
 
