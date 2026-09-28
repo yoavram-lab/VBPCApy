@@ -16,6 +16,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   post-factor mean update that evaluates mean, RMS, and noise from one current
   factor state. Modern mode selects the post-factor order automatically (#222).
 
+### Changed
+- `recommend_config()` now selects post-factor mean/RMS ordering after the
+  registered modern-defaults study found equal or lower rank error with
+  effectively unchanged prediction and calibration. The estimator's
+  strict-legacy default remains unchanged (#214, #226, #237).
+
 ### Fixed
 - Bias and centered-data state now persist across iterations, absent means are
   initialized from observed row means, and explicit dense masks exclude masked

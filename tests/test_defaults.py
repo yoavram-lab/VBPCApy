@@ -33,6 +33,26 @@ def test_recommend_config_priority_presets() -> None:
     assert speed["niter_broadprior"] == 0
 
 
+@pytest.mark.parametrize(
+    ("n", "p", "priority"),
+    [
+        (100, 20, "balanced"),
+        (100, 50, "speed"),
+        (200, 150, "accuracy"),
+        (30, 100, "balanced"),
+        (30, 2000, "speed"),
+        (1000, 50, "accuracy"),
+        (3000, 30, "balanced"),
+        (500, 500, "speed"),
+    ],
+)
+def test_recommend_config_prefers_post_factor(n: int, p: int, priority: str) -> None:
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)
+        config = recommend_config(n=n, p=p, priority=priority)  # type: ignore[arg-type]
+    assert config["bias_update_order"] == "post_factor"
+
+
 def test_recommend_config_validates_inputs() -> None:
     """Non-positive sizes and unknown priorities raise ValueError."""
     with pytest.raises(ValueError, match="must be positive"):
