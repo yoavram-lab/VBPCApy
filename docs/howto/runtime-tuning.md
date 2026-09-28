@@ -34,7 +34,6 @@ VBPCApy respects process affinity; it also recognizes `SLURM_CPUS_PER_TASK`,
 `PBS_NP`, and `NSLOTS`. Set `VBPCA_NUM_THREADS=$SLURM_CPUS_PER_TASK` in Slurm
 launchers as an explicit native-kernel safeguard.
 
-
 Or use environment variables for per-kernel control:
 
 ```bash
@@ -73,9 +72,18 @@ from vbpca_py._pca_full import pca_full
 result = pca_full(X, n_components=5, runtime_report=1)
 ```
 
+The estimator exposes the same dictionary as `model.runtime_report_` when
+constructed with `runtime_report=True`.
+
+Component sweeps reuse measured execution settings within compatible
+power-of-two rank ranges by default. This reduces repeated tuning during
+`select_n_components`; set `SelectionConfig(reuse_runtime_policy=False)` for an
+independently tuned comparison. Each trace entry records whether its settings
+were measured or reused and the time spent tuning.
+
 ## Covariance writeback modes
 
-The `cov_writeback` option controls how posterior covariances are written back
+The `cov_writeback_mode` option controls how posterior covariances are written back
 after each update:
 
 | Mode | Description |

@@ -120,6 +120,7 @@ class VBPCA(BaseEstimator):
         self.best_probe_rms_: float | None = None
         self.returned_iteration_: int | None = None
         self.learning_curve_: dict[str, list[float]] | None = None
+        self.runtime_report_: dict[str, object] | None = None
         self.reconstruction_: np.ndarray | None = None
         # Posterior variance of the denoised reconstruction E[AS + mu]:
         # epistemic uncertainty in the latent mean, excluding observation noise.
@@ -380,6 +381,13 @@ class VBPCA(BaseEstimator):
             self.best_probe_rms_ = None
             self.returned_iteration_ = None
             self.learning_curve_ = None
+
+        runtime_report = result.get("RuntimeReport")
+        self.runtime_report_ = (
+            cast("dict[str, object]", runtime_report)
+            if isinstance(runtime_report, dict)
+            else None
+        )
 
         self.reconstruction_ = None
         if result.get("Xrec") is not None:
