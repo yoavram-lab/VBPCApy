@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+from pathlib import Path
 
 import pytest
 
@@ -23,6 +24,16 @@ from analysis.trade_study._modern_defaults_spec import (
     REGISTERED_SCALE_SEED,
 )
 
+_REGISTERED_MANIFEST_PATH = (
+    Path(__file__).parents[1]
+    / "analysis"
+    / "trade_study"
+    / "manifests"
+    / "modern_defaults_screen_v1.json"
+)
+_REGISTERED_MANIFEST_FILE_HASH = (
+    "e393821467a98ff30c31430f11ea4a7aa0581df084ca6f293cd2d77dc441cb4f"
+)
 _REGISTERED_SCREEN_HASH = (
     "95c588eea6c1de91df3f537f667f46178499d14b9b1020e88e9d41e1e08ae6ac"
 )
@@ -31,6 +42,13 @@ _REGISTERED_SCREEN_HASH = (
 def _canonical_hash(payload: dict[str, object]) -> str:
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
     return hashlib.sha256(encoded).hexdigest()
+
+
+def test_registered_screen_manifest_artifact_is_locked() -> None:
+    payload = _REGISTERED_MANIFEST_PATH.read_bytes()
+
+    assert hashlib.sha256(payload).hexdigest() == _REGISTERED_MANIFEST_FILE_HASH
+    assert json.loads(payload) == registered_screen_manifest()
 
 
 def test_registered_screen_is_frozen_and_complete() -> None:
