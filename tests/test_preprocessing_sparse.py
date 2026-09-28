@@ -27,6 +27,39 @@ def test_standard_scaler_sparse_matches_dense_when_full_observed():
     np.testing.assert_allclose(x_roundtrip.toarray(), x_dense, rtol=1e-6, atol=1e-6)
 
 
+def test_standard_scaler_explicit_zero_sparse_matches_dense_mask():
+    x_dense = np.array([
+        [0.0, 1.0, 2.0],
+        [0.0, 2.0, 1.0],
+        [1.0, 1.0, 0.0],
+        [2.0, 0.0, 2.0],
+    ])
+    mask = np.array([
+        [True, True, True],
+        [True, False, True],
+        [True, True, False],
+        [True, True, True],
+    ])
+    rows, cols = np.nonzero(mask)
+    x_sparse = sp.csr_matrix(
+        (x_dense[rows, cols], (rows, cols)),
+        shape=x_dense.shape,
+    )
+
+    dense_scaler = MissingAwareStandardScaler().fit(x_dense, mask=mask)
+    sparse_scaler = MissingAwareStandardScaler().fit(x_sparse)
+    z_dense = dense_scaler.transform(x_dense, mask=mask)
+    z_sparse = sparse_scaler.transform(x_sparse)
+
+    assert x_sparse.nnz == int(mask.sum())
+    np.testing.assert_allclose(sparse_scaler.mean_, dense_scaler.mean_)
+    np.testing.assert_allclose(sparse_scaler.scale_, dense_scaler.scale_)
+    np.testing.assert_allclose(
+        np.asarray(z_sparse[rows, cols]).ravel(),
+        z_dense[rows, cols],
+    )
+
+
 def test_minmax_scaler_sparse_matches_dense_when_full_observed():
     x_dense = np.array([[1.0, 2.0], [3.0, 6.0]])
     x_sparse = sp.csr_matrix(x_dense)

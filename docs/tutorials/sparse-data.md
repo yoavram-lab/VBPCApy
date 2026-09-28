@@ -1,8 +1,8 @@
 # Sparse Data Workflows
 
-This tutorial shows how to use VBPCApy with sparse matrices — the natural
-format for high-dimensional data with structural zeros such as genomics count
-matrices, term-document matrices, or one-hot-encoded survey data.
+This tutorial shows how to use VBPCApy when stored sparse entries are observed
+and unstored positions are genuinely missing. Sparse storage is appropriate
+only when that structural pattern matches the intended observation model.
 
 ## Construct sparse data
 
@@ -35,6 +35,14 @@ print(f"Density: {X_sparse.nnz / np.prod(X_sparse.shape):.2%}")
 For sparse inputs, the **stored entries** (including stored zeros) define the
 observation set. Entries not stored in the CSR/CSC structure are treated as
 **unobserved** (missing).
+
+!!! warning "Observed zeros require explicit storage"
+    Ordinary CSR conversion drops numerical zeros. Do not use it for genotype
+    dosage, count, one-hot, or other matrices where zero is a measured value,
+    unless every observed zero is explicitly retained in the sparse structure.
+    Dense data with an explicit mask are usually clearer and more efficient in
+    that setting. See the
+    [genomics dosage tutorial](genomics-dosage.md) for a complete recipe.
 
 This means you generally do **not** need to pass a separate mask:
 

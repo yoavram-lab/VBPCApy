@@ -73,8 +73,16 @@ sparsity pattern with all stored values set to 1.
 
 | Scenario | Format | Why |
 |----------|--------|-----|
-| High-dimensional data with structural zeros (genomics counts, one-hot surveys) | **Sparse CSR/CSC** | Implicit observation mask; sparse kernels avoid materialising the full matrix |
+| Unstored positions are genuinely unobserved | **Sparse CSR/CSC** | The sparse structure is the observation mask |
+| Zero is an observed value, including genotype dosage and count data | **Dense + explicit mask** | Ordinary CSR conversion drops observed zeros and changes the likelihood |
 | Moderate dimensions with random missingness (NaN-masked tabular data) | **Dense + explicit mask** | Dense kernels benefit from BLAS; mask is straightforward |
+
+Sparse storage is not determined by the numerical fraction of zeros alone. If
+zero carries information, every observed zero would need to be stored
+explicitly in CSR/CSC. At ordinary genotype density this usually costs at least
+as much memory as a dense float64 array plus a boolean mask. See the
+[genomics dosage tutorial](../tutorials/genomics-dosage.md) for the recommended
+workflow.
 
 ## Compatibility modes
 
