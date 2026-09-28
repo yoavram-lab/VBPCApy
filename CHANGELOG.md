@@ -53,6 +53,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CPU-allocation tests isolate every host CPU-count source, including
   `os.process_cpu_count()`, so wheel validation is portable across runners
   (#243).
+- RMS autotune threshold tests now isolate the effective CPU-count helper so
+  host process limits cannot alter their synthetic cap (#245).
 
 ## [0.4.2] - 2026-09-27
 
