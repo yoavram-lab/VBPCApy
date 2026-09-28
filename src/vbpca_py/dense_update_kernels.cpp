@@ -5,7 +5,9 @@
 #include <Eigen/Dense>
 
 #include <algorithm>
+#include <cstdint>
 #include <stdexcept>
+#include <string>
 #include <thread>
 
 
@@ -13,8 +15,153 @@
 namespace py = pybind11;
 
 namespace {
+using DoubleArray = py::array_t<double, py::array::forcecast>;
+
+struct MatrixView {
+    const double *data;
+    int rows;
+    int cols;
+    py::ssize_t row_stride;
+    py::ssize_t col_stride;
+
+    double operator()(int row, int col) const {
+        return data[
+            static_cast<py::ssize_t>(row) * row_stride +
+            static_cast<py::ssize_t>(col) * col_stride
+        ];
+    }
+};
+
+MatrixView matrix_view(const DoubleArray &array, const char *name) {
+    const auto info = array.request();
+    if (info.ndim != 2) {
+        throw std::invalid_argument(std::string(name) + " must be a 2-D array.");
+    }
+    const bool c_contiguous = (array.flags() & py::array::c_style) != 0;
+    const bool f_contiguous = (array.flags() & py::array::f_style) != 0;
+    if (!c_contiguous && !f_contiguous) {
+        throw std::invalid_argument(
+            std::string(name) + " must be C- or Fortran-contiguous."
+        );
+    }
+    if (
+        info.strides[0] % static_cast<py::ssize_t>(sizeof(double)) != 0 ||
+        info.strides[1] % static_cast<py::ssize_t>(sizeof(double)) != 0
+    ) {
+        throw std::invalid_argument(std::string(name) + " has invalid strides.");
+    }
+    return {
+        static_cast<const double *>(info.ptr),
+        static_cast<int>(info.shape[0]),
+        static_cast<int>(info.shape[1]),
+        info.strides[0] / static_cast<py::ssize_t>(sizeof(double)),
+        info.strides[1] / static_cast<py::ssize_t>(sizeof(double)),
+    };
+}
+
+enum class MaskType { boolean, uint8, float64 };
+
+struct MaskView {
+    const char *data;
+    int rows;
+    int cols;
+    py::ssize_t row_stride;
+    py::ssize_t col_stride;
+    MaskType type;
+
+    bool observed(int row, int col) const {
+        const char *value = data + static_cast<py::ssize_t>(row) * row_stride +
+                            static_cast<py::ssize_t>(col) * col_stride;
+        if (type == MaskType::boolean) {
+            return *reinterpret_cast<const bool *>(value);
+        }
+        if (type == MaskType::uint8) {
+            return *reinterpret_cast<const std::uint8_t *>(value) != 0;
+        }
+        return *reinterpret_cast<const double *>(value) > 0.0;
+    }
+};
+
+MaskView mask_view(const py::array &array) {
+    const auto info = array.request();
+    if (info.ndim != 2) {
+        throw std::invalid_argument("mask must be a 2-D array.");
+    }
+    const bool c_contiguous = (array.flags() & py::array::c_style) != 0;
+    const bool f_contiguous = (array.flags() & py::array::f_style) != 0;
+    if (!c_contiguous && !f_contiguous) {
+        throw std::invalid_argument("mask must be C- or Fortran-contiguous.");
+    }
+
+    MaskType type;
+    if (array.dtype().is(py::dtype::of<bool>())) {
+        type = MaskType::boolean;
+    } else if (array.dtype().is(py::dtype::of<std::uint8_t>())) {
+        type = MaskType::uint8;
+    } else if (array.dtype().is(py::dtype::of<double>())) {
+        type = MaskType::float64;
+    } else {
+        throw std::invalid_argument("mask dtype must be bool, uint8, or float64.");
+    }
+    return {
+        static_cast<const char *>(info.ptr),
+        static_cast<int>(info.shape[0]),
+        static_cast<int>(info.shape[1]),
+        info.strides[0],
+        info.strides[1],
+        type,
+    };
+}
+
+const char *mask_type_name(MaskType type) {
+    if (type == MaskType::boolean) {
+        return "bool";
+    }
+    if (type == MaskType::uint8) {
+        return "uint8";
+    }
+    return "float64";
+}
+
 
 constexpr double EPS_JITTER = 1e-15;
+py::dict inspect_dense_input_views(
+    const DoubleArray &x_data_array,
+    const py::array &mask_array
+) {
+    const MatrixView x_data = matrix_view(x_data_array, "x_data");
+    const MaskView mask = mask_view(mask_array);
+    if (x_data.rows != mask.rows || x_data.cols != mask.cols) {
+        throw std::invalid_argument("mask shape must match x_data shape.");
+    }
+
+    py::dict out;
+    out["x_pointer"] = py::int_(
+        reinterpret_cast<std::uintptr_t>(x_data.data)
+    );
+    out["mask_pointer"] = py::int_(
+        reinterpret_cast<std::uintptr_t>(mask.data)
+    );
+    out["x_strides_elements"] = py::make_tuple(
+        x_data.row_stride,
+        x_data.col_stride
+    );
+    out["mask_strides_bytes"] = py::make_tuple(
+        mask.row_stride,
+        mask.col_stride
+    );
+    out["mask_dtype"] = mask_type_name(mask.type);
+    out["x_c_contiguous"] =
+        (x_data_array.flags() & py::array::c_style) != 0;
+    out["x_f_contiguous"] =
+        (x_data_array.flags() & py::array::f_style) != 0;
+    out["mask_c_contiguous"] =
+        (mask_array.flags() & py::array::c_style) != 0;
+    out["mask_f_contiguous"] =
+        (mask_array.flags() & py::array::f_style) != 0;
+    return out;
+}
+
 
 Eigen::LLT<Eigen::MatrixXd> stable_llt(Eigen::MatrixXd mat) {
     // Symmetrize to avoid tiny asymmetries from prior operations.
@@ -109,24 +256,27 @@ py::dict loadings_update_dense_no_sv(
 }
 
 py::dict score_update_dense_masked_nopattern(
-    const Eigen::MatrixXd &x_data,
-    const Eigen::MatrixXd &mask,
-    const Eigen::MatrixXd &loadings,
+    const DoubleArray &x_data_array,
+    const py::array &mask_array,
+    const DoubleArray &loadings_array,
     const py::object &loading_covariances_obj,
     double noise_var,
     bool return_covariances,
     int num_cpu
 ) {
-    const int n_features = static_cast<int>(x_data.rows());
-    const int n_samples = static_cast<int>(x_data.cols());
-    const int n_components = static_cast<int>(loadings.cols());
+    const MatrixView x_data = matrix_view(x_data_array, "x_data");
+    const MaskView mask = mask_view(mask_array);
+    const MatrixView loadings = matrix_view(loadings_array, "loadings");
+    const int n_features = x_data.rows;
+    const int n_samples = x_data.cols;
+    const int n_components = loadings.cols;
 
-    if (static_cast<int>(loadings.rows()) != n_features) {
+    if (loadings.rows != n_features) {
         throw std::invalid_argument("loadings row count must match x_data rows.");
     }
     if (
-        static_cast<int>(mask.rows()) != n_features ||
-        static_cast<int>(mask.cols()) != n_samples
+        mask.rows != n_features ||
+        mask.cols != n_samples
     ) {
         throw std::invalid_argument("mask shape must match x_data shape.");
     }
@@ -165,10 +315,13 @@ py::dict score_update_dense_masked_nopattern(
             Eigen::VectorXd rhs = Eigen::VectorXd::Zero(n_components);
 
             for (int i = 0; i < n_features; ++i) {
-                if (mask(i, j) <= 0.0) {
+                if (!mask.observed(i, j)) {
                     continue;
                 }
-                const Eigen::VectorXd a = loadings.row(i).transpose();
+                Eigen::VectorXd a(n_components);
+                for (int r = 0; r < n_components; ++r) {
+                    a(r) = loadings(i, r);
+                }
                 psi.noalias() += a * a.transpose();
                 rhs.noalias() += a * x_data(i, j);
 
@@ -250,31 +403,35 @@ py::dict score_update_dense_masked_nopattern(
 }
 
 py::dict loadings_update_dense_masked_nopattern(
-    const Eigen::MatrixXd &x_data,
-    const Eigen::MatrixXd &mask,
-    const Eigen::MatrixXd &scores,
+    const DoubleArray &x_data_array,
+    const py::array &mask_array,
+    const DoubleArray &scores_array,
     const py::object &score_covariances_obj,
-    const Eigen::MatrixXd &prior_prec,
+    const DoubleArray &prior_prec_array,
     double noise_var,
     bool return_covariances,
     int num_cpu
 ) {
-    const int n_features = static_cast<int>(x_data.rows());
-    const int n_samples = static_cast<int>(x_data.cols());
-    const int n_components = static_cast<int>(scores.rows());
+    const MatrixView x_data = matrix_view(x_data_array, "x_data");
+    const MaskView mask = mask_view(mask_array);
+    const MatrixView scores = matrix_view(scores_array, "scores");
+    const MatrixView prior_prec = matrix_view(prior_prec_array, "prior_prec");
+    const int n_features = x_data.rows;
+    const int n_samples = x_data.cols;
+    const int n_components = scores.rows;
 
-    if (static_cast<int>(scores.cols()) != n_samples) {
+    if (scores.cols != n_samples) {
         throw std::invalid_argument("scores column count must match x_data columns.");
     }
     if (
-        static_cast<int>(mask.rows()) != n_features ||
-        static_cast<int>(mask.cols()) != n_samples
+        mask.rows != n_features ||
+        mask.cols != n_samples
     ) {
         throw std::invalid_argument("mask shape must match x_data shape.");
     }
     if (
-        static_cast<int>(prior_prec.rows()) != n_components ||
-        static_cast<int>(prior_prec.cols()) != n_components
+        prior_prec.rows != n_components ||
+        prior_prec.cols != n_components
     ) {
         throw std::invalid_argument("prior_prec must be square with size n_components.");
     }
@@ -309,14 +466,22 @@ py::dict loadings_update_dense_masked_nopattern(
 
     auto worker = [&](int start, int end) {
         for (int i = start; i < end; ++i) {
-            Eigen::MatrixXd phi = prior_prec;
+            Eigen::MatrixXd phi(n_components, n_components);
+            for (int r = 0; r < n_components; ++r) {
+                for (int c = 0; c < n_components; ++c) {
+                    phi(r, c) = prior_prec(r, c);
+                }
+            }
             Eigen::VectorXd rhs = Eigen::VectorXd::Zero(n_components);
 
             for (int j = 0; j < n_samples; ++j) {
-                if (mask(i, j) <= 0.0) {
+                if (!mask.observed(i, j)) {
                     continue;
                 }
-                const Eigen::VectorXd s = scores.col(j);
+                Eigen::VectorXd s(n_components);
+                for (int r = 0; r < n_components; ++r) {
+                    s(r) = scores(r, j);
+                }
                 phi.noalias() += s * s.transpose();
                 rhs.noalias() += s * x_data(i, j);
 
@@ -401,6 +566,13 @@ py::dict loadings_update_dense_masked_nopattern(
 
 PYBIND11_MODULE(dense_update_kernels, m) {
     m.doc() = "Dense fast-path update kernels for fully observed VB-PCA updates.";
+
+    m.def(
+        "inspect_dense_input_views",
+        &inspect_dense_input_views,
+        py::arg("x_data"),
+        py::arg("mask")
+    );
 
     m.def(
         "score_update_dense_no_av",

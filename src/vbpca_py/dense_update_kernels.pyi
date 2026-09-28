@@ -1,6 +1,15 @@
+from typing import TypeAlias
+
 import numpy as np
 import numpy.typing as npt
 
+MaskArray: TypeAlias = (
+    npt.NDArray[np.bool_] | npt.NDArray[np.uint8] | npt.NDArray[np.float64]
+)
+
+def inspect_dense_input_views(
+    x_data: npt.NDArray[np.float64], mask: MaskArray
+) -> dict[str, object]: ...
 def score_update_dense_no_av(
     x_data: npt.NDArray[np.float64],
     loadings: npt.NDArray[np.float64],
@@ -16,7 +25,7 @@ def loadings_update_dense_no_sv(
 ) -> dict[str, np.ndarray]: ...
 def score_update_dense_masked_nopattern(
     x_data: npt.NDArray[np.float64],
-    mask: npt.NDArray[np.float64],
+    mask: MaskArray,
     loadings: npt.NDArray[np.float64],
     loading_covariances: npt.NDArray[np.float64] | None = ...,
     noise_var: float = ...,
@@ -25,7 +34,7 @@ def score_update_dense_masked_nopattern(
 ) -> dict[str, np.ndarray]: ...
 def loadings_update_dense_masked_nopattern(
     x_data: npt.NDArray[np.float64],
-    mask: npt.NDArray[np.float64],
+    mask: MaskArray,
     scores: npt.NDArray[np.float64],
     score_covariances: npt.NDArray[np.float64] | None = ...,
     prior_prec: npt.NDArray[np.float64] = ...,

@@ -1800,7 +1800,7 @@ def _score_update_sparse_ext_apply(state: ScoreState, x_csc: sp.csc_matrix) -> N
 
 def _score_update_general_dense_ext(state: ScoreState) -> ScoreState:
     x_arr = np.asarray(state.x_data, dtype=np.float64)
-    mask_arr = np.asarray(state.mask, dtype=np.float64)
+    mask_arr = np.asarray(state.mask, dtype=np.bool_)
     has_loading_covariances = _has_covariances(state.loading_covariances)
     return_score_covariances = _has_covariances(state.score_covariances)
     cov_mode = str(getattr(state, "cov_writeback_mode", "python"))
@@ -1862,7 +1862,7 @@ def _loadings_update_general_dense_ext(
     state: LoadingsUpdateState,
 ) -> tuple[np.ndarray, CovarianceStore]:
     x_arr = np.asarray(state.x_data, dtype=np.float64)
-    mask_arr = np.asarray(state.mask, dtype=np.float64)
+    mask_arr = np.asarray(state.mask, dtype=np.bool_)
     prior_prec = _prior_precision_matrix(state.va, state.noise_var)
     has_score_covariances = _has_covariances(state.score_covariances)
     return_loading_covariances = _has_covariances(state.loading_covariances)
