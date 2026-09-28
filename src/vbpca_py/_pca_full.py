@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import contextlib
 import logging
-import os
 import time
 import warnings
 from dataclasses import dataclass, replace
@@ -67,6 +66,7 @@ from ._runtime_policy import (
     RuntimeThreadConfig,
     RuntimeWorkloadProfile,
     SparseAutotuneInputs,
+    _available_cpu_count,
     _build_dense_autotune_candidates,
     apply_runtime_policy_defaults,
     autotune_cov_writeback_mode_dense,
@@ -591,7 +591,7 @@ def _resolve_runtime_threads_for_training(
             runtime_threads=runtime_threads,
             runtime_report=runtime_report,
             tuning_mode=tuning_mode,
-            hw_threads=max(1, int(os.cpu_count() or 1)),
+            hw_threads=_available_cpu_count(),
             profile_path=resolve_profile_path(opts.get("runtime_profile")),
         )
 

@@ -8,6 +8,8 @@
 #include <stdexcept>
 #include <thread>
 
+
+#include "thread_limits.h"
 namespace py = pybind11;
 
 namespace {
@@ -155,9 +157,7 @@ py::dict score_update_dense_masked_nopattern(
 
     const Eigen::MatrixXd identity = Eigen::MatrixXd::Identity(n_components, n_components);
 
-    const int threads_requested = num_cpu > 0 ? num_cpu : static_cast<int>(std::thread::hardware_concurrency());
-    const int threads = std::max(1, threads_requested);
-    const int actual_threads = std::max(1, std::min(threads, n_samples));
+    const int actual_threads = vbpca_threads::resolve_thread_count(num_cpu, n_samples);
 
     auto worker = [&](int start, int end) {
         for (int j = start; j < end; ++j) {
@@ -305,9 +305,7 @@ py::dict loadings_update_dense_masked_nopattern(
 
     const Eigen::MatrixXd identity = Eigen::MatrixXd::Identity(n_components, n_components);
 
-    const int threads_requested = num_cpu > 0 ? num_cpu : static_cast<int>(std::thread::hardware_concurrency());
-    const int threads = std::max(1, threads_requested);
-    const int actual_threads = std::max(1, std::min(threads, n_features));
+    const int actual_threads = vbpca_threads::resolve_thread_count(num_cpu, n_features);
 
     auto worker = [&](int start, int end) {
         for (int i = start; i < end; ++i) {

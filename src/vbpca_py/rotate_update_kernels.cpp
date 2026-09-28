@@ -13,6 +13,8 @@
 #include <thread>
 #include <vector>
 
+
+#include "thread_limits.h"
 namespace py = pybind11;
 
 namespace {
@@ -22,20 +24,9 @@ constexpr int AUTO_ITEMS_PER_THREAD = 32;
 constexpr int AUTO_SMALL_ITEMS_CAP = 256;
 
 int resolve_num_threads(int requested, int n_items) {
-    if (requested > 0) {
-        return std::max(1, std::min(requested, n_items));
-    }
-
-    const char *env_threads = std::getenv("VBPCA_NUM_THREADS");
-    if (env_threads != nullptr) {
-        try {
-            const int parsed = std::stoi(env_threads);
-            if (parsed > 0) {
-                return std::max(1, std::min(parsed, n_items));
-            }
-        } catch (...) {
-            // Ignore malformed env value and fall back.
-        }
+    int threads = vbpca_threads::resolve_thread_count(requested, n_items);
+    if (vbpca_threads::has_thread_override(requested)) {
+        return threads;
     }
 
     if (n_items < AUTO_MIN_ITEMS) {
@@ -45,10 +36,6 @@ int resolve_num_threads(int requested, int n_items) {
     if (n_items < AUTO_SMALL_ITEMS_CAP) {
         return 1;
     }
-
-    const unsigned int hw = std::thread::hardware_concurrency();
-    int threads = hw > 0 ? static_cast<int>(hw) : 1;
-    threads = std::max(1, std::min(threads, n_items));
     const int limit_by_items = std::max(1, n_items / AUTO_ITEMS_PER_THREAD);
     threads = std::min(threads, limit_by_items);
     return std::max(1, threads);
