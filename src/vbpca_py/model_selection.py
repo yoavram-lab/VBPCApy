@@ -64,6 +64,7 @@ class SelectionConfig:
     max_trials: int | None = None
     compute_explained_variance: bool = True
     return_best_model: bool = False
+    reuse_runtime_policy: bool = True
 
 
 _PROBE_FRACTION = 0.1
@@ -416,6 +417,142 @@ class SweepInputs:
     verbose_enabled: bool
 
 
+_RUNTIME_POLICY_OPTION_KEYS = (
+    "runtime_tuning",
+    "num_cpu",
+    "num_cpu_score_update",
+    "num_cpu_loadings_update",
+    "num_cpu_noise_update",
+    "num_cpu_rms",
+    "masked_batch_size",
+    "cov_writeback_mode",
+    "log_progress_stride",
+    "accessor_mode",
+    "auto_pattern_masked",
+    "uniquesv",
+)
+
+
+def _component_regime(k: int) -> tuple[int, int]:
+    """Return a power-of-two rank band for runtime-policy reuse."""
+    rank = max(1, int(k))
+    lower = 1 << (rank.bit_length() - 1)
+    return lower, (2 * lower) - 1
+
+
+def _matrix_representation(x: Matrix | None) -> str:
+    if x is None:
+        return "none"
+    if sp.issparse(x):
+        return x.format
+    return "dense"
+
+
+def _selection_observed_count(x: Matrix, mask: Matrix | None) -> int:
+    if sp.issparse(x):
+        if sp.issparse(mask):
+            return int(np.count_nonzero(mask.data))
+        if mask is not None:
+            return int(np.count_nonzero(np.asarray(mask, dtype=bool)))
+        return int(x.nnz)
+
+    observed = np.isfinite(np.asarray(x))
+    if mask is not None:
+        observed &= np.asarray(mask, dtype=bool)
+    return int(np.count_nonzero(observed))
+
+
+def _runtime_policy_key(
+    *,
+    k: int,
+    x: Matrix,
+    mask: Matrix | None,
+    opts: Mapping[str, object],
+) -> tuple[object, ...]:
+    """Build a conservative compatibility key for measured runtime settings.
+
+    Returns:
+        Hashable key covering workload shape, representation, rank, and options.
+    """
+    option_signature = tuple(
+        (name, repr(opts.get(name))) for name in _RUNTIME_POLICY_OPTION_KEYS
+    )
+    return (
+        tuple(int(value) for value in x.shape),
+        _selection_observed_count(x, mask),
+        _matrix_representation(x),
+        _matrix_representation(mask),
+        _matrix_representation(cast("Matrix | None", opts.get("xprobe"))),
+        _component_regime(k),
+        option_signature,
+    )
+
+
+def _runtime_tuning_enabled(opts: Mapping[str, object]) -> bool:
+    raw = opts.get("runtime_tuning", "safe")
+    mode = "safe" if raw is None else str(raw).strip().lower()
+    return mode in {"safe", "aggressive"}
+
+
+def _runtime_policy_from_report(report: Mapping[str, object]) -> dict[str, object]:
+    kernel_values = report.get("kernel_values")
+    workload = report.get("workload")
+    if not isinstance(kernel_values, dict):
+        return {}
+
+    is_sparse = isinstance(workload, dict) and bool(workload.get("is_sparse"))
+    score_key = "score_update_sparse" if is_sparse else "score_update_dense"
+    loadings_key = "loadings_update_sparse" if is_sparse else "loadings_update_dense"
+    kernel_map = {
+        "num_cpu_score_update": score_key,
+        "num_cpu_loadings_update": loadings_key,
+        "num_cpu_noise_update": "noise_sxv_sum",
+        "num_cpu_rms": "rms",
+    }
+    policy: dict[str, object] = {
+        "runtime_tuning": "off",
+        "runtime_report": True,
+    }
+    for option_name, report_name in kernel_map.items():
+        value = kernel_values.get(report_name)
+        if isinstance(value, (int, np.integer)):
+            policy[option_name] = int(value)
+
+    for option_name in (
+        "cov_writeback_mode",
+        "log_progress_stride",
+        "accessor_mode",
+    ):
+        value = report.get(option_name)
+        if value is not None:
+            policy[option_name] = value
+
+    batch_report = report.get("autotune_masked_batch")
+    if isinstance(batch_report, dict):
+        best = batch_report.get("best")
+        if isinstance(best, dict):
+            batch_size = best.get("masked_batch_size")
+            if isinstance(batch_size, (int, np.integer)):
+                policy["masked_batch_size"] = int(batch_size)
+    return policy
+
+
+def _runtime_tuning_elapsed(report: Mapping[str, object]) -> float:
+    elapsed = 0.0
+    for key in (
+        "autotune_dense_masked",
+        "autotune_sparse",
+        "autotune_masked_batch",
+        "cov_writeback_autotune",
+    ):
+        section = report.get(key)
+        if isinstance(section, dict):
+            value = section.get("elapsed_sec", 0.0)
+            if isinstance(value, (float, int, np.floating, np.integer)):
+                elapsed += float(value)
+    return elapsed
+
+
 def _handle_metric_reversal(  # noqa: PLR0913
     *,
     state: _SweepState,
@@ -467,6 +604,70 @@ def _handle_patience(
     return True
 
 
+def _fit_with_reused_runtime_policy(
+    *,
+    k: int,
+    x: Matrix,
+    mask: Matrix | None,
+    inputs: SweepInputs,
+    cache: dict[tuple[object, ...], dict[str, object]],
+) -> tuple[dict[str, object], VBPCA | None]:
+    reuse = (
+        k > 0
+        and inputs.cfg.reuse_runtime_policy
+        and _runtime_tuning_enabled(inputs.fit_opts)
+    )
+    policy_key: tuple[object, ...] | None = None
+    cached_policy: dict[str, object] | None = None
+    candidate_opts = inputs.fit_opts
+
+    if reuse:
+        policy_key = _runtime_policy_key(
+            k=k,
+            x=x,
+            mask=mask,
+            opts=inputs.fit_opts,
+        )
+        cached_policy = cache.get(policy_key)
+        candidate_opts = dict(inputs.fit_opts)
+        candidate_opts["runtime_report"] = True
+        if cached_policy is not None:
+            candidate_opts.update(cached_policy)
+
+    entry, est = _fit_candidate(
+        k,
+        x,
+        mask,
+        inputs.cfg,
+        candidate_opts,
+    )
+    if policy_key is None or est is None:
+        return entry, est
+
+    lower, upper = _component_regime(k)
+    entry["runtime_policy_regime"] = f"{lower}-{upper}"
+    report = getattr(est, "runtime_report_", None)
+
+    if cached_policy is not None:
+        entry["runtime_policy_source"] = "selection_cache"
+        entry["runtime_tuning_sec"] = 0.0
+        if isinstance(report, dict):
+            report["runtime_policy_source"] = "selection_cache"
+            report["runtime_policy_regime"] = entry["runtime_policy_regime"]
+        return entry, est
+
+    if isinstance(report, dict):
+        policy = _runtime_policy_from_report(report)
+        if policy:
+            cache[policy_key] = policy
+        entry["runtime_policy_source"] = "measured"
+        entry["runtime_tuning_sec"] = _runtime_tuning_elapsed(report)
+        report["runtime_policy_source"] = "measured"
+        report["runtime_policy_regime"] = entry["runtime_policy_regime"]
+
+    return entry, est
+
+
 def _sweep_components(
     k_values: Sequence[int],
     x_arr: Matrix,
@@ -490,12 +691,19 @@ def _sweep_components(
     prev_metric_val: float | None = None
     prev_entry: dict[str, object] | None = None
     best_est: VBPCA | None = None
+    runtime_policy_cache: dict[tuple[object, ...], dict[str, object]] = {}
 
     for idx, k in enumerate(k_values):
         if cfg.max_trials is not None and idx >= int(cfg.max_trials):
             break
 
-        entry, est = _fit_candidate(k, x_arr, mask_arg, cfg, inputs.fit_opts)
+        entry, est = _fit_with_reused_runtime_policy(
+            k=int(k),
+            x=x_arr,
+            mask=mask_arg,
+            inputs=inputs,
+            cache=runtime_policy_cache,
+        )
         trace.append(entry)
 
         metric_val = _metric_value_from_entry(cfg.metric, entry)
