@@ -203,3 +203,18 @@ python -m analysis.trade_study.modern_defaults_study promote-confirm \
 
 The promotion command recomputes the bootstrap gates and Pareto front from the
 validated checkpoints. It does not accept a manually supplied finalist list.
+After every confirmation shard validates, apply the same safety gates and the
+registered material-improvement thresholds, then write the scale manifest:
+
+```bash
+python -m analysis.trade_study.modern_defaults_study promote-scale \
+  --confirm-manifest modern-defaults-confirm-v1.json \
+  --output-dir modern-defaults-confirm-results \
+  --summary-output modern-defaults-confirm-summary.json \
+  --output modern-defaults-scale-v1.json
+```
+
+The mandatory post-factor and legacy anchors remain in the scale manifest. An
+optional screen candidate advances only when it is non-inferior on every safety
+gate and its confirmation point estimate clears at least one registered
+material-improvement threshold.

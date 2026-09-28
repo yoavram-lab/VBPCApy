@@ -151,17 +151,11 @@ def _pareto_front(
     ]
 
 
-def summarize_screen(
-    manifest_path: Path,
+def _paired_comparisons(
+    rows: list[dict[str, Any]],
     manifest: dict[str, Any],
-    output_dir: Path,
+    gates: dict[str, float],
 ) -> dict[str, Any]:
-    """Apply the frozen paired gates and Pareto promotion rule."""
-    if manifest["profile"] != "screen":
-        msg = "screen promotion requires a screen-profile manifest"
-        raise ValueError(msg)
-    rows = load_complete_records(manifest_path, manifest, output_dir)
-    means = descriptive_summary(rows)
     reference_rows = [row for row in rows if row["candidate_id"] == REFERENCE_CANDIDATE]
     bootstrap = manifest["bootstrap"]
     comparisons: dict[str, Any] = {}
@@ -185,8 +179,23 @@ def summarize_screen(
         }
         comparisons[candidate_id] = {
             "effects": effects,
-            **_gate_results(effects, manifest["screen_gates"]),
+            **_gate_results(effects, gates),
         }
+    return comparisons
+
+
+def summarize_screen(
+    manifest_path: Path,
+    manifest: dict[str, Any],
+    output_dir: Path,
+) -> dict[str, Any]:
+    """Apply the frozen paired gates and Pareto promotion rule."""
+    if manifest["profile"] != "screen":
+        msg = "screen promotion requires a screen-profile manifest"
+        raise ValueError(msg)
+    rows = load_complete_records(manifest_path, manifest, output_dir)
+    means = descriptive_summary(rows)
+    comparisons = _paired_comparisons(rows, manifest, manifest["screen_gates"])
 
     optional = [
         candidate_id
@@ -216,4 +225,48 @@ def summarize_screen(
         "pareto_optional_candidates": pareto,
         "promoted_finalists": finalists,
         "confirmation_candidate_ids": [*MANDATORY_CANDIDATES, *finalists],
+    }
+
+
+def summarize_confirmation(
+    manifest_path: Path,
+    manifest: dict[str, Any],
+    output_dir: Path,
+) -> dict[str, Any]:
+    """Apply confirmation safety gates and material-improvement rules."""
+    if manifest["profile"] != "confirm":
+        msg = "confirmation promotion requires a confirm-profile manifest"
+        raise ValueError(msg)
+    rows = load_complete_records(manifest_path, manifest, output_dir)
+    comparisons = _paired_comparisons(rows, manifest, manifest["confirm_gates"])
+    gates = manifest["confirm_gates"]
+    for comparison in comparisons.values():
+        effects = comparison["effects"]
+        material_checks = {
+            "rank_mae_reduction": effects["rank_mae_difference"]["estimate"]
+            <= -float(gates["material_rank_mae_improvement"]),
+            "iteration_reduction": effects["iteration_ratio"]["estimate"]
+            <= 1.0 - float(gates["material_iteration_reduction"]),
+        }
+        comparison["material_checks"] = material_checks
+        comparison["material_improvement"] = any(material_checks.values())
+        comparison["adopt"] = bool(
+            comparison["eligible"] and comparison["material_improvement"]
+        )
+
+    adopted = [
+        candidate_id
+        for candidate_id, comparison in comparisons.items()
+        if candidate_id not in MANDATORY_CANDIDATES and comparison["adopt"]
+    ]
+    return {
+        "manifest_sha256": manifest_sha256(manifest_path),
+        "design_version": manifest["design_version"],
+        "profile": manifest["profile"],
+        "n_reps": manifest["n_reps"],
+        "reference_candidate": REFERENCE_CANDIDATE,
+        "descriptive": descriptive_summary(rows),
+        "paired_vs_reference": comparisons,
+        "adopted_optional_candidates": adopted,
+        "scale_candidate_ids": [*MANDATORY_CANDIDATES, *adopted],
     }
