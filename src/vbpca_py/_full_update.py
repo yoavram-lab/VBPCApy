@@ -847,10 +847,9 @@ def _initialize_parameters(  # noqa: PLR0914
             if sp.issparse(ctx.x_data):
                 mu_num = np.array(ctx.x_data.sum(axis=1)).ravel()
             else:
-                mu_num = np.sum(
-                    np.asarray(ctx.x_data, dtype=float),
-                    axis=1,
-                )
+                x_dense = np.asarray(ctx.x_data, dtype=float)
+                mask_dense = np.asarray(ctx.mask, dtype=bool)
+                mu_num = np.sum(np.where(mask_dense, x_dense, 0.0), axis=1)
             # Avoid division by zero: rows with no observations get zero mean.
             with np.errstate(divide="ignore", invalid="ignore"):
                 mu_vec = np.divide(
@@ -2028,11 +2027,34 @@ def _update_loadings(
 # ---------------------------------------------------------------------------
 
 
-def _recompute_rms(ctx: RmsContext) -> tuple[float, float, Matrix]:
+def _coerce_residual_matrix(error: Matrix) -> Matrix:
+    """Return a dense array or CSR residual with a stable concrete type."""
+    if sp.issparse(error):
+        return error if isinstance(error, sp.csr_matrix) else sp.csr_matrix(error)
+    return np.asarray(error)
+
+
+def _residual_rms(error: Matrix | None, n_observed: float) -> float:
+    """Compute RMS from an already masked residual matrix.
+
+    Returns:
+        Root-mean-squared residual, or NaN when no residuals are available.
+    """
+    count = int(n_observed)
+    if error is None or count <= 0:
+        return float("nan")
+    if sp.issparse(error):
+        values = sp.csr_matrix(error).data
+    else:
+        values = np.asarray(error, dtype=float)
+    return float(np.sqrt(np.sum(values**2) / count))
+
+
+def _recompute_rms(ctx: RmsContext) -> tuple[float, float, Matrix, Matrix | None]:
     """Recompute RMS and probe RMS after an update of loadings/scores.
 
     Returns:
-        RMS on data, RMS on probe, and error matrix.
+        RMS on data, RMS on probe, data residual, and optional probe residual.
     """
     cfg_data = RmsConfig(n_observed=int(ctx.n_data), num_cpu=int(ctx.num_cpu))
     rms, err_mx_raw = compute_rms(
@@ -2042,29 +2064,23 @@ def _recompute_rms(ctx: RmsContext) -> tuple[float, float, Matrix]:
         ctx.mask,
         cfg_data,
     )
-    err_mx: Matrix
-    if sp.issparse(err_mx_raw):
-        err_mx = (
-            err_mx_raw
-            if isinstance(err_mx_raw, sp.csr_matrix)
-            else sp.csr_matrix(cast("Any", err_mx_raw))
-        )
-    else:
-        err_mx = np.asarray(err_mx_raw)
+    err_mx = _coerce_residual_matrix(cast("Matrix", err_mx_raw))
 
+    probe_err_mx: Matrix | None = None
     if ctx.n_probe > 0 and ctx.x_probe is not None and ctx.mask_probe is not None:
         cfg_probe = RmsConfig(n_observed=int(ctx.n_probe), num_cpu=int(ctx.num_cpu))
-        prms, _ = compute_rms(
+        prms, probe_err_raw = compute_rms(
             ctx.x_probe,
             ctx.loadings,
             ctx.scores,
             ctx.mask_probe,
             cfg_probe,
         )
+        probe_err_mx = _coerce_residual_matrix(cast("Matrix", probe_err_raw))
     else:
         prms = float("nan")
 
-    return float(rms), float(prms), err_mx
+    return float(rms), float(prms), err_mx, probe_err_mx
 
 
 # ---------------------------------------------------------------------------

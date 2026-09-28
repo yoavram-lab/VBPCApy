@@ -51,6 +51,7 @@ from ._full_update import (
     _prepare_data,
     _prior_precision_matrix,
     _recompute_rms,
+    _residual_rms,
     _update_bias,
     _update_hyperpriors,
     _update_loadings,
@@ -678,6 +679,7 @@ def _resolve_runtime_threads_for_training(
         runtime_report=runtime_report,
     )
     runtime_report["cov_writeback_mode"] = cov_writeback_mode
+    runtime_report["bias_update_order"] = str(opts["bias_update_order"])
     runtime_report["log_progress_stride"] = int(log_stride)
     runtime_report["accessor_mode"] = accessor_mode
     runtime_report["behavior_sources"] = behavior_sources
@@ -1578,10 +1580,10 @@ def _update_loadings_phase(ctx: IterationContext, x_data: Matrix) -> float:
 
 def _rms_phase(
     ctx: IterationContext, x_data: Matrix, x_probe: Matrix | None
-) -> tuple[float, float, float]:
+) -> tuple[Matrix, Matrix | None, float, float, float]:
     cfg = ctx.cfg
     rms_start = time.perf_counter()
-    rms, prms, err_mx = _recompute_rms(
+    rms, prms, err_mx, probe_err_mx = _recompute_rms(
         RmsContext(
             x_data=x_data,
             x_probe=x_probe,
@@ -1595,7 +1597,29 @@ def _rms_phase(
         )
     )
     ctx.training.err_mx = err_mx
-    return float(rms), float(prms), time.perf_counter() - rms_start
+
+    if str(cfg.opts.get("bias_update_order")) == "post_factor":
+        mu_before = ctx.training.model.mu.copy()
+        x_data, x_probe = _bias_and_center(ctx)
+        mu_increment = ctx.training.model.mu - mu_before
+        probe = (
+            ProbeMatrices(x=probe_err_mx, mask=ctx.prepared.mask_probe)
+            if probe_err_mx is not None and ctx.prepared.mask_probe is not None
+            else None
+        )
+        err_mx, probe_err_mx = subtract_mu(
+            mu_increment,
+            err_mx,
+            ctx.prepared.mask,
+            probe=probe,
+            update_bias=bool(cfg.opts["bias"]),
+        )
+        ctx.training.err_mx = err_mx
+        rms = _residual_rms(err_mx, ctx.prepared.n_data)
+        prms = _residual_rms(probe_err_mx, ctx.prepared.n_probe)
+
+    elapsed = time.perf_counter() - rms_start
+    return x_data, x_probe, float(rms), float(prms), elapsed
 
 
 def _noise_phase(ctx: IterationContext, rms: float) -> tuple[float, float]:
@@ -1671,10 +1695,15 @@ def _iteration_step(ctx: IterationContext) -> None:
 
     _update_hyperpriors_phase(ctx)
 
-    x_data, x_probe = _bias_and_center(ctx)
+    if str(ctx.cfg.opts.get("bias_update_order")) == "legacy":
+        x_data, x_probe = _bias_and_center(ctx)
+    else:
+        x_data = ctx.centering_state.x_data
+        x_probe = ctx.centering_state.x_probe
+
     x_data, x_probe, phase_scores_sec = _score_and_rotate(ctx, x_data, x_probe)
     phase_loadings_sec = _update_loadings_phase(ctx, x_data)
-    rms, prms, phase_rms_sec = _rms_phase(ctx, x_data, x_probe)
+    x_data, x_probe, rms, prms, phase_rms_sec = _rms_phase(ctx, x_data, x_probe)
     s_xv, phase_noise_sec = _noise_phase(ctx, rms)
     convmsg, phase_converge_sec = _convergence_phase(
         ctx,
@@ -2275,6 +2304,7 @@ def _build_options(kwargs: Mapping[str, object]) -> dict[str, object]:
         "xprobe": None,
         "rotate2pca": True,
         "display": False,
+        "bias_update_order": "auto",
         "compat_mode": "strict_legacy",
         "return_diagnostics": True,
         "runtime_report": False,
@@ -2294,6 +2324,18 @@ def _build_options(kwargs: Mapping[str, object]) -> dict[str, object]:
         )
         raise ValueError(msg)
     opts["compat_mode"] = compat_mode
+
+    bias_order_raw = str(opts.get("bias_update_order", "auto"))
+    bias_order = bias_order_raw.strip().lower()
+    if bias_order == "auto":
+        bias_order = "legacy" if compat_mode == "strict_legacy" else "post_factor"
+    if bias_order not in {"legacy", "post_factor"}:
+        msg = (
+            "bias_update_order must be one of {'auto', 'legacy', 'post_factor'} "
+            f"(got {bias_order_raw!r})."
+        )
+        raise ValueError(msg)
+    opts["bias_update_order"] = bias_order
     opts["angle_every"] = max(1, _int_opt(opts.get("angle_every", 1), default=1))
     opts["return_diagnostics"] = int(bool(opts.get("return_diagnostics", 1)))
     opts = apply_runtime_policy_defaults(opts)

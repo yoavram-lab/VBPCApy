@@ -55,6 +55,7 @@ from vbpca_py._full_update import (
     _observed_indices_with_mode,
     _prepare_data,
     _recompute_rms,
+    _residual_rms,
     _score_update_fast_dense_no_av,
     _score_update_general_no_patterns,
     _update_bias,
@@ -662,7 +663,8 @@ def test_initialize_parameters_basic_centering() -> None:
 
     x_data = x.copy()
     x_probe = None
-    mask = np.ones_like(x_data, dtype=bool)
+    mask = rng.random(x_data.shape) >= 0.25
+    mask[:, 0] = True
     mask_probe = None
     n_obs_row = np.sum(mask, axis=1).astype(float)
 
@@ -715,9 +717,9 @@ def test_initialize_parameters_basic_centering() -> None:
     assert x_centered.shape == x_data.shape
     assert np.all(np.isfinite(x_centered))
     assert x_probe_centered is None
-    expected_mu = np.mean(x_data, axis=1, keepdims=True)
-    assert_allclose(mu, expected_mu)
-    assert_allclose(np.mean(x_centered, axis=1), 0.0, atol=1e-14)
+    expected_mu = np.sum(np.where(mask, x_data, 0.0), axis=1) / n_obs_row
+    assert_allclose(mu.ravel(), expected_mu)
+    assert_allclose(np.sum(np.where(mask, x_centered, 0.0), axis=1), 0.0, atol=1e-14)
 
 
 def test_initialize_parameters_respects_provided_init_without_rng() -> None:
@@ -1775,11 +1777,14 @@ def test_recompute_rms_matches_manual() -> None:
         num_cpu=1,
     )
 
-    rms, prms, err_mx = _recompute_rms(ctx)
+    rms, prms, err_mx, probe_err_mx = _recompute_rms(ctx)
 
     assert np.isnan(prms)
+    assert probe_err_mx is None
     assert err_mx.shape == x.shape
     assert_allclose(rms, rms_manual, rtol=1e-6, atol=1e-8)
+    assert_allclose(_residual_rms(err_mx, n_data), rms_manual)
+    assert np.isnan(_residual_rms(None, 0))
 
 
 def test_recompute_rms_forwards_num_cpu(monkeypatch: pytest.MonkeyPatch) -> None:
