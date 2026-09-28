@@ -45,11 +45,17 @@ def _is_sparse(x: object) -> bool:
 
 def _ensure_mask(x: np.ndarray, mask: Mask | None) -> Mask:
     """Return a boolean mask where True marks observed entries."""
+    if np.issubdtype(x.dtype, np.number):
+        finite = ~np.isnan(x.astype(float))
+    else:
+        finite = ~np.not_equal(x, x)
     if mask is None:
-        if np.issubdtype(x.dtype, np.number):
-            return ~np.isnan(x.astype(float))
-        return ~np.not_equal(x, x)  # type: ignore[no-any-return]
-    return np.asarray(mask, dtype=bool)
+        return finite
+    observed = np.asarray(mask, dtype=bool)
+    if observed.shape != x.shape:
+        msg = f"mask shape {observed.shape} does not match data shape {x.shape}"
+        raise ValueError(msg)
+    return observed & finite
 
 
 def _sparse_col_counts(mat: sp.csc_matrix) -> np.ndarray:
@@ -1357,6 +1363,7 @@ def _check_outliers(
 def check_data(  # noqa: PLR0913
     x: np.ndarray,
     *,
+    mask: Mask | None = None,
     column_names: Sequence[str] | None = None,
     skewness_threshold: float = 2.0,
     outlier_mad_threshold: float = 5.0,
@@ -1372,6 +1379,9 @@ def check_data(  # noqa: PLR0913
 
     Args:
         x: Data matrix of shape ``(n_samples, n_features)``.
+        mask: Optional boolean observation mask with the same shape as ``x``.
+            Entries are included only when the mask is true and the data value
+            is finite.
         column_names: Optional feature names for readable messages.
         skewness_threshold: Absolute skewness above which a feature is
             flagged (default ``2.0``).
@@ -1390,6 +1400,7 @@ def check_data(  # noqa: PLR0913
     """
     x_arr = np.asarray(x, dtype=float)
     n_samples, n_features = x_arr.shape
+    observed = _ensure_mask(x_arr, mask)
     report = DataReport()
     cfg = _CheckDataConfig(
         skewness_threshold=skewness_threshold,
@@ -1403,7 +1414,7 @@ def check_data(  # noqa: PLR0913
     for j in range(n_features):
         col = x_arr[:, j]
         name = column_names[j] if column_names is not None else str(j)
-        obs = col[~np.isnan(col)]
+        obs = col[observed[:, j]]
         col_summary: dict[str, float] = {"n_obs": float(obs.size)}
 
         _check_missing(obs, name, col_summary, cfg, report)
