@@ -162,7 +162,7 @@ def test_resolve_runtime_thread_config_invalid_kernel_value_falls_back() -> None
 
 
 def test_safe_autotune_sets_rms_for_large_sparse_when_unset(monkeypatch) -> None:
-    monkeypatch.setattr("vbpca_py._runtime_policy.os.cpu_count", lambda: 16)
+    monkeypatch.setattr("vbpca_py._runtime_policy._available_cpu_count", lambda: 16)
     cfg = resolve_runtime_thread_config(
         {
             "num_cpu": 1,
