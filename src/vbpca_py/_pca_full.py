@@ -643,7 +643,7 @@ def _autotune_dense_masked_runtime(
     )
     inputs = DenseMaskedAutotuneInputs(
         x_data=np.asarray(ctx.prepared.x_data, dtype=np.float64),
-        mask=np.asarray(ctx.prepared.mask, dtype=np.float64),
+        mask=np.asarray(ctx.prepared.mask, dtype=np.bool_),
         loadings=np.asarray(ctx.training.model.a, dtype=np.float64),
         scores=np.asarray(ctx.training.model.s, dtype=np.float64),
         noise_var=float(ctx.training.model.noise_var),
@@ -1044,7 +1044,7 @@ def _build_dense_cov_inputs(ctx: _AutotuneContext) -> DenseMaskedAutotuneInputs:
     )
     return DenseMaskedAutotuneInputs(
         x_data=np.asarray(ctx.prepared.x_data, dtype=np.float64),
-        mask=np.asarray(ctx.prepared.mask, dtype=np.float64),
+        mask=np.asarray(ctx.prepared.mask, dtype=np.bool_),
         loadings=np.asarray(ctx.training.model.a, dtype=np.float64),
         scores=np.asarray(ctx.training.model.s, dtype=np.float64),
         noise_var=float(ctx.training.model.noise_var),

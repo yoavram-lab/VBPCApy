@@ -651,7 +651,7 @@ def autotune_dense_masked_threads(
 
     arrays = _DenseBenchmarkArrays(
         x=np.asarray(inputs.x_data, dtype=np.float64, order="C"),
-        mask=np.asarray(inputs.mask, dtype=np.float64, order="C"),
+        mask=np.asarray(inputs.mask, dtype=np.bool_, order="C"),
         loadings=np.asarray(inputs.loadings, dtype=np.float64, order="C"),
         scores=np.asarray(inputs.scores, dtype=np.float64, order="C"),
         prior_prec=np.asarray(inputs.prior_prec, dtype=np.float64, order="C"),
@@ -726,7 +726,7 @@ def autotune_cov_writeback_mode_dense(  # noqa: PLR0913
     modes_unique = list(dict.fromkeys(normalize_cov_writeback_mode(m) for m in modes))
     arrays = _DenseBenchmarkArrays(
         x=np.asarray(inputs.x_data, dtype=np.float64, order="C"),
-        mask=np.asarray(inputs.mask, dtype=np.float64, order="C"),
+        mask=np.asarray(inputs.mask, dtype=np.bool_, order="C"),
         loadings=np.asarray(inputs.loadings, dtype=np.float64, order="C"),
         scores=np.asarray(inputs.scores, dtype=np.float64, order="C"),
         prior_prec=np.asarray(inputs.prior_prec, dtype=np.float64, order="C"),

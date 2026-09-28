@@ -97,6 +97,13 @@ process-level peak memory.
 The frozen local comparison and representation decision are in
 [`GENOMICS_STORAGE_REPORT.md`](GENOMICS_STORAGE_REPORT.md).
 
+## Dense input-view benchmark
+
+`benchmark_backend_phases.py` records score and loading phase timings for
+masked dense fits. The zero-copy C/F layout and compact-mask comparison is in
+[`DENSE_INPUT_VIEW_REPORT.md`](DENSE_INPUT_VIEW_REPORT.md). Its native buffer
+diagnostic is covered by regression tests, so future binding changes cannot
+silently reintroduce full-matrix layout conversions.
 The legacy stability workflow writes to the git-ignored
 `results/stability/` directory by default. Its convenience recipes are
 `just stability-analysis`, `just stability-coverage`, `just stability-plot`,
