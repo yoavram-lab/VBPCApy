@@ -9,30 +9,14 @@
 #include <thread>
 #include <vector>
 
+
+#include "thread_limits.h"
 namespace py = pybind11;
 
 namespace {
 
 int resolve_num_threads(int requested, int n_items) {
-    if (requested > 0) {
-        return std::max(1, std::min(requested, n_items));
-    }
-
-    const char *env_threads = std::getenv("VBPCA_NUM_THREADS");
-    if (env_threads != nullptr) {
-        try {
-            const int parsed = std::stoi(env_threads);
-            if (parsed > 0) {
-                return std::max(1, std::min(parsed, n_items));
-            }
-        } catch (...) {
-            // Ignore malformed env and fall back.
-        }
-    }
-
-    const unsigned int hw = std::thread::hardware_concurrency();
-    const int fallback = hw > 0 ? static_cast<int>(hw) : 1;
-    return std::max(1, std::min(fallback, n_items));
+    return vbpca_threads::resolve_thread_count(requested, n_items);
 }
 
 std::size_t idx3(int a, int b, int c, int dim_b, int dim_c) {

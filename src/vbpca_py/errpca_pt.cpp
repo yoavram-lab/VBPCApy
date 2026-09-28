@@ -21,27 +21,12 @@
 #include <thread>
 #include <vector>
 
+
+#include "thread_limits.h"
 namespace py = pybind11;
 
 static int resolve_num_threads(int requested, int n_rows) {
-    if (requested > 0) {
-        return std::max(1, std::min(requested, n_rows));
-    }
-
-    // Env override path for auto mode (requested <= 0).
-    const char *env_threads = std::getenv("VBPCA_NUM_THREADS");
-    if (env_threads != nullptr) {
-        try {
-            int parsed = std::stoi(env_threads);
-            if (parsed > 0) {
-                return std::max(1, std::min(parsed, n_rows));
-            }
-        } catch (...) {
-            // Ignore malformed env var and fall back.
-        }
-    }
-
-    return 1;
+    return vbpca_threads::resolve_thread_count(requested, n_rows);
 }
 
 static py::dict errpca_pt(

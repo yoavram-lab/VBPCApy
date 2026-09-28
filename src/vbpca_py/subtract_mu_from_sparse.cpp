@@ -32,6 +32,8 @@
 #include <pybind11/numpy.h>
 #include <pybind11/pybind11.h>
 
+
+#include "thread_limits.h"
 namespace py = pybind11;
 
 constexpr double EPS = 1e-15;
@@ -43,26 +45,7 @@ constexpr int AUTO_NNZ_PER_THREAD = 4096;
 namespace {
 
 int resolve_num_threads(int n_rows) {
-    // Optional env overrides. Specific key takes precedence.
-    const char *env_specific = std::getenv("VBPCA_SUBTRACT_THREADS");
-    const char *env_general = std::getenv("VBPCA_NUM_THREADS");
-    const char *env_value = (env_specific != nullptr) ? env_specific : env_general;
-
-    if (env_value != nullptr) {
-        try {
-            const int parsed = std::stoi(env_value);
-            if (parsed > 0) {
-                return std::max(1, std::min(parsed, n_rows));
-            }
-        } catch (...) {
-            // Ignore malformed env value and fall back to hardware.
-        }
-    }
-
-    unsigned int hw_threads = std::thread::hardware_concurrency();
-    int num_threads = hw_threads > 0 ? static_cast<int>(hw_threads) : 1;
-    num_threads = std::max(1, std::min(num_threads, n_rows));
-    return num_threads;
+    return vbpca_threads::resolve_thread_count(0, n_rows, "VBPCA_SUBTRACT_THREADS");
 }
 
 int resolve_num_threads_auto(int n_rows, int nnz) {

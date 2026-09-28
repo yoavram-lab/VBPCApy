@@ -3,7 +3,7 @@
 # -----------------------------
 # Core source files (Python + C++)
 # -----------------------------
-recursive-include src *.py *.pyi *.cpp
+recursive-include src *.py *.pyi *.cpp *.h
 include src/vbpca_py/py.typed
 
 # -----------------------------
