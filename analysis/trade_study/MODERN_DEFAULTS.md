@@ -80,6 +80,8 @@ The missing fraction is 15% before the external evaluation holdout:
 - MAR uses a fully observed anchor feature as the predictor in a logistic
   missingness model for the remaining features. The intercept is calibrated to
   the target missing fraction, so missingness depends only on observed data.
+  The external evaluation holdout excludes this anchor, preserving its observed
+  status in the final training mask.
 - MNAR censors the lower tail of each feature using its own values.
 - Block missingness removes one contiguous feature-by-sample block.
 
