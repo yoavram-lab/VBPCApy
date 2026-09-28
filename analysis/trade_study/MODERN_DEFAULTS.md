@@ -109,7 +109,10 @@ weight in candidate promotion.
 Every candidate uses the same generated data, observation mask, external
 holdout, and initialization seed as its anchor within a regime and replicate.
 Uncertainty uses a paired, regime-stratified bootstrap with 5,000 resamples and
-a frozen seed.
+a frozen seed. Each resample draws paired replicate indices with replacement
+within every regime and retains all regimes in the aggregate. Relative effects
+are ratios of the resampled aggregate means; additive effects are differences
+of those means.
 
 A screen candidate is eligible only when the 95% confidence bound satisfies
 all registered non-inferiority limits relative to the current post-factor
@@ -180,3 +183,21 @@ Monitor with `squeue -u "$USER"` and inspect completed resource use with
 consistent with the current [Rockfish shared-partition limits](https://docs.arch.jhu.edu/en/latest/1_Clusters/Rockfish/3_Slurm/Partitions.html).
 The later genomics-scale confirmation will use paired 24-core processes on a
 48-core `parallel` node so the dedicated-node allocation is fully occupied.
+
+After all screen shards validate, apply the registered gates and create the
+independent confirmation manifest directly from the checkpoints:
+
+```bash
+python -m analysis.trade_study.modern_defaults_study summarize-screen \
+  --manifest "$VBPCA_DEFAULTS_MANIFEST" \
+  --output-dir "$VBPCA_DEFAULTS_OUTPUT_DIR" \
+  --output modern-defaults-screen-summary.json
+python -m analysis.trade_study.modern_defaults_study promote-confirm \
+  --screen-manifest "$VBPCA_DEFAULTS_MANIFEST" \
+  --output-dir "$VBPCA_DEFAULTS_OUTPUT_DIR" \
+  --summary-output modern-defaults-screen-summary.json \
+  --output modern-defaults-confirm-v1.json
+```
+
+The promotion command recomputes the bootstrap gates and Pareto front from the
+validated checkpoints. It does not accept a manually supplied finalist list.
