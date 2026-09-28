@@ -56,7 +56,7 @@ def test_sparse_implicit_zero_legacy_counts_nonzero_only():
     assert x_data.shape == (2, 2)
 
 
-def test_vbpca_runs_with_sparse_mask_and_retains_observed_zero():
+def test_vbpca_sparse_explicit_mask_matches_dense_observed_zeros():
     x = sp.csr_matrix([[0.0, 1.0, 0.0], [2.0, 0.0, 3.0]])
     mask = np.array(
         [
@@ -76,7 +76,16 @@ def test_vbpca_runs_with_sparse_mask_and_retains_observed_zero():
     model.fit(x, mask=mask)
     recon = np.asarray(model.inverse_transform(), dtype=float)
 
+    dense_model = VBPCA(
+        n_components=1,
+        maxiters=10,
+        compat_mode="modern",
+        verbose=0,
+        random_state=0,
+    )
+    dense_model.fit(x.toarray(), mask=mask)
+
     assert recon.shape == (2, 3)
-    # Observed zero entry should remain near zero after reconstruction
-    assert abs(recon[0, 0]) < 5e-2
+    np.testing.assert_allclose(recon, dense_model.inverse_transform(), atol=1e-12)
+    assert model.rms_ == pytest.approx(dense_model.rms_)
     assert model.rms_ is not None

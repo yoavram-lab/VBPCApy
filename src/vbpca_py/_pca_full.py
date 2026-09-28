@@ -1327,6 +1327,8 @@ def _run_training_loop(
             cfg=cfg,
         )
         _iteration_step(ctx)
+        bias_state = ctx.bias_state
+        centering_state = ctx.centering_state
 
         _update_probe_best(probe_best, training, iteration)
 
