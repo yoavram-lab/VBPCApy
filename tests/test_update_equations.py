@@ -106,10 +106,12 @@ def update_problem() -> dict[str, np.ndarray | float]:
     }
 
 
+@pytest.mark.parametrize("use_complement", [False, True])
 @pytest.mark.parametrize("order", ["C", "F"])
 @pytest.mark.parametrize("num_cpu", [1, 2, 4])
 def test_score_update_matches_model_equations(
     update_problem: dict[str, np.ndarray | float],
+    use_complement: bool,
     order: str,
     num_cpu: int,
 ) -> None:
@@ -146,10 +148,12 @@ def test_score_update_matches_model_equations(
     )
 
 
+@pytest.mark.parametrize("use_complement", [False, True])
 @pytest.mark.parametrize("order", ["C", "F"])
 @pytest.mark.parametrize("num_cpu", [1, 2, 4])
 def test_loading_update_matches_model_equations(
     update_problem: dict[str, np.ndarray | float],
+    use_complement: bool,
     order: str,
     num_cpu: int,
 ) -> None:
@@ -177,6 +181,7 @@ def test_loading_update_matches_model_equations(
         prior_prec=prior_precision,
         noise_var=noise_var,
         return_covariances=True,
+        use_complement=use_complement,
         num_cpu=num_cpu,
     )
 

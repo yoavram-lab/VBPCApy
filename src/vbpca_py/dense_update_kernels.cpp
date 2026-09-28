@@ -32,6 +32,21 @@ struct MatrixView {
     }
 };
 
+using StridedConstMatrix = Eigen::Map<
+    const Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic>,
+    0,
+    Eigen::Stride<Eigen::Dynamic, Eigen::Dynamic>
+>;
+
+StridedConstMatrix eigen_view(const MatrixView &view) {
+    return StridedConstMatrix(
+        view.data,
+        view.rows,
+        view.cols,
+        Eigen::Stride<Eigen::Dynamic, Eigen::Dynamic>(view.col_stride, view.row_stride)
+    );
+}
+
 MatrixView matrix_view(const DoubleArray &array, const char *name) {
     const auto info = array.request();
     if (info.ndim != 2) {
@@ -262,6 +277,7 @@ py::dict score_update_dense_masked_nopattern(
     const py::object &loading_covariances_obj,
     double noise_var,
     bool return_covariances,
+    bool use_complement,
     int num_cpu
 ) {
     const MatrixView x_data = matrix_view(x_data_array, "x_data");
@@ -309,24 +325,58 @@ py::dict score_update_dense_masked_nopattern(
 
     const Eigen::MatrixXd identity = Eigen::MatrixXd::Identity(n_components, n_components);
 
+    Eigen::MatrixXd complete_precision;
+    Eigen::MatrixXd complete_rhs;
+    if (use_complement) {
+        const auto loadings_matrix = eigen_view(loadings);
+        const auto x_matrix = eigen_view(x_data);
+        complete_precision = noise_var * identity;
+        complete_precision.noalias() +=
+            loadings_matrix.transpose() * loadings_matrix;
+        complete_rhs = loadings_matrix.transpose() * x_matrix;
+
+        if (av_ptr != nullptr) {
+            for (int i = 0; i < n_features; ++i) {
+                const std::size_t base =
+                    static_cast<std::size_t>(i) * static_cast<std::size_t>(n_components) *
+                    static_cast<std::size_t>(n_components);
+                for (int r = 0; r < n_components; ++r) {
+                    for (int c = 0; c < n_components; ++c) {
+                        complete_precision(r, c) += av_ptr[
+                            base + static_cast<std::size_t>(r) * static_cast<std::size_t>(n_components) +
+                            static_cast<std::size_t>(c)
+                        ];
+                    }
+                }
+            }
+        }
+    }
+
     const int actual_threads = vbpca_threads::resolve_thread_count(num_cpu, n_samples);
 
     auto worker = [&](int start, int end) {
         Eigen::VectorXd component(n_components);
         Eigen::VectorXd rhs(n_components);
+        const double direction = use_complement ? -1.0 : 1.0;
         for (int j = start; j < end; ++j) {
-            Eigen::MatrixXd psi = noise_var * identity;
-            rhs.setZero();
+            Eigen::MatrixXd psi =
+                use_complement ? complete_precision : noise_var * identity;
+            if (use_complement) {
+                rhs = complete_rhs.col(j);
+            } else {
+                rhs.setZero();
+            }
 
             for (int i = 0; i < n_features; ++i) {
-                if (!mask.observed(i, j)) {
+                const bool observed = mask.observed(i, j);
+                if (observed == use_complement) {
                     continue;
                 }
                 for (int r = 0; r < n_components; ++r) {
                     component(r) = loadings(i, r);
                 }
-                psi.noalias() += component * component.transpose();
-                rhs.noalias() += component * x_data(i, j);
+                psi.noalias() += direction * component * component.transpose();
+                rhs.noalias() += direction * component * x_data(i, j);
 
                 if (av_ptr != nullptr) {
                     const std::size_t base =
@@ -334,7 +384,7 @@ py::dict score_update_dense_masked_nopattern(
                         static_cast<std::size_t>(n_components);
                     for (int r = 0; r < n_components; ++r) {
                         for (int c = 0; c < n_components; ++c) {
-                            psi(r, c) += av_ptr[
+                            psi(r, c) += direction * av_ptr[
                                 base + static_cast<std::size_t>(r) * static_cast<std::size_t>(n_components) +
                                 static_cast<std::size_t>(c)
                             ];
@@ -404,6 +454,7 @@ py::dict loadings_update_dense_masked_nopattern(
     const DoubleArray &prior_prec_array,
     double noise_var,
     bool return_covariances,
+    bool use_complement,
     int num_cpu
 ) {
     const MatrixView x_data = matrix_view(x_data_array, "x_data");
@@ -458,11 +509,38 @@ py::dict loadings_update_dense_masked_nopattern(
 
     const Eigen::MatrixXd identity = Eigen::MatrixXd::Identity(n_components, n_components);
 
+    Eigen::MatrixXd complete_second_moment;
+    Eigen::MatrixXd complete_rhs;
+    if (use_complement) {
+        const auto scores_matrix = eigen_view(scores);
+        const auto x_matrix = eigen_view(x_data);
+        complete_second_moment =
+            scores_matrix * scores_matrix.transpose();
+        complete_rhs = x_matrix * scores_matrix.transpose();
+
+        if (sv_ptr != nullptr) {
+            for (int j = 0; j < n_samples; ++j) {
+                const std::size_t base =
+                    static_cast<std::size_t>(j) * static_cast<std::size_t>(n_components) *
+                    static_cast<std::size_t>(n_components);
+                for (int r = 0; r < n_components; ++r) {
+                    for (int c = 0; c < n_components; ++c) {
+                        complete_second_moment(r, c) += sv_ptr[
+                            base + static_cast<std::size_t>(r) * static_cast<std::size_t>(n_components) +
+                            static_cast<std::size_t>(c)
+                        ];
+                    }
+                }
+            }
+        }
+    }
+
     const int actual_threads = vbpca_threads::resolve_thread_count(num_cpu, n_features);
 
     auto worker = [&](int start, int end) {
         Eigen::VectorXd component(n_components);
         Eigen::VectorXd rhs(n_components);
+        const double direction = use_complement ? -1.0 : 1.0;
         for (int i = start; i < end; ++i) {
             Eigen::MatrixXd phi(n_components, n_components);
             for (int r = 0; r < n_components; ++r) {
@@ -470,17 +548,23 @@ py::dict loadings_update_dense_masked_nopattern(
                     phi(r, c) = prior_prec(r, c);
                 }
             }
-            rhs.setZero();
+            if (use_complement) {
+                phi.noalias() += complete_second_moment;
+                rhs = complete_rhs.row(i).transpose();
+            } else {
+                rhs.setZero();
+            }
 
             for (int j = 0; j < n_samples; ++j) {
-                if (!mask.observed(i, j)) {
+                const bool observed = mask.observed(i, j);
+                if (observed == use_complement) {
                     continue;
                 }
                 for (int r = 0; r < n_components; ++r) {
                     component(r) = scores(r, j);
                 }
-                phi.noalias() += component * component.transpose();
-                rhs.noalias() += component * x_data(i, j);
+                phi.noalias() += direction * component * component.transpose();
+                rhs.noalias() += direction * component * x_data(i, j);
 
                 if (sv_ptr != nullptr) {
                     const std::size_t base =
@@ -488,7 +572,7 @@ py::dict loadings_update_dense_masked_nopattern(
                         static_cast<std::size_t>(n_components);
                     for (int r = 0; r < n_components; ++r) {
                         for (int c = 0; c < n_components; ++c) {
-                            phi(r, c) += sv_ptr[
+                            phi(r, c) += direction * sv_ptr[
                                 base + static_cast<std::size_t>(r) * static_cast<std::size_t>(n_components) +
                                 static_cast<std::size_t>(c)
                             ];
@@ -590,6 +674,7 @@ PYBIND11_MODULE(dense_update_kernels, m) {
         py::arg("loading_covariances") = py::none(),
         py::arg("noise_var"),
         py::arg("return_covariances") = true,
+        py::arg("use_complement") = false,
         py::arg("num_cpu") = 0
     );
 
@@ -603,6 +688,7 @@ PYBIND11_MODULE(dense_update_kernels, m) {
         py::arg("prior_prec"),
         py::arg("noise_var"),
         py::arg("return_covariances") = true,
+        py::arg("use_complement") = false,
         py::arg("num_cpu") = 0
     );
 }
