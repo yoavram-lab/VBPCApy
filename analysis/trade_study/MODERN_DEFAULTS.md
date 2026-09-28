@@ -136,6 +136,57 @@ reduction of at least 20%. Results are reported overall and separately by
 shape, missingness mechanism, and noise model. No default changes are made
 from screen results alone.
 
+## Results and decision
+
+All registered stages completed. The screen evaluated 30 candidates across 14
+regimes and three paired replicates. None of the 28 optional candidates passed
+every safety gate, so no alternative prior, probe fraction, iteration budget,
+or convergence policy advanced. The legacy and post-factor ordering anchors
+had identical rank MAE in the screen and nearly identical predictive scores.
+
+Independent confirmation therefore compared only the two mandatory anchors
+across nine regimes and 12 paired replicates. Legacy ordering missed the
+registered rank-MAE non-inferiority limit: its paired rank-MAE difference was
+0.046 (95% CI -0.074 to 0.167), whose upper bound exceeded the 0.10 limit. It
+did not meet either material-improvement criterion. Predictive RMSE, interval
+score, coverage, and iteration count remained nearly identical between the
+orders. Neither order selected a fit at its iteration cap.
+
+The final genomics-scale run used 5,846 features by 2,504 samples under
+complete, MAR, and lower-tail MNAR observation patterns, with three paired
+replicates per regime. Post-factor ordering recovered the exact rank in 8/9
+replicates, compared with 7/9 for legacy ordering. Its rank MAE was 0.111,
+compared with 0.222 for legacy ordering. The paired legacy-minus-post-factor
+rank-MAE difference was 0.111 (95% CI 0.000 to 0.333). Legacy ordering used
+2.0% more total iterations (95% CI 0.9% to 4.0%). Relative differences in
+held-out RMSE and interval score were below 0.003%, and the coverage difference
+was 0.00001. No candidate fit or selected refit reached its iteration budget.
+
+The registered evidence supports three decisions:
+
+1. Retain the current shape-routed prior, probe, iteration, and convergence
+   settings. No optional candidate earned promotion.
+2. Prefer post-factor mean/RMS ordering in recommended modern workflows. It
+   preserved prediction and calibration, avoided the lagged-state formulation,
+   and had equal or lower rank error at every study stage. The estimator's
+   strict-legacy behavior remains available for MATLAB-compatible analyses.
+3. Keep wall time as a resource diagnostic. It was excluded from candidate
+   promotion and from the final statistical comparison.
+
+### Provenance
+
+The genomics-scale stage ran on Rockfish as Slurm array job `31327049`; all
+three array tasks completed with exit code zero. It used VBPCApy 0.4.2 at
+revision `ea5099fdf1f8fd9f810a5ac61242334d93f635da`. The registered scale
+manifest SHA-256 is
+`4407467cbca74c0b73220d70ed16788a70818207e3290d43ff50e2eeeeaf48aa`.
+The reduced summary SHA-256 is
+`d20c07a649055d2a5fccc369ff5b76e9100942540d6a4736488c4a81f1ddfb70`.
+The preceding screen and confirmation summary hashes are
+`37f39f4d816a121a81a771d804bb560b0cbb8a1d38931f5cf0b089b3b26d93d4`
+and `4b91a65795af02bf08eedab044bc7d777f0278a151fc5da0c97e7c05b4a82618`,
+respectively.
+
 ## Resumable execution
 
 Generate the immutable registered screen only from a clean, pinned checkout:
@@ -218,3 +269,13 @@ The mandatory post-factor and legacy anchors remain in the scale manifest. An
 optional screen candidate advances only when it is non-inferior on every safety
 gate and its confirmation point estimate clears at least one registered
 material-improvement threshold.
+
+After every scale checkpoint validates, produce the final descriptive and
+paired summary without applying any additional selection rule:
+
+```bash
+python -m analysis.trade_study.modern_defaults_study summarize-scale \
+  --manifest modern-defaults-scale-v1.json \
+  --output-dir modern-defaults-scale-results \
+  --output modern-defaults-scale-summary.json
+```
