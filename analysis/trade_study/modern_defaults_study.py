@@ -21,7 +21,12 @@ from ._modern_defaults_io import (
     validate_checkpoint,
     write_manifest,
 )
-from ._modern_defaults_spec import PROFILE_REGIMES
+from ._modern_defaults_reduction import summarize_screen
+from ._modern_defaults_spec import (
+    PROFILE_REGIMES,
+    REGISTERED_CONFIRM_REPS,
+    REGISTERED_CONFIRM_SEED,
+)
 from ._modern_defaults_trial import run_trial
 
 
@@ -144,6 +149,32 @@ def _list_command(args: argparse.Namespace) -> None:
         print(f"{index}\t{candidate_id}\t{regime_name}")
 
 
+def _summary_command(args: argparse.Namespace) -> None:
+    manifest = load_manifest(args.manifest)
+    summary = summarize_screen(args.manifest, manifest, args.output_dir)
+    atomic_json(args.output, summary)
+    print(f"Saved screen summary -> {args.output}")
+
+
+def _promote_command(args: argparse.Namespace) -> None:
+    screen_manifest = load_manifest(args.screen_manifest)
+    summary = summarize_screen(args.screen_manifest, screen_manifest, args.output_dir)
+    if args.summary_output is not None:
+        atomic_json(args.summary_output, summary)
+    candidate_ids = tuple(str(item) for item in summary["confirmation_candidate_ids"])
+    manifest = write_manifest(
+        args.output,
+        profile="confirm",
+        n_reps=REGISTERED_CONFIRM_REPS,
+        seed=REGISTERED_CONFIRM_SEED,
+        candidate_ids=candidate_ids,
+    )
+    print(
+        f"Wrote {args.output}: {len(shards(manifest))} shards; "
+        f"sha256={manifest_sha256(args.output)}"
+    )
+
+
 def main() -> None:
     """Run the modern-defaults study command-line interface."""
     parser = argparse.ArgumentParser(description=__doc__)
@@ -173,13 +204,28 @@ def main() -> None:
     list_parser = subparsers.add_parser("list-shards")
     list_parser.add_argument("--manifest", type=Path, required=True)
 
+    summary_parser = subparsers.add_parser("summarize-screen")
+    summary_parser.add_argument("--manifest", type=Path, required=True)
+    summary_parser.add_argument("--output-dir", type=Path, required=True)
+    summary_parser.add_argument("--output", type=Path, required=True)
+
+    promote_parser = subparsers.add_parser("promote-confirm")
+    promote_parser.add_argument("--screen-manifest", type=Path, required=True)
+    promote_parser.add_argument("--output-dir", type=Path, required=True)
+    promote_parser.add_argument("--summary-output", type=Path)
+    promote_parser.add_argument("--output", type=Path, required=True)
+
     args = parser.parse_args()
     if args.command == "manifest":
         _manifest_command(args)
     elif args.command == "run-shard":
         _run_command(parser, args)
-    else:
+    elif args.command == "list-shards":
         _list_command(args)
+    elif args.command == "summarize-screen":
+        _summary_command(args)
+    else:
+        _promote_command(args)
 
 
 if __name__ == "__main__":
