@@ -62,6 +62,16 @@ from 0.848 to 0.588; selected-fit budget hits fell from 100% to 5%. The
 remaining hits occurred in wide and tall-extreme MNAR settings, so callers
 should still inspect convergence diagnostics for difficult data.
 
+**Post-backend validation (#214/#226/#237):** a preregistered screen of 30
+configurations across 14 regimes did not identify an alternative prior, probe
+fraction, iteration budget, or convergence policy that passed every safety
+gate. Independent confirmation and a 5,846-feature by 2,504-sample scale check
+supported post-factor mean/RMS ordering for recommended workflows. It retained
+prediction and calibration while producing equal or lower rank error than
+legacy ordering. Accordingly, :func:`recommend_config` requests
+``bias_update_order="post_factor"``. The estimator default remains
+``strict_legacy`` for backward compatibility and MATLAB parity.
+
 The returned dict is intended to be splatted into the estimator, e.g.::
 
     from vbpca_py import VBPCA, recommend_config
@@ -376,6 +386,7 @@ def recommend_config(
         )
 
     cfg = copy.deepcopy(_BUCKET_CONFIGS[bucket])
+    cfg["bias_update_order"] = "post_factor"
 
     if priority == "speed":
         cfg["maxiters"] = 100

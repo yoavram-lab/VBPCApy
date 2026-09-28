@@ -16,9 +16,11 @@
   `compat_mode="strict_legacy"`.
 
     Use `bias_update_order="post_factor"` to estimate the mean and evaluate
-    RMS from the same factor state. `compat_mode="modern"` selects that order
-    automatically. Pre-centering with `MissingAwareStandardScaler` remains a
-    useful conditioning step, but it is no longer required solely to align
-    the mean and RMS diagnostics.
+    RMS from the same factor state. `recommend_config()` and
+    `compat_mode="modern"` select that order automatically. The registered
+    defaults study retained prediction and calibration and found equal or lower
+    rank error with post-factor ordering. Pre-centering with
+    `MissingAwareStandardScaler` remains a useful conditioning step, but it is
+    no longer required solely to align the mean and RMS diagnostics.
 
 - **Fits are non-reproducible unless seeded.** `VBPCA(random_state=None)` (the default) draws fresh entropy for parameter initialization and any auto-generated xprobe mask on every call to `fit()`, so repeated fits on the same data can converge to different results. Pass an `int` or `np.random.Generator` via `random_state` for reproducible runs. Prior to #109, the default initialization was silently seeded with a fixed value; this is no longer the case.
