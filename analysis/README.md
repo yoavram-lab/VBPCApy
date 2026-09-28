@@ -114,6 +114,11 @@ automatic dispatch policy are documented in
 [`DENSE_SUFFICIENT_STATISTICS_REPORT.md`](DENSE_SUFFICIENT_STATISTICS_REPORT.md).
 The accompanying benchmark checks numerical agreement before recording timings.
 
+The mean-update state audit and local comparison of legacy and post-factor RMS
+ordering are documented in
+[`BIAS_RMS_ORDER_REPORT.md`](BIAS_RMS_ORDER_REPORT.md). The broader Rockfish
+study must retain both orders as a paired ablation before changing a default.
+
 The legacy stability workflow writes to the git-ignored
 `results/stability/` directory by default. Its convenience recipes are
 `just stability-analysis`, `just stability-coverage`, `just stability-plot`,

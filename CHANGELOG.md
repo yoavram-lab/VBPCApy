@@ -12,6 +12,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   complete-minus-missing sufficient statistics. A conservative density- and
   rank-aware policy selects the formulation automatically and records the
   resolved modes in the runtime report (#210).
+- `bias_update_order` selects the MATLAB-compatible mean-first iteration or a
+  post-factor mean update that evaluates mean, RMS, and noise from one current
+  factor state. Modern mode selects the post-factor order automatically (#222).
+
+### Fixed
+- Bias and centered-data state now persist across iterations, absent means are
+  initialized from observed row means, and explicit dense masks exclude masked
+  values from that initialization (#222).
 
 ## [0.4.2] - 2026-09-27
 
