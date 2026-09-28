@@ -131,7 +131,6 @@ reduction of at least 20%. Results are reported overall and separately by
 shape, missingness mechanism, and noise model. No default changes are made
 from screen results alone.
 
-
 ## Resumable execution
 
 Generate the immutable registered screen only from a clean, pinned checkout:
@@ -171,7 +170,7 @@ export VBPCA_PYTHON=/path/to/environment/bin/python
 export VBPCA_DEFAULTS_MANIFEST="$VBPCA_REPO_ROOT/analysis/trade_study/manifests/modern_defaults_screen_v1.json"
 export VBPCA_DEFAULTS_OUTPUT_DIR=/path/to/results/modern-defaults-screen
 export VBPCA_REVISION="$(git -C "$VBPCA_REPO_ROOT" rev-parse HEAD)"
-export VBPCA_RELEASE="$($VBPCA_PYTHON -c "import vbpca_py; print(vbpca_py.__version__)")"
+export VBPCA_RELEASE="$("${VBPCA_PYTHON}" -c 'import vbpca_py; print(vbpca_py.__version__)')"
 export VBPCA_DEFAULTS_MANIFEST_SHA256="$(sha256sum "$VBPCA_DEFAULTS_MANIFEST" | cut -d " " -f 1)"
 sbatch --array=0-419%64 "$VBPCA_REPO_ROOT/analysis/rockfish/modern_defaults_shared.sbatch"
 ```
