@@ -104,6 +104,11 @@ masked dense fits. The zero-copy C/F layout and compact-mask comparison is in
 [`DENSE_INPUT_VIEW_REPORT.md`](DENSE_INPUT_VIEW_REPORT.md). Its native buffer
 diagnostic is covered by regression tests, so future binding changes cannot
 silently reintroduce full-matrix layout conversions.
+
+The follow-up allocation and direct covariance-writeback comparison is in
+[`DENSE_KERNEL_WORKSPACE_REPORT.md`](DENSE_KERNEL_WORKSPACE_REPORT.md). It
+reports kernel-phase and end-to-end timing separately across three ranks.
+
 The legacy stability workflow writes to the git-ignored
 `results/stability/` directory by default. Its convenience recipes are
 `just stability-analysis`, `just stability-coverage`, `just stability-plot`,

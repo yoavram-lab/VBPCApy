@@ -300,9 +300,11 @@ py::dict score_update_dense_masked_nopattern(
     }
 
     Eigen::MatrixXd scores = Eigen::MatrixXd::Zero(n_components, n_samples);
-    Eigen::MatrixXd score_covariances;
+    py::array_t<double> score_covariances;
+    double *score_covariances_ptr = nullptr;
     if (return_covariances) {
-        score_covariances = Eigen::MatrixXd::Zero(n_samples, n_components * n_components);
+        score_covariances = py::array_t<double>({n_samples, n_components, n_components});
+        score_covariances_ptr = score_covariances.mutable_data();
     }
 
     const Eigen::MatrixXd identity = Eigen::MatrixXd::Identity(n_components, n_components);
@@ -310,20 +312,21 @@ py::dict score_update_dense_masked_nopattern(
     const int actual_threads = vbpca_threads::resolve_thread_count(num_cpu, n_samples);
 
     auto worker = [&](int start, int end) {
+        Eigen::VectorXd component(n_components);
+        Eigen::VectorXd rhs(n_components);
         for (int j = start; j < end; ++j) {
             Eigen::MatrixXd psi = noise_var * identity;
-            Eigen::VectorXd rhs = Eigen::VectorXd::Zero(n_components);
+            rhs.setZero();
 
             for (int i = 0; i < n_features; ++i) {
                 if (!mask.observed(i, j)) {
                     continue;
                 }
-                Eigen::VectorXd a(n_components);
                 for (int r = 0; r < n_components; ++r) {
-                    a(r) = loadings(i, r);
+                    component(r) = loadings(i, r);
                 }
-                psi.noalias() += a * a.transpose();
-                rhs.noalias() += a * x_data(i, j);
+                psi.noalias() += component * component.transpose();
+                rhs.noalias() += component * x_data(i, j);
 
                 if (av_ptr != nullptr) {
                     const std::size_t base =
@@ -347,7 +350,12 @@ py::dict score_update_dense_masked_nopattern(
                 const Eigen::MatrixXd sv = noise_var * llt.solve(identity);
                 for (int r = 0; r < n_components; ++r) {
                     for (int c = 0; c < n_components; ++c) {
-                        score_covariances(j, r * n_components + c) = sv(r, c);
+                        score_covariances_ptr[
+                            static_cast<std::size_t>(j) * static_cast<std::size_t>(n_components) *
+                                static_cast<std::size_t>(n_components) +
+                            static_cast<std::size_t>(r) * static_cast<std::size_t>(n_components) +
+                            static_cast<std::size_t>(c)
+                        ] = sv(r, c);
                     }
                 }
             }
@@ -382,21 +390,7 @@ py::dict score_update_dense_masked_nopattern(
     out["scores"] = scores;
 
     if (return_covariances) {
-        py::array_t<double> cov_out({n_samples, n_components, n_components});
-        auto *cov_ptr = cov_out.mutable_data();
-        for (int j = 0; j < n_samples; ++j) {
-            for (int r = 0; r < n_components; ++r) {
-                for (int c = 0; c < n_components; ++c) {
-                    cov_ptr[
-                        static_cast<std::size_t>(j) * static_cast<std::size_t>(n_components) *
-                            static_cast<std::size_t>(n_components) +
-                        static_cast<std::size_t>(r) * static_cast<std::size_t>(n_components) +
-                        static_cast<std::size_t>(c)
-                    ] = score_covariances(j, r * n_components + c);
-                }
-            }
-        }
-        out["score_covariances"] = cov_out;
+        out["score_covariances"] = score_covariances;
     }
 
     return out;
@@ -455,9 +449,11 @@ py::dict loadings_update_dense_masked_nopattern(
     }
 
     Eigen::MatrixXd loadings = Eigen::MatrixXd::Zero(n_features, n_components);
-    Eigen::MatrixXd loading_covariances;
+    py::array_t<double> loading_covariances;
+    double *loading_covariances_ptr = nullptr;
     if (return_covariances) {
-        loading_covariances = Eigen::MatrixXd::Zero(n_features, n_components * n_components);
+        loading_covariances = py::array_t<double>({n_features, n_components, n_components});
+        loading_covariances_ptr = loading_covariances.mutable_data();
     }
 
     const Eigen::MatrixXd identity = Eigen::MatrixXd::Identity(n_components, n_components);
@@ -465,6 +461,8 @@ py::dict loadings_update_dense_masked_nopattern(
     const int actual_threads = vbpca_threads::resolve_thread_count(num_cpu, n_features);
 
     auto worker = [&](int start, int end) {
+        Eigen::VectorXd component(n_components);
+        Eigen::VectorXd rhs(n_components);
         for (int i = start; i < end; ++i) {
             Eigen::MatrixXd phi(n_components, n_components);
             for (int r = 0; r < n_components; ++r) {
@@ -472,18 +470,17 @@ py::dict loadings_update_dense_masked_nopattern(
                     phi(r, c) = prior_prec(r, c);
                 }
             }
-            Eigen::VectorXd rhs = Eigen::VectorXd::Zero(n_components);
+            rhs.setZero();
 
             for (int j = 0; j < n_samples; ++j) {
                 if (!mask.observed(i, j)) {
                     continue;
                 }
-                Eigen::VectorXd s(n_components);
                 for (int r = 0; r < n_components; ++r) {
-                    s(r) = scores(r, j);
+                    component(r) = scores(r, j);
                 }
-                phi.noalias() += s * s.transpose();
-                rhs.noalias() += s * x_data(i, j);
+                phi.noalias() += component * component.transpose();
+                rhs.noalias() += component * x_data(i, j);
 
                 if (sv_ptr != nullptr) {
                     const std::size_t base =
@@ -507,7 +504,12 @@ py::dict loadings_update_dense_masked_nopattern(
                 const Eigen::MatrixXd av = noise_var * llt.solve(identity);
                 for (int r = 0; r < n_components; ++r) {
                     for (int c = 0; c < n_components; ++c) {
-                        loading_covariances(i, r * n_components + c) = av(r, c);
+                        loading_covariances_ptr[
+                            static_cast<std::size_t>(i) * static_cast<std::size_t>(n_components) *
+                                static_cast<std::size_t>(n_components) +
+                            static_cast<std::size_t>(r) * static_cast<std::size_t>(n_components) +
+                            static_cast<std::size_t>(c)
+                        ] = av(r, c);
                     }
                 }
             }
@@ -542,21 +544,7 @@ py::dict loadings_update_dense_masked_nopattern(
     out["loadings"] = loadings;
 
     if (return_covariances) {
-        py::array_t<double> cov_out({n_features, n_components, n_components});
-        auto *cov_ptr = cov_out.mutable_data();
-        for (int i = 0; i < n_features; ++i) {
-            for (int r = 0; r < n_components; ++r) {
-                for (int c = 0; c < n_components; ++c) {
-                    cov_ptr[
-                        static_cast<std::size_t>(i) * static_cast<std::size_t>(n_components) *
-                            static_cast<std::size_t>(n_components) +
-                        static_cast<std::size_t>(r) * static_cast<std::size_t>(n_components) +
-                        static_cast<std::size_t>(c)
-                    ] = loading_covariances(i, r * n_components + c);
-                }
-            }
-        }
-        out["loading_covariances"] = cov_out;
+        out["loading_covariances"] = loading_covariances;
     }
 
     return out;
