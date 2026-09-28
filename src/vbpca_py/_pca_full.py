@@ -650,13 +650,22 @@ def _autotune_dense_masked_runtime(
         prior_prec=np.asarray(prior_prec, dtype=np.float64),
     )
 
-    best_score, best_load, auto_report = autotune_dense_masked_threads(
-        inputs,
-        candidates=candidates,
-        reps=reps,
-        max_total_time=max_time,
-        tuning_mode=ctx.tuning_mode,
-    )
+    try:
+        best_score, best_load, auto_report = autotune_dense_masked_threads(
+            inputs,
+            candidates=candidates,
+            reps=reps,
+            max_total_time=max_time,
+            tuning_mode=ctx.tuning_mode,
+        )
+    except (RuntimeError, np.linalg.LinAlgError) as exc:
+        ctx.runtime_report["autotune_dense_masked"] = {
+            "mode": ctx.tuning_mode,
+            "status": "fallback",
+            "reason": "benchmark_numerical_failure",
+            "exception_type": type(exc).__name__,
+        }
+        return ctx.runtime_threads, ctx.runtime_report
 
     runtime_threads = replace(
         ctx.runtime_threads,

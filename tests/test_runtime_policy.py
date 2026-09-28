@@ -12,6 +12,7 @@ from vbpca_py._pca_full import (
     ModelState,
     PreparedProblem,
     TrainingState,
+    _autotune_dense_masked_runtime,
     _autotune_masked_batch_and_accessor,
     _AutotuneContext,
 )
@@ -304,6 +305,40 @@ def _build_autotune_ctx_for_masked() -> _AutotuneContext:
         hw_threads=8,
         profile_path=None,
     )
+
+
+def test_dense_autotune_numerical_failure_falls_back(monkeypatch) -> None:
+    ctx = _build_autotune_ctx_for_masked()
+    original_threads = ctx.runtime_threads
+
+    def _raise_numerical_failure(*_: object, **__: object) -> object:
+        msg = "synthetic Cholesky failure"
+        raise RuntimeError(msg)
+
+    def _fail_save(*_: object, **__: object) -> None:
+        msg = "a failed autotune must not save a profile rule"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr(
+        "vbpca_py._pca_full.autotune_dense_masked_threads",
+        _raise_numerical_failure,
+    )
+    monkeypatch.setattr(
+        "vbpca_py._pca_full.save_autotune_profile_rule",
+        _fail_save,
+    )
+
+    threads, report = _autotune_dense_masked_runtime(ctx)
+
+    assert threads is original_threads
+    assert report["autotune_dense_masked"] == {
+        "mode": "aggressive",
+        "status": "fallback",
+        "reason": "benchmark_numerical_failure",
+        "exception_type": "RuntimeError",
+    }
+    assert "kernel_values" not in report
+    assert "kernel_sources" not in report
 
 
 def test_autotune_masked_batch_prefers_best_combo(monkeypatch) -> None:
