@@ -52,6 +52,62 @@ def test_holdout_is_observed_disjoint_and_support_preserving() -> None:
     assert int(holdout.sum()) == pytest.approx(0.1 * int(observation.sum()), abs=1)
 
 
+def test_holdout_respects_protected_cells_and_eligible_fraction() -> None:
+    observation = np.ones((20, 10), dtype=bool)
+    protected = np.zeros_like(observation)
+    protected[0] = True
+    train, holdout = support_preserving_holdout(
+        observation,
+        0.1,
+        np.random.default_rng(12),
+        protected_mask=protected,
+    )
+
+    assert np.all(train[0])
+    assert not np.any(holdout[0])
+    assert int(holdout.sum()) == 19
+    assert np.array_equal(train | holdout, observation)
+
+
+def test_holdout_zero_fraction_and_invalid_protected_shape() -> None:
+    observation = np.ones((5, 4), dtype=bool)
+    train, holdout = support_preserving_holdout(
+        observation, 0.0, np.random.default_rng(1)
+    )
+
+    assert np.array_equal(train, observation)
+    assert not np.any(holdout)
+    with pytest.raises(ValueError, match="same shape"):
+        support_preserving_holdout(
+            observation,
+            0.1,
+            np.random.default_rng(1),
+            protected_mask=np.ones((4, 5), dtype=bool),
+        )
+
+
+def test_generated_mar_training_mask_keeps_anchor_observed() -> None:
+    regime = {
+        "seed": 101,
+        "p": 40,
+        "n": 30,
+        "true_rank": 3,
+        "noise_std": 0.5,
+        "noise_model": "gaussian",
+        "missingness": "mar",
+    }
+    simulation = generate_simulation(
+        regime,
+        rep=0,
+        missing_fraction=0.15,
+        holdout_fraction=0.1,
+    )
+
+    assert np.all(simulation.observation_mask[0])
+    assert np.all(simulation.train_mask[0])
+    assert not np.any(simulation.holdout_mask[0])
+
+
 def test_simulations_are_paired_across_candidates_and_reproducible() -> None:
     regime = {
         "seed": 99,

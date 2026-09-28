@@ -126,10 +126,26 @@ def support_preserving_holdout(
     observation_mask: np.ndarray,
     fraction: float,
     rng: np.random.Generator,
+    *,
+    protected_mask: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Split observed cells while retaining training support in every row/column."""
-    observed = np.argwhere(observation_mask)
-    n_holdout = max(1, int(round(fraction * len(observed))))
+    """Split eligible observations while retaining training support."""
+    if not 0.0 <= fraction < 1.0:
+        msg = f"holdout fraction must be in [0, 1), got {fraction}"
+        raise ValueError(msg)
+    protected = (
+        np.zeros_like(observation_mask, dtype=bool)
+        if protected_mask is None
+        else np.asarray(protected_mask, dtype=bool)
+    )
+    if protected.shape != observation_mask.shape:
+        msg = "protected_mask must have the same shape as observation_mask"
+        raise ValueError(msg)
+    eligible = np.asarray(observation_mask, dtype=bool) & ~protected
+    observed = np.argwhere(eligible)
+    n_holdout = int(round(fraction * len(observed)))
+    if fraction > 0.0 and observed.size:
+        n_holdout = max(1, n_holdout)
     chosen = rng.choice(
         len(observed), size=min(n_holdout, len(observed)), replace=False
     )
@@ -174,10 +190,14 @@ def generate_simulation(
         missing_fraction,
         rng,
     )
+    protected_mask = np.zeros_like(observation_mask, dtype=bool)
+    if str(regime["missingness"]) == "mar":
+        protected_mask[0] = True
     train_mask, holdout_mask = support_preserving_holdout(
         observation_mask,
         holdout_fraction,
         rng,
+        protected_mask=protected_mask,
     )
     return SimulationData(
         x_true=x_true,
