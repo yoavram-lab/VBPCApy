@@ -1947,7 +1947,7 @@ def _explained_variance(
     return eigvals_top, ratios
 
 
-def _explained_variance_from_factors(
+def _explained_variance_from_factors(  # noqa: PLR0914
     loadings: np.ndarray,
     scores: np.ndarray,
     n_components: int,
