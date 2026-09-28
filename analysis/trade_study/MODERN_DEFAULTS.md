@@ -130,3 +130,53 @@ requires either a rank-MAE reduction of at least 0.10 or a total-iteration
 reduction of at least 20%. Results are reported overall and separately by
 shape, missingness mechanism, and noise model. No default changes are made
 from screen results alone.
+
+## Resumable execution
+
+Generate the immutable registered screen only from a clean, pinned checkout:
+
+```bash
+python -m analysis.trade_study.modern_defaults_study manifest \
+  --registered-screen \
+  --output analysis/trade_study/manifests/modern_defaults_screen_v1.json
+python -m analysis.trade_study.modern_defaults_study list-shards \
+  --manifest analysis/trade_study/manifests/modern_defaults_screen_v1.json
+```
+
+The screen contains 420 candidate-by-regime shards. Each shard runs all three
+paired replicates and writes strict JSON after every replicate. Re-submitting an
+array validates complete shards and resumes partial shards. The byte-level
+manifest checksum, repository revision, installed release, software versions,
+and Slurm identifiers are stored or checked before computation.
+
+A local smoke run uses two candidates, two regimes, and one replicate:
+
+```bash
+python -m analysis.trade_study.modern_defaults_study manifest \
+  --profile smoke --n-reps 1 --seed 20260928 --output /tmp/vbpca-smoke.json
+for shard in 0 1 2 3; do
+  python -m analysis.trade_study.modern_defaults_study run-shard \
+    --manifest /tmp/vbpca-smoke.json --shard-index "${shard}" \
+    --output-dir /tmp/vbpca-smoke-results --num-cpu 2
+done
+```
+
+On Rockfish, export the pinned paths, revision, installed release, and manifest
+checksum, then submit the shared-node screen:
+
+```bash
+export VBPCA_REPO_ROOT=/path/to/pinned/VBPCApy
+export VBPCA_PYTHON=/path/to/environment/bin/python
+export VBPCA_DEFAULTS_MANIFEST="$VBPCA_REPO_ROOT/analysis/trade_study/manifests/modern_defaults_screen_v1.json"
+export VBPCA_DEFAULTS_OUTPUT_DIR=/path/to/results/modern-defaults-screen
+export VBPCA_REVISION="$(git -C "$VBPCA_REPO_ROOT" rev-parse HEAD)"
+export VBPCA_RELEASE="$("${VBPCA_PYTHON}" -c 'import vbpca_py; print(vbpca_py.__version__)')"
+export VBPCA_DEFAULTS_MANIFEST_SHA256="$(sha256sum "$VBPCA_DEFAULTS_MANIFEST" | cut -d " " -f 1)"
+sbatch --array=0-419%64 "$VBPCA_REPO_ROOT/analysis/rockfish/modern_defaults_shared.sbatch"
+```
+
+Monitor with `squeue -u "$USER"` and inspect completed resource use with
+`jobstats <jobid>`. The launcher requests four cores and 16 GB for 36 hours,
+consistent with the current [Rockfish shared-partition limits](https://docs.arch.jhu.edu/en/latest/1_Clusters/Rockfish/3_Slurm/Partitions.html).
+The later genomics-scale confirmation will use paired 24-core processes on a
+48-core `parallel` node so the dedicated-node allocation is fully occupied.
