@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Variable-cell cross-validation (#250): `CVConfig(feature_groups=...)` folds
+  over (variable, sample) cells so every indicator of a one-hot encoded
+  variable is held out together. `CVConfig(selection_rule="first_minimum")`
+  selects the smallest capacity whose successor does not improve the mean
+  held-out metric by more than its standard error, and `early_stop=True`
+  stops the sweep as soon as that rule triggers (#248).
 - One-hot encoders report their variable structure: `feature_groups_` (the
   input column of every output column) and `feature_kinds_` (the kind of every
   input column) on `MissingAwareOneHotEncoder`,
