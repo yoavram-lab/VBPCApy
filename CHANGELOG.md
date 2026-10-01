@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Categorical held-out scores (#250): with `CVConfig(feature_groups=...)`,
+  cross-validation results report the Brier score, log score and accuracy of
+  held-out (variable, sample) cells, reading the reconstructed block as level
+  probabilities, and `CVConfig(metric="brier" | "log_score")` selects on them.
 - Variable-cell cross-validation (#250): `CVConfig(feature_groups=...)` folds
   over (variable, sample) cells so every indicator of a one-hot encoded
   variable is held out together. `CVConfig(selection_rule="first_minimum")`

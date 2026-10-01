@@ -95,7 +95,7 @@ best_k, results = cross_validate_components(
 | Field | Default | Description |
 |-------|---------|-------------|
 | `n_splits` | `5` | Number of CV folds |
-| `metric` | `"prms"` | Held-out probe RMS (the only supported CV objective) |
+| `metric` | `"prms"` | Held-out probe RMS; with `feature_groups`, also `"brier"` or `"log_score"` |
 | `one_se_rule` | `True` | Select the simplest model within 1 SE of the best |
 | `seed` | `0` | Random seed for fold assignment and candidate fits |
 | `feature_groups` | `None` | Variable label per feature; folds hold out whole (variable, sample) cells |
@@ -126,7 +126,12 @@ other indicators of a held-out cell stay in training and, because they sum to
 one, nearly determine the held-out value. When the data have real structure,
 held-out error then keeps falling with rank and capacity is overestimated.
 Pass the encoder's `feature_groups_` so every indicator of a cell is held out
-together:
+together. Each result then also reports categorical scores of the held-out
+cells, reading the reconstructed block as level probabilities: `brier`,
+`log_score` and `accuracy`. `metric="brier"` selects on the Brier score, which
+is bounded and usually the most useful of the three; the log score is dominated
+by cells whose observed level receives almost no predicted mass, because a
+Gaussian low-rank reconstruction is not a calibrated categorical model.
 
 ```python
 from vbpca_py import AutoEncoder, CVConfig, cross_validate_components
@@ -139,7 +144,7 @@ best_k, cv = cross_validate_components(
     config=CVConfig(
         feature_groups=encoder.feature_groups_,
         selection_rule="first_minimum",
-        early_stop=True,
+        metric="brier",
     ),
 )
 ```
