@@ -50,6 +50,14 @@ print(f"\nSuggested transforms: {report.suggested_pretransforms}")
 variance, and high missing fractions. The `DataReport` suggests per-column
 transforms such as log or winsorization.
 
+It also checks categorical encodings. Integer codes with a handful of levels
+are flagged as possible ordinal variables, and data that arrive already one-hot
+encoded are scanned for blocks of 0/1 columns that share missingness and sum to
+one. Detected blocks are returned as `report.suggested_feature_groups`; pass
+them to `CVConfig(feature_groups=...)` so cross-validation holds out whole
+variables. Rare levels and binary variables coded as a single indicator are
+flagged too.
+
 ## Encode with AutoEncoder
 
 `AutoEncoder` routes each column through the appropriate transformer based on

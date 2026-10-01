@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `check_data` detects categorical encodings (#250): runs of 0/1 columns with
+  shared missingness whose rows sum to one are reported as one-hot blocks, and
+  `DataReport.suggested_feature_groups` gives the labels to pass to
+  `CVConfig(feature_groups=...)`. Rare levels, binary variables coded as one
+  indicator, and integer codes that look ordinal are flagged.
 - Categorical held-out scores (#250): with `CVConfig(feature_groups=...)`,
   cross-validation results report the Brier score, log score and accuracy of
   held-out (variable, sample) cells, reading the reconstructed block as level
