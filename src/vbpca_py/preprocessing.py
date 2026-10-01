@@ -11,6 +11,7 @@ from typing import Any, Literal, cast
 import numpy as np
 import scipy.sparse as sp
 
+from ._encoding_checks import detect_one_hot_blocks, encoding_warnings
 from ._sklearn_compat import BaseEstimator, TransformerMixin
 from ._sparsity import validate_mask_compatibility
 
@@ -1292,12 +1293,16 @@ class DataReport:
         suggested_pretransforms: Mapping of column index (or name) to a
             suggested transform string (e.g. ``"log1p"``).
         passed: ``True`` when no warnings were raised.
+        suggested_feature_groups: Variable label per column when one-hot
+            blocks were detected (pass as ``CVConfig(feature_groups=...)``),
+            otherwise ``None``.
     """
 
     warnings: list[str] = field(default_factory=list)
     summary: dict[str, dict[str, float]] = field(default_factory=dict)
     suggested_pretransforms: dict[str | int, str] = field(default_factory=dict)
     passed: bool = True
+    suggested_feature_groups: list[int] | None = None
 
 
 @dataclass
@@ -1422,7 +1427,10 @@ def check_data(  # noqa: PLR0913
 
     Checks focus on *scale comparability* — conditions that cause
     individual features to dominate the decomposition — rather than
-    distributional shape.
+    distributional shape. Categorical encodings are also checked: one-hot
+    blocks are detected (see ``suggested_feature_groups``), and rare levels,
+    single-indicator binary variables and ordinal-looking integer codes are
+    flagged.
 
     Args:
         x: Data matrix of shape ``(n_samples, n_features)``.
@@ -1479,5 +1487,10 @@ def check_data(  # noqa: PLR0913
         _check_outliers(obs, name, col_summary, cfg, report)
         report.summary[name] = col_summary
 
+    groups = detect_one_hot_blocks(x_arr, observed)
+    if len(np.unique(groups)) < n_features:
+        report.suggested_feature_groups = groups.tolist()
+    for message in encoding_warnings(x_arr, observed, groups, column_names):
+        _emit(report, message, emit=cfg.emit_warnings)
     report.passed = len(report.warnings) == 0
     return report
