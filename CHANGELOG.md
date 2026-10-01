@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- One-hot encoders report their variable structure: `feature_groups_` (the
+  input column of every output column) and `feature_kinds_` (the kind of every
+  input column) on `MissingAwareOneHotEncoder`,
+  `MissingAwareSparseOneHotEncoder` and `AutoEncoder`, so model selection can
+  hold out whole variables. `MissingAwareOneHotEncoder` and `AutoEncoder`
+  accept `binary="single" | "both"`: `"both"` codes two-level variables with
+  one indicator per level, as the v1/EHS analyses did; `"single"` (default,
+  unchanged) keeps one indicator for the second level (#250).
 - `variance_update_order={"auto", "legacy", "post_rotation"}` controls when
   the ARD prior variances are updated relative to the per-iteration PCA
   rotation. `post_rotation` re-estimates `Va`/`Vmu` after the rotation and
