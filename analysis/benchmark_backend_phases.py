@@ -23,7 +23,7 @@ import numpy as np
 import vbpca_py._pca_full as pca_module  # noqa: PLC2701
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import Callable, Generator
 
 _CONVERGENCE_OFF = {
     "angle": False,
@@ -89,7 +89,7 @@ def _make_problem(args: argparse.Namespace) -> tuple[np.ndarray, np.ndarray]:
 
 
 @contextmanager
-def _profile_orchestration() -> Iterator[dict[str, dict[str, float | int]]]:
+def _profile_orchestration() -> Generator[dict[str, dict[str, float | int]]]:
     measurements = {name: {"calls": 0, "seconds": 0.0} for name in _PHASE_TARGETS}
     originals: dict[str, Callable[..., Any]] = {}
 
