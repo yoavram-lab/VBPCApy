@@ -1466,6 +1466,9 @@ def _update_hyperpriors_phase(ctx: IterationContext) -> None:
             obs_fraction=obs_frac,
         )
     )
+    if bool(cfg.opts.get("record_prior_trace", False)):
+        trace = ctx.training.lc.setdefault("prior_trace", [])
+        trace.append(np.asarray(m.va, dtype=float).tolist())
 
 
 def _bias_and_center(ctx: IterationContext) -> tuple[Matrix, Matrix | None]:
@@ -2286,6 +2289,7 @@ def _build_options(kwargs: Mapping[str, object]) -> dict[str, object]:
         "cfstop_rel": None,
         "cfstop_curv": None,
         "record_cost": False,
+        "record_prior_trace": False,
         "composite_stop": None,
         "patience": 1,
         "criterion_order": None,

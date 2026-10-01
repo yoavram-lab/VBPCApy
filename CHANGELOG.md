@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `VBPCA` exposes its automatic relevance determination state:
+  `prior_variances_`, `bias_prior_variance_`, `component_relevance_`,
+  `effective_rank(threshold=0.01)`, and a per-iteration `prior_trace_` when
+  fitted with `record_prior_trace=True` (#251).
+
+### Fixed
+- The ARD documentation described $V_a$ as precisions; it is a prior variance,
+  and small values prune. The `hp_va`, `hp_vb`, `hp_v`, `niter_broadprior` and
+  `va_init` docstrings now state how each enters the updates (#251).
+
 ## [0.4.3] - 2026-09-28
 
 ### Added

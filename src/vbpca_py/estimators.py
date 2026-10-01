@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import warnings
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import numpy as np
 import scipy.sparse as sp
@@ -17,6 +17,9 @@ from vbpca_py._missing import make_xprobe_mask
 from vbpca_py._pca_full import Matrix, _build_options, pca_full
 from vbpca_py._sklearn_compat import BaseEstimator
 from vbpca_py.model_selection import SelectionConfig, select_n_components
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 __all__ = ["VBPCA"]
 
@@ -65,13 +68,24 @@ class VBPCA(BaseEstimator):
                 an explicit convergence criterion such as ``rmsstop``,
                 ``cfstop_rel``, or ``minangle`` instead.
             verbose: Verbosity level; can be an integer or a boolean.
-            hp_va: Prior hyperparameter for loadings variance (default 0.001).
-            hp_vb: Prior hyperparameter for score variance (default 0.001).
-            hp_v: Prior hyperparameter for noise variance (default 0.001).
-            niter_broadprior: Number of iterations to run under the broad
-                prior before convergence checks activate (default 100).
-            va_init: Initial broad prior value for loadings and bias
-                variances (default 1000).
+            hp_va: Hyperprior term in the automatic relevance determination
+                (ARD) update of each component's loading prior variance,
+                ``Va[k] = (|a_k|^2 + tr(cov a_k) + 2 hp_va) /
+                ((n_features + 2 hp_vb) / observed_fraction)``. Small
+                values let unused components shrink toward zero (strong
+                pruning); larger values put a floor under every ``Va[k]``
+                (default 0.001). Also enters the bias prior variance.
+            hp_vb: Hyperprior term in the denominator of the same update;
+                larger values shrink every component's prior variance
+                (default 0.001).
+            hp_v: Hyperprior term in the noise variance update,
+                ``V = (residual + 2 hp_v) / (n_observed + 2 hp_v)``
+                (default 0.001).
+            niter_broadprior: Number of initial iterations with the loading
+                prior variances held at ``va_init`` before ARD updates start;
+                convergence checks also wait for it (default 100).
+            va_init: Initial (broad) prior variance for loadings and bias
+                (default 1000).
             xprobe_fraction: Fraction of observed entries to hold out as
                 probe data (default 0.0, disabled).  When positive and no
                 explicit *xprobe* is passed to :meth:`fit`, a random probe
@@ -131,6 +145,13 @@ class VBPCA(BaseEstimator):
         self.explained_variance_: np.ndarray | None = None
         self.explained_variance_ratio_: np.ndarray | None = None
         self.n_features_in_: int | None = None
+        # ARD state: final loading prior variances, the bias prior variance,
+        # each returned component's share of reconstruction energy, and the
+        # per-iteration prior variances when ``record_prior_trace=True``.
+        self.prior_variances_: np.ndarray | None = None
+        self.bias_prior_variance_: float | None = None
+        self.component_relevance_: np.ndarray | None = None
+        self.prior_trace_: np.ndarray | None = None
         self._av: list[np.ndarray] | None = None
         self._sv: list[np.ndarray] | None = None
         self._pattern_index: np.ndarray | None = None
@@ -418,7 +439,44 @@ class VBPCA(BaseEstimator):
         )
         muv_raw = result.get("Muv")
         self._muv = np.asarray(muv_raw, dtype=float) if muv_raw is not None else None
+        self._set_pruning_state(result)
         return self
+
+    def _set_pruning_state(self, result: Mapping[str, object]) -> None:
+        va_raw = result.get("Va")
+        self.prior_variances_ = (
+            np.asarray(va_raw, dtype=float).ravel() if va_raw is not None else None
+        )
+        vmu_raw = result.get("Vmu")
+        self.bias_prior_variance_ = (
+            float(vmu_raw)
+            if isinstance(vmu_raw, (float, int, np.floating, np.integer))
+            else None
+        )
+        self.component_relevance_ = _component_relevance(
+            cast("np.ndarray", self.components_), cast("np.ndarray", self.scores_)
+        )
+        trace = (self.learning_curve_ or {}).get("prior_trace")
+        self.prior_trace_ = np.asarray(trace, dtype=float) if trace else None
+
+    def effective_rank(self, threshold: float = 0.01) -> int:
+        """Count components that survive ARD pruning.
+
+        Args:
+            threshold: Minimum share of reconstruction energy for a
+                component to count.
+
+        Returns:
+            Number of components whose ``component_relevance_`` exceeds
+            ``threshold``.
+
+        Raises:
+            RuntimeError: If the estimator has not been fitted.
+        """
+        if self.component_relevance_ is None:
+            msg = "VBPCA instance is not fitted yet"
+            raise RuntimeError(msg)
+        return int(np.sum(self.component_relevance_ > threshold))
 
     def get_options(self) -> dict[str, object]:
         """Return the resolved pca_full options (defaults + overrides)."""
@@ -519,3 +577,22 @@ class VBPCA(BaseEstimator):
             config=cfg,
             **merged_opts,
         )
+
+
+def _component_relevance(loadings: np.ndarray, scores: np.ndarray) -> np.ndarray:
+    """Return each component's share of reconstruction energy.
+
+    The share of component ``k`` is ``|a_k| |s_k|`` over the sum across
+    components, in the order of the returned components. It is computed in
+    the returned (rotated) basis, whereas ``Va`` is last updated before the
+    final rotation, so the two need not align component by component.
+
+    Returns:
+        Shares summing to one, or zeros when the reconstruction is zero.
+    """
+    energy = np.linalg.norm(loadings, axis=0) * np.linalg.norm(scores, axis=1)
+    total = float(energy.sum())
+    if total <= 0.0:
+        return np.zeros_like(energy)
+    shares: np.ndarray = energy / total
+    return shares
