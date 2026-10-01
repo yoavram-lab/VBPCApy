@@ -47,24 +47,51 @@ $\text{Av}_i$ (per-row loading covariance) and $\text{Sv}_j$
 ARD places a hierarchical prior on the loading columns:
 
 $$
-p(A_{\cdot k}) = \mathcal{N}(0, V_{a,k}^{-1} I)
+p(A_{\cdot k}) = \mathcal{N}(0, V_{a,k} I)
 $$
 
-where $V_a = (V_{a,1}, \dots, V_{a,K})$ are per-component precisions. Components
-with large $V_{a,k}$ are effectively pruned — their loadings shrink toward zero,
-providing automatic model complexity control.
+where $V_a = (V_{a,1}, \dots, V_{a,K})$ are per-component prior variances.
+After the warm-up described below, each is re-estimated every iteration as
+
+$$
+V_{a,k} = \frac{\lVert a_k \rVert^2 + \operatorname{tr}\Sigma_{a_k} + 2\,\text{hp\_va}}
+{(p + 2\,\text{hp\_vb}) / f},
+$$
+
+with $p$ features and $f$ the observed fraction of entries. Components whose
+$V_{a,k}$ shrinks toward zero are effectively pruned: their loadings are pulled
+to zero, providing automatic model complexity control.
 
 ### ARD-related parameters
 
-| Parameter | Description |
-|-----------|-------------|
-| `hp_va`, `hp_vb` | Shape and rate of the Gamma hyperprior on $V_a$ |
-| `hp_v` | Hyperprior on the noise precision |
-| `niter_broadprior` | Number of warmup iterations under a broad (uninformative) prior before ARD engages |
-| `va_init` | Initial value for the broad prior variance |
+| Parameter | Role |
+|-----------|------|
+| `hp_va` | Added to the numerator of the $V_a$ update. Small values let unused components shrink toward zero (strong pruning); larger values put a floor of about $2\,\text{hp\_va} f / p$ under every $V_{a,k}$. Also enters the bias prior variance. |
+| `hp_vb` | Added to the denominator; larger values shrink every component's prior variance. |
+| `hp_v` | Hyperprior term in the noise variance update, $V = (\text{residual} + 2\,\text{hp\_v}) / (n_{\text{obs}} + 2\,\text{hp\_v})$. |
+| `niter_broadprior` | Number of warm-up iterations with $V_a$ held at `va_init` before ARD updates start; convergence checks also wait for it. |
+| `va_init` | Initial (broad) prior variance for the loadings and bias. |
 
 During the first `niter_broadprior` iterations, $V_a$ is held at a large value
 (`va_init`) so the model can find reasonable loadings before ARD shrinkage begins.
+`recommend_config()` sets `niter_broadprior=0` and larger `hp_va`/`hp_vb` than
+the core defaults, which weakens pruning.
+
+### Inspecting pruning
+
+After fitting, `VBPCA` exposes:
+
+- `prior_variances_`: the final $V_a$, and `bias_prior_variance_`;
+- `component_relevance_`: each returned component's share of reconstruction
+  energy, $\lVert a_k \rVert \lVert s_k \rVert$ normalized to sum to one;
+- `effective_rank(threshold=0.01)`: the number of components above a relevance
+  threshold;
+- `prior_trace_`: $V_a$ at every iteration when fitted with
+  `record_prior_trace=True`.
+
+$V_a$ is last updated before the PCA rotation in each iteration, so with
+`rotate2pca` its entries need not line up with the returned components; use
+`component_relevance_` for per-component statements.
 
 ## Missing data handling
 
