@@ -98,6 +98,9 @@ best_k, results = cross_validate_components(
 | `metric` | `"prms"` | Held-out probe RMS (the only supported CV objective) |
 | `one_se_rule` | `True` | Select the simplest model within 1 SE of the best |
 | `seed` | `0` | Random seed for fold assignment and candidate fits |
+| `feature_groups` | `None` | Variable label per feature; folds hold out whole (variable, sample) cells |
+| `selection_rule` | `None` | `"one_se"`, `"minimum"` or `"first_minimum"`; `None` follows `one_se_rule` |
+| `early_stop` | `False` | With `"first_minimum"`, stop the sweep once the rule triggers |
 
 ### 1-SE rule
 
@@ -106,6 +109,40 @@ CV metric is within one standard error of the overall best. This favours
 simpler models with fewer components when cross-validation uncertainty does
 not clearly support the additional complexity. The rule is a selection heuristic,
 not a hypothesis test.
+
+### First-minimum rule
+
+`selection_rule="first_minimum"` walks the candidates in increasing order and
+stops at the first $k$ whose successor does not lower the mean CV metric by
+more than the successor's standard error. Unlike the 1-SE rule it never looks
+past that point, so it is not drawn to a second descent at large $k$ (seen
+when automatic relevance determination shrinks large models). With
+`early_stop=True` the candidates above the selected one are never fitted.
+
+### One-hot encoded data
+
+Entrywise folds are not a valid holdout for one-hot encoded variables: the
+other indicators of a held-out cell stay in training and, because they sum to
+one, nearly determine the held-out value. When the data have real structure,
+held-out error then keeps falling with rank and capacity is overestimated.
+Pass the encoder's `feature_groups_` so every indicator of a cell is held out
+together:
+
+```python
+from vbpca_py import AutoEncoder, CVConfig, cross_validate_components
+
+encoder = AutoEncoder(binary="both")
+Z = encoder.fit_transform(X)  # samples x features
+best_k, cv = cross_validate_components(
+    Z.T,
+    components=range(10),
+    config=CVConfig(
+        feature_groups=encoder.feature_groups_,
+        selection_rule="first_minimum",
+        early_stop=True,
+    ),
+)
+```
 
 ## Choosing between the two
 
