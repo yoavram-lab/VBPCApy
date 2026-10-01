@@ -7,6 +7,7 @@ optionally retains the best-fit model.
 
 from __future__ import annotations
 
+import itertools
 import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, SupportsFloat, SupportsIndex, cast
@@ -888,14 +889,50 @@ class CVConfig:
         metric: Held-out selection metric. Only ``"prms"`` is supported.
         n_splits: Number of cross-validation folds.
         one_se_rule: If ``True``, select the smallest *k* whose mean metric
-            is within one standard error of the global minimum.
+            is within one standard error of the global minimum. Ignored when
+            ``selection_rule`` is set.
         seed: Random seed for fold partitioning and model fitting.
+        feature_groups: Optional variable label for every feature (row of
+            ``x``), for example an encoder's ``feature_groups_``. Folds then
+            hold out (variable, sample) cells, so every indicator of a
+            one-hot encoded variable is held out together (#250).
+        selection_rule: ``"one_se"``, ``"minimum"`` or ``"first_minimum"``.
+            ``"first_minimum"`` selects the smallest *k* whose successor does
+            not lower the mean metric by more than the successor's standard
+            error. ``None`` follows ``one_se_rule``.
+        early_stop: With ``selection_rule="first_minimum"``, evaluate
+            capacities in increasing order across all folds and stop as soon
+            as the rule triggers, skipping every larger capacity (#248).
     """
 
     metric: _CVMetric = "prms"
     n_splits: int = 5
     one_se_rule: bool = True
     seed: int = 0
+    feature_groups: Sequence[Any] | None = None
+    selection_rule: Literal["one_se", "minimum", "first_minimum"] | None = None
+    early_stop: bool = False
+
+    def resolved_rule(self) -> str:
+        """Return the selection rule in effect.
+
+        Returns:
+            ``selection_rule``, or the rule implied by ``one_se_rule``.
+
+        Raises:
+            ValueError: If the rule is unknown or ``early_stop`` is requested
+                for a rule that needs the full sweep.
+        """
+        rule = self.selection_rule or ("one_se" if self.one_se_rule else "minimum")
+        if rule not in {"one_se", "minimum", "first_minimum"}:
+            msg = (
+                f"selection_rule must be one_se, minimum or first_minimum; got {rule!r}"
+            )
+            raise ValueError(msg)
+        if self.early_stop and rule != "first_minimum":
+            msg = "early_stop requires selection_rule='first_minimum'"
+            raise ValueError(msg)
+        return rule
 
 
 def _make_element_folds(
@@ -950,6 +987,88 @@ def _make_element_folds(
         )
         for probe_sel in probe_folds
     ]
+
+
+def _make_group_folds(
+    x: np.ndarray,
+    groups: Sequence[Any],
+    n_splits: int,
+    rng: np.random.Generator,
+) -> list[tuple[np.ndarray, np.ndarray]]:
+    """Partition observed (variable, sample) cells into *n_splits* folds.
+
+    Every observed entry belongs to the cell of its feature's group and its
+    sample; a held-out cell holds out all of its entries. A minimum edge
+    cover of cells stays in every training fold, as for entrywise folds.
+
+    Returns:
+        ``(probe_indices, train_indices)`` tuples indexing the observed-entry
+        arrays, as returned by ``_make_element_folds``.
+
+    Raises:
+        ValueError: If ``groups`` does not label every feature, too few cells
+            are eligible, or a fold would leave a feature without training
+            entries.
+    """
+    labels = np.asarray(groups)
+    if labels.shape != (x.shape[0],):
+        msg = f"feature_groups must label all {x.shape[0]} features"
+        raise ValueError(msg)
+    _, group_index = np.unique(labels, return_inverse=True)
+    n_groups = int(group_index.max()) + 1
+    obs_rows, obs_cols = np.nonzero(~np.isnan(x))
+    entry_cells = group_index[obs_rows] * x.shape[1] + obs_cols
+    cells = np.unique(entry_cells)
+    support = _training_support_backbone(
+        cells // x.shape[1],
+        cells % x.shape[1],
+        n_rows=n_groups,
+        n_cols=x.shape[1],
+        rng=rng,
+    )
+    eligible = cells[~support]
+    if len(eligible) < n_splits:
+        msg = (
+            f"n_splits={n_splits} exceeds the {len(eligible)} validation-eligible "
+            "variable cells"
+        )
+        raise ValueError(msg)
+    row_counts = np.bincount(obs_rows, minlength=x.shape[0])
+    col_counts = np.bincount(obs_cols, minlength=x.shape[1])
+    folds = []
+    for part in np.array_split(rng.permutation(eligible), n_splits):
+        probe_sel = np.flatnonzero(np.isin(entry_cells, part))
+        if not _fold_preserves_training_coverage(
+            probe_sel, obs_rows, obs_cols, row_counts, col_counts
+        ):
+            msg = "a variable-cell fold would leave a feature without training data"
+            raise ValueError(msg)
+        folds.append((
+            probe_sel,
+            np.setdiff1d(np.arange(len(obs_rows)), probe_sel, assume_unique=True),
+        ))
+    return folds
+
+
+def _first_minimum(cv_results: list[dict[str, object]], metric: str) -> int:
+    """Return the smallest *k* whose successor does not improve by an SE.
+
+    Returns:
+        The selected component count (the last one if every step improves).
+    """
+    for current, following in itertools.pairwise(cv_results):
+        if _first_minimum_stops(current, following, metric):
+            return int(cast("int", current["k"]))
+    return int(cast("int", cv_results[-1]["k"]))
+
+
+def _first_minimum_stops(
+    current: dict[str, object], following: dict[str, object], metric: str
+) -> bool:
+    mean_now = float(cast("float", current[f"mean_{metric}"]))
+    mean_next = float(cast("float", following[f"mean_{metric}"]))
+    se_next = float(cast("float", following[f"se_{metric}"]))
+    return mean_next >= mean_now - se_next
 
 
 def _training_support_backbone(
@@ -1201,6 +1320,79 @@ def _aggregate_cv_results(
     return int(cast("int", cv_results[min_idx]["k"])), cv_results
 
 
+def _cv_sweep(  # noqa: PLR0913
+    x_arr: np.ndarray,
+    folds: list[tuple[np.ndarray, np.ndarray]],
+    k_list: list[int],
+    *,
+    config: CVConfig,
+    opts: dict[str, object],
+    verbose: int,
+) -> tuple[list[int], list[dict[int, dict[str, object]]]]:
+    """Evaluate candidates on every fold, stopping early when requested.
+
+    Returns:
+        The candidates evaluated and the per-fold metrics.
+    """
+    obs_rows, obs_cols = np.nonzero(~np.isnan(x_arr))
+
+    def run_folds(candidates: list[int]) -> list[dict[int, dict[str, object]]]:
+        return [
+            _run_fold(
+                fold_i=fold_i,
+                x_base=x_arr,
+                obs_rows=obs_rows,
+                obs_cols=obs_cols,
+                probe_sel=probe_sel,
+                k_list=candidates,
+                metric=config.metric,
+                opts=opts,
+                seed=config.seed,
+                n_splits=config.n_splits,
+                verbose=verbose,
+            )
+            for fold_i, (probe_sel, _train_sel) in enumerate(folds)
+        ]
+
+    if not config.early_stop:
+        return k_list, run_folds(k_list)
+    evaluated: list[int] = []
+    fold_metrics: list[dict[int, dict[str, object]]] = [{} for _ in folds]
+    for k in k_list:
+        for metrics, new in zip(fold_metrics, run_folds([k]), strict=True):
+            metrics.update(new)
+        evaluated.append(k)
+        _, partial = _aggregate_cv_results(evaluated, fold_metrics, config.metric)
+        if len(partial) > 1 and _first_minimum_stops(
+            partial[-2], partial[-1], config.metric
+        ):
+            break
+    return evaluated, fold_metrics
+
+
+def _apply_rule(
+    one_se_k: int, cv_results: list[dict[str, object]], rule: str, metric: str
+) -> int:
+    """Return the capacity chosen by ``rule``.
+
+    Returns:
+        ``one_se_k`` for the one-SE rule, otherwise the first-minimum or
+        minimum-error capacity.
+    """
+    if rule == "first_minimum":
+        return _first_minimum(cv_results, metric)
+    if rule == "minimum":
+        best_entry = min(
+            cv_results,
+            key=lambda r: (
+                float(cast("float", r[f"mean_{metric}"])),
+                int(cast("int", r["k"])),
+            ),
+        )
+        return int(cast("int", best_entry["k"]))
+    return one_se_k
+
+
 def cross_validate_components(
     x: Matrix,
     *,
@@ -1285,10 +1477,13 @@ def cross_validate_components(
             raise ValueError(msg)
         x_arr[~mask_arr] = np.nan
 
+    rule = cv_cfg.resolved_rule()
     k_list = _normalize_components(components, x_arr.shape[0], x_arr.shape[1])
-    obs_rows, obs_cols = np.nonzero(~np.isnan(x_arr))
-    folds = _make_element_folds(
-        x_arr, cv_cfg.n_splits, np.random.default_rng(cv_cfg.seed)
+    fold_rng = np.random.default_rng(cv_cfg.seed)
+    folds = (
+        _make_element_folds(x_arr, cv_cfg.n_splits, fold_rng)
+        if cv_cfg.feature_groups is None
+        else _make_group_folds(x_arr, cv_cfg.feature_groups, cv_cfg.n_splits, fold_rng)
     )
 
     fit_opts: dict[str, object] = dict(opts)
@@ -1300,34 +1495,16 @@ def cross_validate_components(
     )
     fit_opts["verbose"] = 0
 
-    all_fold_metrics: list[dict[int, dict[str, object]]] = [
-        _run_fold(
-            fold_i=fold_i,
-            x_base=x_arr,
-            obs_rows=obs_rows,
-            obs_cols=obs_cols,
-            probe_sel=probe_sel,
-            k_list=k_list,
-            metric=cv_cfg.metric,
-            opts=fit_opts,
-            seed=cv_cfg.seed,
-            n_splits=cv_cfg.n_splits,
-            verbose=verbose_level,
-        )
-        for fold_i, (probe_sel, _train_sel) in enumerate(folds)
-    ]
-
+    k_list, all_fold_metrics = _cv_sweep(
+        x_arr,
+        folds,
+        k_list,
+        config=cv_cfg,
+        opts=fit_opts,
+        verbose=verbose_level,
+    )
     best_k, cv_results = _aggregate_cv_results(k_list, all_fold_metrics, cv_cfg.metric)
-
-    if not cv_cfg.one_se_rule:
-        best_entry = min(
-            cv_results,
-            key=lambda r: (
-                float(cast("float", r[f"mean_{cv_cfg.metric}"])),
-                int(cast("int", r["k"])),
-            ),
-        )
-        best_k = int(cast("int", best_entry["k"]))
+    best_k = _apply_rule(best_k, cv_results, rule, cv_cfg.metric)
 
     if verbose_level:
         min_entry = min(
