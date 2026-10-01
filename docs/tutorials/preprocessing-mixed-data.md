@@ -69,7 +69,18 @@ Z = auto.fit_transform(X)
 
 print(f"Encoded shape: {Z.shape}")
 print(f"Feature names: {auto.feature_names_out_}")
+print(f"Variable of each column: {auto.feature_groups_}")
 ```
+
+`feature_groups_` maps every encoded column back to its input variable, and
+`feature_kinds_` records whether each variable was treated as categorical or
+continuous. Keep them: the indicators of one categorical variable belong
+together, so held-out validation should mask whole variables rather than
+single indicators.
+
+Two-level variables are coded with a single indicator by default
+(`binary="single"`, a reference-level drop). Pass `binary="both"` to give them
+one indicator per level like every other categorical variable.
 
 !!! note "Convention mismatch"
     `AutoEncoder` expects **samples × features** (scikit-learn convention), but
