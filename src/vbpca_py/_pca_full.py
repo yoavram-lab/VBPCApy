@@ -183,6 +183,10 @@ def pca_full(
         prepared=prepared, training=training, use_prior=use_prior, opts=opts
     )
     training = _maybe_finalize_rotation(prepared=prepared, training=training, opts=opts)
+    if str(opts.get("variance_update_order")) == "post_rotation":
+        _refresh_prior_variances(
+            prepared=prepared, training=training, use_prior=use_prior, opts=opts
+        )
     final = _restore_original_shape(prepared=prepared, training=training)
     return _pack_result(
         final,
@@ -680,6 +684,7 @@ def _resolve_runtime_threads_for_training(
     )
     runtime_report["cov_writeback_mode"] = cov_writeback_mode
     runtime_report["bias_update_order"] = str(opts["bias_update_order"])
+    runtime_report["variance_update_order"] = str(opts["variance_update_order"])
     runtime_report["log_progress_stride"] = int(log_stride)
     runtime_report["accessor_mode"] = accessor_mode
     runtime_report["behavior_sources"] = behavior_sources
@@ -1471,6 +1476,41 @@ def _update_hyperpriors_phase(ctx: IterationContext) -> None:
         trace.append(np.asarray(m.va, dtype=float).tolist())
 
 
+def _refresh_prior_variances(
+    *,
+    prepared: PreparedProblem,
+    training: TrainingState,
+    use_prior: bool,
+    opts: Mapping[str, object],
+) -> None:
+    """Re-estimate Va and Vmu from the returned loadings and bias.
+
+    The last loadings update (and any final rotation) follows the last
+    hyperprior update, so this makes the returned prior variances correspond
+    to the returned components. Within the warm-up, Va keeps its broad value.
+    """
+    m = training.model
+    total = prepared.n_features * prepared.n_samples
+    m.va, m.vmu = _update_hyperpriors(
+        HyperpriorContext(
+            iteration=max(0, len(training.lc.get("rms", [])) - 1),
+            use_prior=use_prior,
+            niter_broadprior=_int_opt(opts.get("niter_broadprior", 0)),
+            bias_enabled=bool(opts["bias"]),
+            mu=m.mu,
+            mu_variances=m.muv,
+            loadings=m.a,
+            loading_covariances=m.av,
+            n_features=prepared.n_features,
+            hp_va=_float_opt(opts.get("hp_va", 0.001), default=0.001),
+            hp_vb=_float_opt(opts.get("hp_vb", 0.001), default=0.001),
+            va=m.va,
+            vmu=float(m.vmu),
+            obs_fraction=prepared.n_data / total if total > 0 else 1.0,
+        )
+    )
+
+
 def _bias_and_center(ctx: IterationContext) -> tuple[Matrix, Matrix | None]:
     training = ctx.training
     m = training.model
@@ -1697,8 +1737,10 @@ def _convergence_phase(
 def _iteration_step(ctx: IterationContext) -> None:
     """One full iteration of updates; mutates ``ctx.training`` in place."""
     iter_start = time.perf_counter()
+    post_rotation = str(ctx.cfg.opts.get("variance_update_order")) == "post_rotation"
 
-    _update_hyperpriors_phase(ctx)
+    if not post_rotation:
+        _update_hyperpriors_phase(ctx)
 
     if str(ctx.cfg.opts.get("bias_update_order")) == "legacy":
         x_data, x_probe = _bias_and_center(ctx)
@@ -1707,6 +1749,9 @@ def _iteration_step(ctx: IterationContext) -> None:
         x_probe = ctx.centering_state.x_probe
 
     x_data, x_probe, phase_scores_sec = _score_and_rotate(ctx, x_data, x_probe)
+    if post_rotation:
+        # Va and Vmu are re-estimated in the basis the loadings update will use.
+        _update_hyperpriors_phase(ctx)
     phase_loadings_sec = _update_loadings_phase(ctx, x_data)
     x_data, x_probe, rms, prms, phase_rms_sec = _rms_phase(ctx, x_data, x_probe)
     s_xv, phase_noise_sec = _noise_phase(ctx, rms)
@@ -2311,6 +2356,7 @@ def _build_options(kwargs: Mapping[str, object]) -> dict[str, object]:
         "rotate2pca": True,
         "display": False,
         "bias_update_order": "auto",
+        "variance_update_order": "auto",
         "compat_mode": "strict_legacy",
         "return_diagnostics": True,
         "runtime_report": False,
@@ -2342,6 +2388,17 @@ def _build_options(kwargs: Mapping[str, object]) -> dict[str, object]:
         )
         raise ValueError(msg)
     opts["bias_update_order"] = bias_order
+    variance_order_raw = str(opts.get("variance_update_order", "auto"))
+    variance_order = variance_order_raw.strip().lower()
+    if variance_order == "auto":
+        variance_order = "legacy" if compat_mode == "strict_legacy" else "post_rotation"
+    if variance_order not in {"legacy", "post_rotation"}:
+        msg = (
+            "variance_update_order must be one of "
+            f"{{'auto', 'legacy', 'post_rotation'}} (got {variance_order_raw!r})."
+        )
+        raise ValueError(msg)
+    opts["variance_update_order"] = variance_order
     opts["angle_every"] = max(1, _int_opt(opts.get("angle_every", 1), default=1))
     opts["return_diagnostics"] = int(bool(opts.get("return_diagnostics", 1)))
     opts = apply_runtime_policy_defaults(opts)

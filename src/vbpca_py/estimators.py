@@ -584,8 +584,10 @@ def _component_relevance(loadings: np.ndarray, scores: np.ndarray) -> np.ndarray
 
     The share of component ``k`` is ``|a_k| |s_k|`` over the sum across
     components, in the order of the returned components. It is computed in
-    the returned (rotated) basis, whereas ``Va`` is last updated before the
-    final rotation, so the two need not align component by component.
+    the returned (rotated) basis. ``Va`` matches that basis only with
+    ``variance_update_order="post_rotation"``; under the legacy order it is
+    last updated before the rotation and need not align component by
+    component.
 
     Returns:
         Shares summing to one, or zeros when the reconstruction is zero.
