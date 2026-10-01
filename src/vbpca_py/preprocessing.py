@@ -114,7 +114,22 @@ def _safe_unique(values: np.ndarray) -> list[Any]:
 
 
 class MissingAwareOneHotEncoder(BaseEstimator, TransformerMixin):
-    """One-hot encode categorical columns while respecting missing values."""
+    """One-hot encode categorical columns while respecting missing values.
+
+    Args:
+        handle_unknown: ``"ignore"`` encodes unseen categories as all zeros;
+            ``"raise"`` raises.
+        mean_center: Subtract each output column's observed mean.
+        dtype: Output dtype.
+        binary: ``"single"`` codes a two-level variable as one indicator for
+            its second level (a reference-level drop); ``"both"`` codes it
+            with one indicator per level, like every other variable. The
+            v1/EHS analyses one-hot encoded both levels.
+
+    After fitting, ``feature_groups_`` gives the input column of every
+    output column and ``feature_kinds_`` the kind of every input column, so
+    model selection can hold out whole variables (#250).
+    """
 
     def __init__(
         self,
@@ -122,17 +137,24 @@ class MissingAwareOneHotEncoder(BaseEstimator, TransformerMixin):
         handle_unknown: Literal["ignore", "raise"] = "ignore",
         mean_center: bool = False,
         dtype: type = float,
+        binary: Literal["single", "both"] = "single",
     ) -> None:
         self.handle_unknown = handle_unknown
         self.mean_center = mean_center
         self.dtype = dtype
+        self.binary = binary
         self.categories_: list[list[Any]] = []
         self.feature_names_out_: list[str] = []
+        self.feature_groups_: np.ndarray | None = None
+        self.feature_kinds_: list[str] = []
         self.column_means_: np.ndarray | None = None
         self.n_features_in_: int | None = None
         self._output_widths: list[int] = []
 
     def fit(self, x: np.ndarray, mask: Mask | None = None) -> MissingAwareOneHotEncoder:
+        if self.binary not in {"single", "both"}:
+            msg = f"binary must be 'single' or 'both', got {self.binary!r}"
+            raise ValueError(msg)
         x_arr = np.asarray(x)
         obs_mask = _ensure_mask(x_arr, mask)
         n_features = x_arr.shape[1]
@@ -146,9 +168,8 @@ class MissingAwareOneHotEncoder(BaseEstimator, TransformerMixin):
             observed_vals = x_arr[col_obs, j]
             cats = _safe_unique(observed_vals)
             self.categories_.append(cats)
-            if len(cats) == 2:
-                # Mirror legacy OHspecial_transform: collapse binary to a single
-                # indicator column for the second category.
+            if len(cats) == 2 and self.binary == "single":
+                # One indicator for the second level (reference-level drop).
                 self.feature_names_out_.append(f"col{j}_{cats[1]}")
                 self._output_widths.append(1)
                 means.extend([0.0])
@@ -160,6 +181,8 @@ class MissingAwareOneHotEncoder(BaseEstimator, TransformerMixin):
 
         self.column_means_ = np.array(means, dtype=self.dtype)
         self.n_features_in_ = n_features
+        self.feature_groups_ = np.repeat(np.arange(n_features), self._output_widths)
+        self.feature_kinds_ = ["categorical"] * n_features
         return self
 
     def _transform_single(
@@ -174,7 +197,7 @@ class MissingAwareOneHotEncoder(BaseEstimator, TransformerMixin):
         col_mask = np.asarray(mask[:, j], dtype=bool)
         col_vals = x[:, j]
 
-        if n_cats == 2:
+        if n_cats == 2 and self.binary == "single":
             return self._transform_binary(col_vals, col_mask, cats, j)
         return self._transform_multicat(col_vals, col_mask, cats, j)
 
@@ -399,6 +422,8 @@ class MissingAwareSparseOneHotEncoder(BaseEstimator, TransformerMixin):
         self.dtype = dtype
         self.categories_: list[float] = []
         self.feature_names_out_: list[str] = []
+        self.feature_groups_: np.ndarray | None = None
+        self.feature_kinds_: list[str] = []
         self.column_means_: np.ndarray | None = None
         self.n_features_in_: int | None = None
         self._output_width: int = 0
@@ -420,6 +445,8 @@ class MissingAwareSparseOneHotEncoder(BaseEstimator, TransformerMixin):
             self.column_means_ = np.array([], dtype=self.dtype)
             self.n_features_in_ = 1
             self._output_width = 0
+            self.feature_groups_ = np.zeros(0, dtype=int)
+            self.feature_kinds_ = ["categorical"]
             return self
 
         # Require numeric categories to round-trip through sparse matrices.
@@ -438,6 +465,8 @@ class MissingAwareSparseOneHotEncoder(BaseEstimator, TransformerMixin):
         )
         self.column_means_ = means_arr
         self.n_features_in_ = 1
+        self.feature_groups_ = np.zeros(self._output_width, dtype=int)
+        self.feature_kinds_ = ["categorical"]
         return self
 
     def transform(self, x: sp.spmatrix, mask: Mask | None = None) -> sp.csr_matrix:
@@ -725,9 +754,15 @@ class _ColumnPlan:
 
 
 class AutoEncoder(BaseEstimator, TransformerMixin):
-    """Column-wise router that applies missing-aware OHE or scaling."""
+    """Column-wise router that applies missing-aware OHE or scaling.
 
-    def __init__(
+    After fitting, ``feature_groups_`` gives the input column of every
+    output column and ``feature_kinds_`` the kind of every input column
+    (``"categorical"`` or ``"continuous"``). ``binary`` is passed to the
+    dense one-hot encoder (see :class:`MissingAwareOneHotEncoder`).
+    """
+
+    def __init__(  # noqa: PLR0913
         self,
         *,
         cardinality_threshold: int = 20,
@@ -735,14 +770,18 @@ class AutoEncoder(BaseEstimator, TransformerMixin):
         handle_unknown: Literal["ignore", "raise"] = "ignore",
         mean_center_ohe: bool = False,
         column_types: Sequence[Literal["categorical", "continuous"]] | None = None,
+        binary: Literal["single", "both"] = "single",
     ) -> None:
         self.cardinality_threshold = cardinality_threshold
         self.continuous_scaler = continuous_scaler
         self.handle_unknown = handle_unknown
         self.mean_center_ohe = mean_center_ohe
         self.column_types = column_types
+        self.binary = binary
         self.n_features_in_: int | None = None
         self.feature_names_out_: list[str] = []
+        self.feature_groups_: np.ndarray | None = None
+        self.feature_kinds_: list[str] = []
         self._plan: list[_ColumnPlan] = []
 
     def _infer_kind(
@@ -825,6 +864,7 @@ class AutoEncoder(BaseEstimator, TransformerMixin):
                     )
                 )
                 col_start += width
+            self._record_groups()
             return self
 
         x_dense = np.asarray(x)
@@ -844,6 +884,7 @@ class AutoEncoder(BaseEstimator, TransformerMixin):
                 encoder_dense = MissingAwareOneHotEncoder(
                     handle_unknown=self.handle_unknown,
                     mean_center=self.mean_center_ohe,
+                    binary=self.binary,
                 )
             else:
                 encoder_dense = (
@@ -866,7 +907,13 @@ class AutoEncoder(BaseEstimator, TransformerMixin):
                 )
             )
             col_start += width
+        self._record_groups()
         return self
+
+    def _record_groups(self) -> None:
+        widths = [plan.slice_end - plan.slice_start for plan in self._plan]
+        self.feature_groups_ = np.repeat(np.arange(len(self._plan)), widths)
+        self.feature_kinds_ = [plan.kind for plan in self._plan]
 
     def transform(
         self, x: np.ndarray | sp.spmatrix, mask: Mask | None = None
