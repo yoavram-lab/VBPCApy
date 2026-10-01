@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `variance_update_order={"auto", "legacy", "post_rotation"}` controls when
+  the ARD prior variances are updated relative to the per-iteration PCA
+  rotation. `post_rotation` re-estimates `Va`/`Vmu` after the rotation and
+  once more from the returned loadings, so `Va` matches the returned
+  components; `legacy` keeps the MATLAB order. `auto` resolves to `legacy`
+  under `compat_mode="strict_legacy"` and to `post_rotation` under
+  `compat_mode="modern"`; the resolved order is in the runtime report (#253).
 - `VBPCA` exposes its automatic relevance determination state:
   `prior_variances_`, `bias_prior_variance_`, `component_relevance_`,
   `effective_rank(threshold=0.01)`, and a per-iteration `prior_trace_` when

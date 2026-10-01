@@ -89,9 +89,17 @@ After fitting, `VBPCA` exposes:
 - `prior_trace_`: $V_a$ at every iteration when fitted with
   `record_prior_trace=True`.
 
-$V_a$ is last updated before the PCA rotation in each iteration, so with
-`rotate2pca` its entries need not line up with the returned components; use
-`component_relevance_` for per-component statements.
+### Update order
+
+With `rotate2pca`, every iteration rotates the loadings and scores to a PCA
+orientation, which can mix and reorder components. In the MATLAB-compatible
+order (`variance_update_order="legacy"`, selected by
+`compat_mode="strict_legacy"`), $V_a$ and $V_\mu$ are updated *before* that
+rotation, so the loadings update applies each prior variance to a column it was
+not estimated from, and the returned $V_a$ need not line up with the returned
+components. `variance_update_order="post_rotation"` (selected by
+`compat_mode="modern"`) re-estimates them after the rotation and once more from
+the returned loadings, so `prior_variances_` matches the returned components.
 
 ## Missing data handling
 
@@ -105,14 +113,15 @@ across columns sharing a pattern, reducing computation.
 
 ## PCA rotation
 
-After convergence, the latent space can be rotated to a PCA-like orientation where:
+The latent space is rotated to a PCA-like orientation where:
 
 1. Score dimensions are uncorrelated (diagonal covariance).
 2. Components are sorted by decreasing explained variance.
 
-This is a post-hoc orthogonal rotation that does not change the model fit — it
-only reorients $A$ and $S$ for interpretability. Controlled by the
-`rotate2pca` option (enabled by default).
+The rotation does not change the reconstruction; it reorients $A$ and $S$ for
+interpretability. With `rotate2pca` (enabled by default) it is applied in every
+iteration after the score update; otherwise once after convergence. See
+[Update order](#update-order) for how the prior variances follow it.
 
 ## Cost function
 
