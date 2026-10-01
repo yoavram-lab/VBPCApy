@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any, Literal, SupportsFloat, SupportsIndex, ca
 import numpy as np
 import scipy.sparse as sp
 
+from ._categorical_scores import CATEGORICAL_METRICS, categorical_scores
 from ._memory import exceeds_budget, format_bytes, resolve_max_dense_bytes
 from ._missing import make_xprobe_mask
 from ._pca_full import (
@@ -43,7 +44,7 @@ logger = logging.getLogger(__name__)
 RANK_ZERO_SELECTION_SUPPORTED = True
 
 _Metric = Literal["rms", "prms", "cost"]
-_CVMetric = Literal["prms"]
+_CVMetric = Literal["prms", "brier", "log_score"]
 _AllowedFloat = (
     SupportsFloat
     | SupportsIndex
@@ -154,12 +155,14 @@ def _fit_candidate(
 
     candidate_opts = dict(opts)
     xprobe = candidate_opts.pop("xprobe", None)
+    groups = candidate_opts.pop("_cell_groups", None)
     if k == 0:
         return _fit_mean_only_candidate(
             x_arr,
             mask,
             cast("Matrix | None", xprobe),
             bias=bool(candidate_opts.get("bias", True)),
+            groups=cast("Sequence[object] | None", groups),
         )
     est = VBPCA(k, **candidate_opts)  # type: ignore[arg-type]
     est.fit(x_arr, mask=mask, xprobe=cast("Matrix | None", xprobe))
@@ -179,6 +182,18 @@ def _fit_candidate(
         "converged": bool(est.converged_),
         "candidate_type": "low_rank",
     }
+    if groups is not None and xprobe is not None and est.components_ is not None:
+        # Selection fits skip the stored reconstruction; rebuild it from A, S, Mu.
+        prediction = np.asarray(est.components_) @ np.asarray(est.scores_)
+        if est.mean_ is not None:
+            prediction += np.ravel(est.mean_)[:, np.newaxis]
+        entry.update(
+            categorical_scores(
+                prediction,
+                np.asarray(xprobe, dtype=float),
+                cast("Sequence[object]", groups),
+            )
+        )
     return entry, est
 
 
@@ -188,6 +203,7 @@ def _fit_mean_only_candidate(
     xprobe: Matrix | None,
     *,
     bias: bool,
+    groups: Sequence[object] | None = None,
 ) -> tuple[dict[str, object], None]:
     """Evaluate an explicit rank-zero (mean-only) candidate.
 
@@ -246,20 +262,21 @@ def _fit_mean_only_candidate(
         probe_residual = probe_arr - means[:, np.newaxis]
         prms = float(np.sqrt(np.mean(np.square(probe_residual[probe_observed]))))
 
-    return (
-        {
-            "k": 0,
-            "rms": rms,
-            "prms": prms,
-            "cost": float("nan"),
-            "evr": None,
-            "n_iter": 0,
-            "convergence_reason": "closed_form_mean_only",
-            "converged": True,
-            "candidate_type": "mean_only",
-        },
-        None,
-    )
+    entry: dict[str, object] = {
+        "k": 0,
+        "rms": rms,
+        "prms": prms,
+        "cost": float("nan"),
+        "evr": None,
+        "n_iter": 0,
+        "convergence_reason": "closed_form_mean_only",
+        "converged": True,
+        "candidate_type": "mean_only",
+    }
+    if groups is not None and probe_arr is not None:
+        prediction = np.broadcast_to(means[:, np.newaxis], x_arr.shape)
+        entry.update(categorical_scores(prediction, probe_arr, groups))
+    return entry, None
 
 
 def _compute_evr_for_best(
@@ -886,7 +903,10 @@ class CVConfig:
     """Configuration for K-fold cross-validated component selection.
 
     Attributes:
-        metric: Held-out selection metric. Only ``"prms"`` is supported.
+        metric: Held-out selection metric: ``"prms"`` (per-indicator probe
+            RMS), or with ``feature_groups`` the categorical ``"brier"`` or
+            ``"log_score"`` (lower is better). With ``feature_groups`` every
+            result also reports ``brier``, ``log_score`` and ``accuracy``.
         n_splits: Number of cross-validation folds.
         one_se_rule: If ``True``, select the smallest *k* whose mean metric
             is within one standard error of the global minimum. Ignored when
@@ -1173,7 +1193,6 @@ def _run_fold(  # noqa: PLR0913
     probe_sel: np.ndarray,
     *,
     k_list: list[int],
-    metric: _CVMetric,
     opts: dict[str, object],
     seed: int,
     n_splits: int = 1,
@@ -1189,7 +1208,6 @@ def _run_fold(  # noqa: PLR0913
         probe_sel: Indices into ``obs_rows``/``obs_cols`` for this fold's
             held-out probe entries.
         k_list: Candidate component counts to evaluate.
-        metric: Held-out probe RMS (``"prms"``).
         opts: Options forwarded to ``select_n_components``.
         seed: Base seed used to derive a deterministic seed for this fold.
         n_splits: Total number of folds (for log messages).
@@ -1217,7 +1235,7 @@ def _run_fold(  # noqa: PLR0913
         x_fold,
         components=k_list,
         config=SelectionConfig(
-            metric=metric,
+            metric="prms",
             patience=None,
             max_trials=len(k_list),
             compute_explained_variance=False,
@@ -1228,7 +1246,11 @@ def _run_fold(  # noqa: PLR0913
 
     return {
         int(cast("int", t["k"])): {
-            **{m: float(cast("float", t[m])) for m in _TRACKED_METRICS},
+            **{
+                m: float(cast("float", t[m]))
+                for m in (*_TRACKED_METRICS, *CATEGORICAL_METRICS)
+                if m in t
+            },
             "n_iter": int(cast("int", t["n_iter"])),
             "converged": bool(t["converged"]),
             "convergence_reason": str(t["convergence_reason"]),
@@ -1281,9 +1303,11 @@ def _aggregate_cv_results(
     """
     cv_results: list[dict[str, object]] = []
 
+    present = {m for fold in fold_metrics for values in fold.values() for m in values}
+    metrics = [m for m in (*_TRACKED_METRICS, *CATEGORICAL_METRICS) if m in present]
     for k in k_list:
         entry: dict[str, object] = {"k": k}
-        for m in _TRACKED_METRICS:
+        for m in metrics:
             vals = [
                 float(cast("_AllowedFloat", fold[k][m]))
                 for fold in fold_metrics
@@ -1345,7 +1369,6 @@ def _cv_sweep(  # noqa: PLR0913
                 obs_cols=obs_cols,
                 probe_sel=probe_sel,
                 k_list=candidates,
-                metric=config.metric,
                 opts=opts,
                 seed=config.seed,
                 n_splits=config.n_splits,
@@ -1449,11 +1472,14 @@ def cross_validate_components(
     """
     cv_cfg = config or CVConfig()
 
-    if cv_cfg.metric != "prms":
+    if cv_cfg.metric not in {"prms", "brier", "log_score"}:
         msg = (
-            "cross-validation metric must be 'prms'; cost is a training "
-            "objective, not a held-out fold metric"
+            "cross-validation metric must be 'prms', 'brier' or 'log_score'; "
+            "cost is a training objective, not a held-out fold metric"
         )
+        raise ValueError(msg)
+    if cv_cfg.metric != "prms" and cv_cfg.feature_groups is None:
+        msg = f"metric={cv_cfg.metric!r} needs CVConfig.feature_groups"
         raise ValueError(msg)
     if cv_cfg.n_splits < 2:
         msg = f"n_splits must be >= 2 (got {cv_cfg.n_splits})"
@@ -1494,6 +1520,8 @@ def cross_validate_components(
         )
     )
     fit_opts["verbose"] = 0
+    if cv_cfg.feature_groups is not None:
+        fit_opts["_cell_groups"] = list(cv_cfg.feature_groups)
 
     k_list, all_fold_metrics = _cv_sweep(
         x_arr,

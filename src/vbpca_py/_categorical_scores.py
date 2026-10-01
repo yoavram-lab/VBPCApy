@@ -5,6 +5,12 @@ categorical variable the prediction of interest is the level of a held-out
 cell, so these scores treat each held-out (variable, sample) cell as one
 categorical prediction: the reconstructed block, clipped below at a small
 floor and renormalized, is read as level probabilities.
+
+A Gaussian low-rank reconstruction is not a calibrated categorical model, so
+the log score is dominated by cells whose observed level receives almost no
+predicted mass (each costs about ``-log(floor)``). The Brier score is bounded
+and usually the more useful selection metric; the log score is reported for
+comparison.
 """
 
 from __future__ import annotations
