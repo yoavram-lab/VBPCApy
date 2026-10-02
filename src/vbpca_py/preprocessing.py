@@ -12,6 +12,7 @@ import numpy as np
 import scipy.sparse as sp
 
 from ._encoding_checks import detect_one_hot_blocks, encoding_warnings
+from ._missingness_checks import mcar_screen, missingness_summary, scale_warnings
 from ._sklearn_compat import BaseEstimator, TransformerMixin
 from ._sparsity import validate_mask_compatibility
 
@@ -1470,6 +1471,10 @@ class DataReport:
         suggested_feature_groups: Variable label per column when one-hot
             blocks were detected (pass as ``CVConfig(feature_groups=...)``),
             otherwise ``None``.
+        missingness: Overall and per-row missing fractions, complete rows,
+            the number of distinct missingness patterns, rows above the
+            missing-fraction threshold and, with ``mcar_test=True``, the
+            pairs tested and flagged by the MCAR screen.
     """
 
     warnings: list[str] = field(default_factory=list)
@@ -1477,6 +1482,7 @@ class DataReport:
     suggested_pretransforms: dict[str | int, str] = field(default_factory=dict)
     passed: bool = True
     suggested_feature_groups: list[int] | None = None
+    missingness: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -1596,6 +1602,7 @@ def check_data(  # noqa: PLR0913
     near_zero_var_eps: float = 1e-10,
     missing_fraction_warn: float = 0.5,
     warn: bool = False,
+    mcar_test: bool = False,
 ) -> DataReport:
     """Run preflight diagnostics on a data matrix before VBPCA fitting.
 
@@ -1618,10 +1625,15 @@ def check_data(  # noqa: PLR0913
             which an entry is considered an outlier (default ``5.0``).
         near_zero_var_eps: Variance threshold below which a feature is
             flagged as near-zero-variance (default ``1e-10``).
-        missing_fraction_warn: Per-feature missing fraction above which
-            a warning is emitted (default ``0.5``).
+        missing_fraction_warn: Per-feature and per-row missing fraction
+            above which a warning is emitted (default ``0.5``).
         warn: If ``True``, also emit :func:`warnings.warn` for each
             issue.
+        mcar_test: If ``True``, screen for missingness that depends on
+            observed values: each continuous column is compared between rows
+            where another column is missing and rows where it is observed
+            (Welch's t-test, Bonferroni-corrected). A flagged pair is
+            evidence against MCAR; no flag does not establish MCAR.
 
     Returns:
         A :class:`DataReport` with warnings, per-feature summary, and
@@ -1664,7 +1676,14 @@ def check_data(  # noqa: PLR0913
     groups = detect_one_hot_blocks(x_arr, observed)
     if len(np.unique(groups)) < n_features:
         report.suggested_feature_groups = groups.tolist()
-    for message in encoding_warnings(x_arr, observed, groups, column_names):
+    report.missingness, messages = missingness_summary(observed, missing_fraction_warn)
+    messages += encoding_warnings(x_arr, observed, groups, column_names)
+    messages += scale_warnings(x_arr, observed, groups, column_names)
+    if mcar_test:
+        screen, mcar_messages = mcar_screen(x_arr, observed, groups, column_names)
+        report.missingness.update(screen)
+        messages += mcar_messages
+    for message in messages:
         _emit(report, message, emit=cfg.emit_warnings)
     report.passed = len(report.warnings) == 0
     return report

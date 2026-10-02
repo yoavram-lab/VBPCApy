@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `check_data` reports missingness and scale (#249): `DataReport.missingness`
+  gives the overall and per-row missing fractions, complete rows, the number
+  of missingness patterns and the rows above `missing_fraction_warn` (which
+  are also flagged). Continuous features whose standard deviations differ by
+  more than tenfold, or whose median is far from one (VBPCA's default priors
+  assume unit scale), are flagged. `check_data(..., mcar_test=True)` adds a
+  Bonferroni-corrected Welch screen for missingness that depends on observed
+  values. The one-hot block message now points to `drop="first"`.
 - One-hot encoders can drop a reference level and weight variable blocks
   (#249). `MissingAwareOneHotEncoder` and `AutoEncoder` accept
   `drop="first"`, which drops each variable's first level so a complete block

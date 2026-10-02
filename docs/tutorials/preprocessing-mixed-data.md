@@ -58,6 +58,21 @@ them to `CVConfig(feature_groups=...)` so cross-validation holds out whole
 variables. Rare levels and binary variables coded as a single indicator are
 flagged too.
 
+Continuous features are checked for scale. VBPCA's default priors assume
+roughly unit-scale data, and a feature with a much larger spread dominates the
+leading components, so `check_data` warns when feature standard deviations
+differ by more than a factor of ten or their median is far from one.
+Standardize each feature (`MissingAwareStandardScaler`) before fitting.
+
+`report.missingness` summarizes where values are missing: the overall and
+per-row missing fractions, complete rows, the number of distinct missingness
+patterns, and rows above `missing_fraction_warn`, which are also flagged.
+With `check_data(..., mcar_test=True)`, each continuous feature is compared
+between rows where another feature is missing and rows where it is observed
+(Welch's t-test, Bonferroni-corrected). A flagged pair is evidence that the
+data are not missing completely at random; no flag does not prove that they
+are.
+
 ## Encode with AutoEncoder
 
 `AutoEncoder` routes each column through the appropriate transformer based on
