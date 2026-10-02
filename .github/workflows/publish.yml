@@ -63,11 +63,12 @@ jobs:
           Expand-Archive eigen.zip -DestinationPath C:\eigen
           echo "EIGEN_INCLUDE_DIR=C:\eigen\eigen-3.4.0" >> $env:GITHUB_ENV
 
-      - uses: pypa/cibuildwheel@v2.22
+      - uses: pypa/cibuildwheel@v4.2.1
         env:
           # Python versions to build
           CIBW_BUILD: cp311-* cp312-* cp313-* cp314-*
-          CIBW_SKIP: "*-musllinux_* *-win32 *-manylinux_i686"
+          # Free-threaded CPython (cp314t) is not supported yet.
+          CIBW_SKIP: "*-musllinux_* *-win32 *-manylinux_i686 cp31?t-*"
           # Use manylinux_2_28 so pre-built scipy wheels are available
           CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
           CIBW_MANYLINUX_AARCH64_IMAGE: manylinux_2_28
@@ -83,9 +84,24 @@ jobs:
           name: wheels-${{ matrix.os }}
           path: wheelhouse/*.whl
 
+  # ── Check the advertised artifact matrix (#177) ────────────────────
+  artifacts:
+    needs: [sdist, wheels]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Require every advertised (Python, platform) wheel and the sdist
+        run: |
+          ls -1 dist
+          python scripts/check_release_artifacts.py dist
+
   # ── Publish to PyPI ────────────────────────────────────────────────
   publish:
-    needs: [release-metadata, sdist, wheels]
+    needs: [release-metadata, sdist, wheels, artifacts]
     runs-on: ubuntu-latest
     environment: pypi          # configure trusted publisher in this environment
     if: github.event_name == 'release'
