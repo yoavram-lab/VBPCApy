@@ -92,9 +92,10 @@ def encoding_warnings(
         width = int(counts[counts > 1].sum())
         messages.append(
             f"{blocks.size} one-hot block(s) detected ({width} indicator columns): "
-            "each block sums to one (an exact linear dependence), so pass "
-            "report.suggested_feature_groups as CVConfig(feature_groups=...) to "
-            "hold out whole variables"
+            "each block sums to one (an exact linear dependence; harmless for "
+            "VBPCA, or encode with drop='first' for a method that needs "
+            "full-rank inputs), so pass report.suggested_feature_groups as "
+            "CVConfig(feature_groups=...) to hold out whole variables"
         )
     for j in range(x.shape[1]):
         values = x[observed[:, j], j]
