@@ -15,6 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   each variable's block to unit total variance on the fitting data (weights in
   `block_weights_`) so variables with many levels do not dominate.
   `feature_groups_` and `inverse_transform` account for both.
+- Ordinal column type (#249): `MissingAwareOrdinalEncoder` codes ordered
+  categories as equally spaced scores (sorted, or in a given `levels` order),
+  scaled like a continuous column, and rounds back to the nearest level in
+  `inverse_transform`. `AutoEncoder(column_types=[..., "ordinal", ...])` routes
+  listed columns to it and reports them as `"ordinal"` in `feature_kinds_`.
 
 ## [0.4.4] - 2026-10-02
 

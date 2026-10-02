@@ -789,9 +789,120 @@ class MissingAwareMinMaxScaler(_BaseScaler):
         return x  # type: ignore[no-any-return]
 
 
+class MissingAwareOrdinalEncoder(BaseEstimator, TransformerMixin):
+    """Code ordered categorical columns as scaled numeric scores (#249).
+
+    Each column's levels map to equally spaced scores ``0, 1, ..., L - 1`` in
+    their order, which are then scaled like a continuous column, so an
+    ordinal variable enters the model as one numeric column rather than a
+    one-hot block. ``inverse_transform`` maps scores back to the nearest
+    level.
+
+    Args:
+        levels: The level order of every column. By default each column's
+            sorted observed values.
+        scaler: ``"standard"`` (zero mean and unit variance over observed
+            scores) or ``"minmax"`` (scores in [0, 1]).
+        handle_unknown: ``"raise"`` rejects values outside the fitted levels;
+            ``"ignore"`` treats them as missing.
+
+    After fitting, ``levels_`` holds each column's level order,
+    ``feature_groups_`` maps each output column to its input column and
+    ``feature_kinds_`` is ``"ordinal"`` for every column.
+    """
+
+    def __init__(
+        self,
+        *,
+        levels: Sequence[Sequence[Any]] | None = None,
+        scaler: Literal["standard", "minmax"] = "standard",
+        handle_unknown: Literal["ignore", "raise"] = "raise",
+    ) -> None:
+        self.levels = levels
+        self.scaler = scaler
+        self.handle_unknown = handle_unknown
+        self.levels_: list[list[Any]] = []
+        self.feature_names_out_: list[str] = []
+        self.feature_groups_: np.ndarray | None = None
+        self.feature_kinds_: list[str] = []
+        self.n_features_in_: int | None = None
+        self._scaler: _BaseScaler | None = None
+
+    def _scores(self, x: np.ndarray, mask: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        scores = np.full(x.shape, np.nan)
+        known = mask.copy()
+        for j, levels in enumerate(self.levels_):
+            index = {level: k for k, level in enumerate(levels)}
+            for i in np.nonzero(mask[:, j])[0]:
+                k = index.get(x[i, j])
+                if k is None:
+                    if self.handle_unknown == "raise":
+                        msg = f"Unknown level {x[i, j]!r} in ordinal column {j}"
+                        raise ValueError(msg)
+                    known[i, j] = False
+                else:
+                    scores[i, j] = float(k)
+        return scores, known
+
+    def fit(
+        self, x: np.ndarray, mask: Mask | None = None
+    ) -> MissingAwareOrdinalEncoder:
+        if self.scaler not in {"standard", "minmax"}:
+            msg = f"scaler must be 'standard' or 'minmax', got {self.scaler!r}"
+            raise ValueError(msg)
+        x_arr = np.asarray(x)
+        obs_mask = _ensure_mask(x_arr, mask)
+        n_features = x_arr.shape[1]
+        if self.levels is not None:
+            if len(self.levels) != n_features:
+                msg = f"levels has {len(self.levels)} entries for {n_features} columns"
+                raise ValueError(msg)
+            self.levels_ = [list(levels) for levels in self.levels]
+        else:
+            self.levels_ = [
+                sorted(_safe_unique(x_arr[obs_mask[:, j], j]))
+                for j in range(n_features)
+            ]
+        scores, known = self._scores(x_arr, obs_mask)
+        self._scaler = (
+            MissingAwareStandardScaler()
+            if self.scaler == "standard"
+            else MissingAwareMinMaxScaler()
+        )
+        self._scaler.fit(scores, mask=known)
+        self.n_features_in_ = n_features
+        self.feature_names_out_ = [f"col{j}" for j in range(n_features)]
+        self.feature_groups_ = np.arange(n_features)
+        self.feature_kinds_ = ["ordinal"] * n_features
+        return self
+
+    def transform(self, x: np.ndarray, mask: Mask | None = None) -> np.ndarray:
+        if self._scaler is None:
+            raise RuntimeError("Encoder not fitted")
+        x_arr = np.asarray(x)
+        scores, known = self._scores(x_arr, _ensure_mask(x_arr, mask))
+        return np.asarray(self._scaler.transform(scores, mask=known))
+
+    def fit_transform(self, x: np.ndarray, mask: Mask | None = None) -> np.ndarray:
+        return self.fit(x, mask).transform(x, mask)
+
+    def inverse_transform(self, z: np.ndarray, mask: Mask | None = None) -> np.ndarray:
+        if self._scaler is None:
+            raise RuntimeError("Encoder not fitted")
+        z_arr = np.asarray(z, dtype=float)
+        scores = np.asarray(self._scaler.inverse_transform(z_arr, mask=mask))
+        out = np.full(z_arr.shape, np.nan, dtype=object)
+        for j, levels in enumerate(self.levels_):
+            column = scores[:, j]
+            finite = np.isfinite(column)
+            index = np.clip(np.rint(column[finite]), 0, len(levels) - 1).astype(int)
+            out[finite, j] = [levels[k] for k in index]
+        return out
+
+
 @dataclass
 class _ColumnPlan:
-    kind: Literal["categorical", "continuous"]
+    kind: Literal["categorical", "continuous", "ordinal"]
     encoder: Any
     slice_start: int
     slice_end: int
@@ -802,7 +913,10 @@ class AutoEncoder(BaseEstimator, TransformerMixin):
 
     After fitting, ``feature_groups_`` gives the input column of every
     output column and ``feature_kinds_`` the kind of every input column
-    (``"categorical"`` or ``"continuous"``). ``binary``, ``drop`` and
+    (``"categorical"``, ``"continuous"`` or ``"ordinal"``). Ordinal columns
+    are never inferred: list them in ``column_types``, and they are coded as
+    scaled numeric scores (see :class:`MissingAwareOrdinalEncoder`) with the
+    ``continuous_scaler``. ``binary``, ``drop`` and
     ``block_weighting`` are passed to the dense one-hot encoder (see
     :class:`MissingAwareOneHotEncoder`).
     """
@@ -814,7 +928,8 @@ class AutoEncoder(BaseEstimator, TransformerMixin):
         continuous_scaler: Literal["standard", "minmax"] = "standard",
         handle_unknown: Literal["ignore", "raise"] = "ignore",
         mean_center_ohe: bool = False,
-        column_types: Sequence[Literal["categorical", "continuous"]] | None = None,
+        column_types: Sequence[Literal["categorical", "continuous", "ordinal"]]
+        | None = None,
         binary: Literal["single", "both"] = "single",
         drop: Literal["first"] | None = None,
         block_weighting: Literal["none", "equal_variance"] = "none",
@@ -835,7 +950,7 @@ class AutoEncoder(BaseEstimator, TransformerMixin):
 
     def _infer_kind(
         self, col: np.ndarray, mask: Mask, idx: int
-    ) -> Literal["categorical", "continuous"]:
+    ) -> Literal["categorical", "continuous", "ordinal"]:
         if self.column_types is not None:
             return self.column_types[idx]
         observed = col[mask]
@@ -854,7 +969,7 @@ class AutoEncoder(BaseEstimator, TransformerMixin):
 
     def _infer_kind_sparse(
         self, col: sp.spmatrix, idx: int
-    ) -> Literal["categorical", "continuous"]:
+    ) -> Literal["categorical", "continuous", "ordinal"]:
         if self.column_types is not None:
             return self.column_types[idx]
         col_csr = _to_csr(col)
@@ -883,6 +998,9 @@ class AutoEncoder(BaseEstimator, TransformerMixin):
             col_start = 0
             for j in range(self.n_features_in_):
                 kind = self._infer_kind_sparse(x_csr.getcol(j), j)
+                if kind == "ordinal":
+                    msg = "ordinal columns are only supported for dense input"
+                    raise ValueError(msg)
                 encoder: Any
                 if kind == "categorical":
                     encoder = MissingAwareSparseOneHotEncoder(
@@ -928,21 +1046,7 @@ class AutoEncoder(BaseEstimator, TransformerMixin):
                 if self.column_types is not None
                 else self._infer_kind(x_dense[:, j], obs_mask[:, j], j)
             )
-            encoder_dense: Any
-            if kind == "categorical":
-                encoder_dense = MissingAwareOneHotEncoder(
-                    handle_unknown=self.handle_unknown,
-                    mean_center=self.mean_center_ohe,
-                    binary=self.binary,
-                    drop=self.drop,
-                    block_weighting=self.block_weighting,
-                )
-            else:
-                encoder_dense = (
-                    MissingAwareStandardScaler()
-                    if self.continuous_scaler == "standard"
-                    else MissingAwareMinMaxScaler()
-                )
+            encoder_dense = self._dense_encoder(kind)
             encoder_dense.fit(x_dense[:, [j]], mask=obs_mask[:, [j]])
             z = encoder_dense.transform(x_dense[:, [j]], mask=obs_mask[:, [j]])
             width = z.shape[1]
@@ -960,6 +1064,26 @@ class AutoEncoder(BaseEstimator, TransformerMixin):
             col_start += width
         self._record_groups()
         return self
+
+    def _dense_encoder(
+        self, kind: Literal["categorical", "continuous", "ordinal"]
+    ) -> Any:  # noqa: ANN401
+        if kind == "categorical":
+            return MissingAwareOneHotEncoder(
+                handle_unknown=self.handle_unknown,
+                mean_center=self.mean_center_ohe,
+                binary=self.binary,
+                drop=self.drop,
+                block_weighting=self.block_weighting,
+            )
+        if kind == "ordinal":
+            return MissingAwareOrdinalEncoder(
+                scaler=self.continuous_scaler,
+                handle_unknown=self.handle_unknown,
+            )
+        if self.continuous_scaler == "standard":
+            return MissingAwareStandardScaler()
+        return MissingAwareMinMaxScaler()
 
     def _record_groups(self) -> None:
         widths = [plan.slice_end - plan.slice_start for plan in self._plan]
