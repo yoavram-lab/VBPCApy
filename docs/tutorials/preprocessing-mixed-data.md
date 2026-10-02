@@ -103,6 +103,17 @@ Two further options change how the indicators enter the model:
 
 `inverse_transform` undoes both, so reconstructions decode back to levels.
 
+Ordered categories (a three-point scale, a frequency rating) can instead enter
+as one numeric column. List them as `"ordinal"` in `column_types`: their levels
+map to equally spaced scores in sorted order (or the order you pass to
+`MissingAwareOrdinalEncoder(levels=...)`), scaled with `continuous_scaler`.
+Ordinal columns are never inferred, because the data cannot say whether levels
+are ordered.
+
+```python
+auto = AutoEncoder(column_types=["ordinal", "categorical", "continuous"])
+```
+
 !!! note "Convention mismatch"
     `AutoEncoder` expects **samples × features** (scikit-learn convention), but
     `VBPCA` expects **features × samples**. Transpose when passing to the model.
