@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.4] - 2026-10-02
+
 ### Added
 - `check_data` detects categorical encodings (#250): runs of 0/1 columns with
   shared missingness whose rows sum to one are reported as one-hot blocks, and
@@ -47,6 +49,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The ARD documentation described $V_a$ as precisions; it is a prior variance,
   and small values prune. The `hp_va`, `hp_vb`, `hp_v`, `niter_broadprior` and
   `va_init` docstrings now state how each enters the updates (#251).
+- Release wheels for CPython 3.14: the publish workflow pinned a wheel builder
+  that silently skipped the advertised 3.14 builds, so no release so far has
+  shipped 3.14 wheels. It now uses cibuildwheel 4.2.1, and publishing is
+  blocked unless the source distribution and a wheel for every advertised
+  CPython version on Linux x86_64, macOS arm64 and Windows amd64 are present
+  (#177).
 
 ## [0.4.3] - 2026-09-28
 

@@ -45,6 +45,14 @@ def test_invalid_binary_option_is_rejected() -> None:
 
 
 def test_binary_is_a_constructor_parameter() -> None:
+    encoder = MissingAwareOneHotEncoder(binary="both")
+
+    assert encoder.binary == "both"
+
+
+def test_binary_is_visible_to_scikit_learn() -> None:
+    pytest.importorskip("sklearn")
+
     assert MissingAwareOneHotEncoder(binary="both").get_params()["binary"] == "both"
 
 
