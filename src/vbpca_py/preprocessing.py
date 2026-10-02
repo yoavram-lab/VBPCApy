@@ -126,24 +126,40 @@ class MissingAwareOneHotEncoder(BaseEstimator, TransformerMixin):
             its second level (a reference-level drop); ``"both"`` codes it
             with one indicator per level, like every other variable. The
             v1/EHS analyses one-hot encoded both levels.
+        drop: ``"first"`` drops the indicator of each variable's first
+            category in ``categories_`` (the first level seen), for every
+            variable with at least two levels, so a complete block no longer
+            sums to one; ``None`` (default) keeps every level.
+            ``inverse_transform`` restores the dropped level as one minus the
+            sum of the others.
+        block_weighting: ``"equal_variance"`` scales each variable's block so
+            its total observed variance at fit time is one, so every variable
+            contributes comparable variance whatever its number of levels;
+            ``"none"`` (default) leaves the indicators unscaled. The weights
+            are in ``block_weights_`` and are undone by ``inverse_transform``.
 
     After fitting, ``feature_groups_`` gives the input column of every
     output column and ``feature_kinds_`` the kind of every input column, so
     model selection can hold out whole variables (#250).
     """
 
-    def __init__(
+    def __init__(  # noqa: PLR0913
         self,
         *,
         handle_unknown: Literal["ignore", "raise"] = "ignore",
         mean_center: bool = False,
         dtype: type = float,
         binary: Literal["single", "both"] = "single",
+        drop: Literal["first"] | None = None,
+        block_weighting: Literal["none", "equal_variance"] = "none",
     ) -> None:
         self.handle_unknown = handle_unknown
         self.mean_center = mean_center
         self.dtype = dtype
         self.binary = binary
+        self.drop = drop
+        self.block_weighting = block_weighting
+        self.block_weights_: np.ndarray | None = None
         self.categories_: list[list[Any]] = []
         self.feature_names_out_: list[str] = []
         self.feature_groups_: np.ndarray | None = None
@@ -155,6 +171,15 @@ class MissingAwareOneHotEncoder(BaseEstimator, TransformerMixin):
     def fit(self, x: np.ndarray, mask: Mask | None = None) -> MissingAwareOneHotEncoder:
         if self.binary not in {"single", "both"}:
             msg = f"binary must be 'single' or 'both', got {self.binary!r}"
+            raise ValueError(msg)
+        if self.drop not in {None, "first"}:
+            msg = f"drop must be None or 'first', got {self.drop!r}"
+            raise ValueError(msg)
+        if self.block_weighting not in {"none", "equal_variance"}:
+            msg = (
+                "block_weighting must be 'none' or 'equal_variance', "
+                f"got {self.block_weighting!r}"
+            )
             raise ValueError(msg)
         x_arr = np.asarray(x)
         obs_mask = _ensure_mask(x_arr, mask)
@@ -169,22 +194,31 @@ class MissingAwareOneHotEncoder(BaseEstimator, TransformerMixin):
             observed_vals = x_arr[col_obs, j]
             cats = _safe_unique(observed_vals)
             self.categories_.append(cats)
-            if len(cats) == 2 and self.binary == "single":
-                # One indicator for the second level (reference-level drop).
-                self.feature_names_out_.append(f"col{j}_{cats[1]}")
-                self._output_widths.append(1)
-                means.extend([0.0])
-            else:
-                for c in cats:
-                    self.feature_names_out_.append(f"col{j}_{c}")
-                self._output_widths.append(len(cats))
-                means.extend([0.0] * len(cats))
+            kept = cats[self._first_kept(len(cats)) :]
+            self.feature_names_out_.extend(f"col{j}_{c}" for c in kept)
+            self._output_widths.append(len(kept))
+            means.extend([0.0] * len(kept))
 
         self.column_means_ = np.array(means, dtype=self.dtype)
         self.n_features_in_ = n_features
         self.feature_groups_ = np.repeat(np.arange(n_features), self._output_widths)
         self.feature_kinds_ = ["categorical"] * n_features
+        self.block_weights_ = np.ones(n_features, dtype=float)
+        if self.block_weighting == "equal_variance":
+            for j in range(n_features):
+                block, _names, _means = self._transform_single(x_arr, obs_mask, j)
+                with np.errstate(invalid="ignore"), _warnings_mod.catch_warnings():
+                    _warnings_mod.simplefilter("ignore", RuntimeWarning)
+                    total = float(np.nansum(np.nanvar(block, axis=0)))
+                if total > 0.0:
+                    self.block_weights_[j] = 1.0 / np.sqrt(total)
         return self
+
+    def _first_kept(self, n_cats: int) -> int:
+        """Return the index of the first level that gets an indicator."""
+        if n_cats == 2 and self.binary == "single":
+            return 1
+        return 1 if self.drop == "first" and n_cats >= 2 else 0
 
     def _transform_single(
         self, x: np.ndarray, mask: Mask, j: int
@@ -198,7 +232,7 @@ class MissingAwareOneHotEncoder(BaseEstimator, TransformerMixin):
         col_mask = np.asarray(mask[:, j], dtype=bool)
         col_vals = x[:, j]
 
-        if n_cats == 2 and self.binary == "single":
+        if n_cats == 2 and self._first_kept(n_cats) == 1:
             return self._transform_binary(col_vals, col_mask, cats, j)
         return self._transform_multicat(col_vals, col_mask, cats, j)
 
@@ -266,13 +300,15 @@ class MissingAwareOneHotEncoder(BaseEstimator, TransformerMixin):
                 obs_rows = np.nonzero(col_mask)[0]
                 out[obs_rows[valid], idxs[valid]] = 1.0
 
-        means: np.ndarray = np.zeros(n_cats, dtype=self.dtype)
+        first = self._first_kept(n_cats)
+        out = out[:, first:]
+        means: np.ndarray = np.zeros(n_cats - first, dtype=self.dtype)
         if self.mean_center:
             with np.errstate(invalid="ignore"):
                 means = np.nanmean(out, axis=0)
             out -= means
             out[~np.isfinite(out)] = np.nan
-        names = [f"col{j}_{c}" for c in cats]
+        names = [f"col{j}_{c}" for c in cats[first:]]
         return out, names, means
 
     def transform(self, x: np.ndarray, mask: Mask | None = None) -> np.ndarray:
@@ -285,6 +321,8 @@ class MissingAwareOneHotEncoder(BaseEstimator, TransformerMixin):
         names: list[str] = []
         for j in range(self.n_features_in_):
             block, block_names, block_means = self._transform_single(x_arr, obs_mask, j)
+            if self.block_weights_ is not None:
+                block *= self.block_weights_[j]
             parts.append(block)
             names.extend(block_names)
             means.extend(block_means.tolist())
@@ -319,7 +357,9 @@ class MissingAwareOneHotEncoder(BaseEstimator, TransformerMixin):
             if n_cats == 0:
                 out_cols.append(np.full(z_arr.shape[0], np.nan))
                 continue
-            block = z_arr[:, col_start : col_start + width]
+            block = z_arr[:, col_start : col_start + width].copy()
+            if self.block_weights_ is not None:
+                block /= self.block_weights_[j]
             if self.mean_center and self.column_means_ is not None:
                 means = self.column_means_[mean_idx : mean_idx + width]
                 block += means
@@ -327,6 +367,9 @@ class MissingAwareOneHotEncoder(BaseEstimator, TransformerMixin):
             if n_cats == 2 and width == 1:
                 self._decode_binary(block, col_vals, cats, obs_mask, j)
             else:
+                if width == n_cats - 1:
+                    reference = 1.0 - np.sum(block, axis=1, keepdims=True)
+                    block = np.hstack([reference, block])
                 self._decode_multicat(block, col_vals, cats, obs_mask, j)
             out_cols.append(col_vals.astype(object))
             col_start += width
@@ -759,8 +802,9 @@ class AutoEncoder(BaseEstimator, TransformerMixin):
 
     After fitting, ``feature_groups_`` gives the input column of every
     output column and ``feature_kinds_`` the kind of every input column
-    (``"categorical"`` or ``"continuous"``). ``binary`` is passed to the
-    dense one-hot encoder (see :class:`MissingAwareOneHotEncoder`).
+    (``"categorical"`` or ``"continuous"``). ``binary``, ``drop`` and
+    ``block_weighting`` are passed to the dense one-hot encoder (see
+    :class:`MissingAwareOneHotEncoder`).
     """
 
     def __init__(  # noqa: PLR0913
@@ -772,6 +816,8 @@ class AutoEncoder(BaseEstimator, TransformerMixin):
         mean_center_ohe: bool = False,
         column_types: Sequence[Literal["categorical", "continuous"]] | None = None,
         binary: Literal["single", "both"] = "single",
+        drop: Literal["first"] | None = None,
+        block_weighting: Literal["none", "equal_variance"] = "none",
     ) -> None:
         self.cardinality_threshold = cardinality_threshold
         self.continuous_scaler = continuous_scaler
@@ -779,6 +825,8 @@ class AutoEncoder(BaseEstimator, TransformerMixin):
         self.mean_center_ohe = mean_center_ohe
         self.column_types = column_types
         self.binary = binary
+        self.drop = drop
+        self.block_weighting = block_weighting
         self.n_features_in_: int | None = None
         self.feature_names_out_: list[str] = []
         self.feature_groups_: np.ndarray | None = None
@@ -886,6 +934,8 @@ class AutoEncoder(BaseEstimator, TransformerMixin):
                     handle_unknown=self.handle_unknown,
                     mean_center=self.mean_center_ohe,
                     binary=self.binary,
+                    drop=self.drop,
+                    block_weighting=self.block_weighting,
                 )
             else:
                 encoder_dense = (
