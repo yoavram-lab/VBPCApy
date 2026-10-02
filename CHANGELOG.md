@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- One-hot encoders can drop a reference level and weight variable blocks
+  (#249). `MissingAwareOneHotEncoder` and `AutoEncoder` accept
+  `drop="first"`, which drops each variable's first level so a complete block
+  no longer sums to one, and `block_weighting="equal_variance"`, which scales
+  each variable's block to unit total variance on the fitting data (weights in
+  `block_weights_`) so variables with many levels do not dominate.
+  `feature_groups_` and `inverse_transform` account for both.
+
 ## [0.4.4] - 2026-10-02
 
 ### Added

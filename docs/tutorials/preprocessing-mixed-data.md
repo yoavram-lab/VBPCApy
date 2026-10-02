@@ -90,6 +90,19 @@ Two-level variables are coded with a single indicator by default
 (`binary="single"`, a reference-level drop). Pass `binary="both"` to give them
 one indicator per level like every other categorical variable.
 
+Two further options change how the indicators enter the model:
+
+- `drop="first"` drops each variable's first level (the first entry of its
+  `categories_`). A complete one-hot block sums to one, so its indicators are
+  linearly dependent; dropping a level removes that dependence.
+- `block_weighting="equal_variance"` scales each variable's block so its total
+  variance on the fitting data is one. Without it, a variable with many levels
+  contributes more variance than a binary one and can dominate the leading
+  components; with it, every variable contributes equally, in the spirit of
+  multiple correspondence analysis.
+
+`inverse_transform` undoes both, so reconstructions decode back to levels.
+
 !!! note "Convention mismatch"
     `AutoEncoder` expects **samples × features** (scikit-learn convention), but
     `VBPCA` expects **features × samples**. Transpose when passing to the model.
