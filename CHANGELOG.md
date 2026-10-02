@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.4] - 2026-10-02
+
 ### Added
 - `check_data` detects categorical encodings (#250): runs of 0/1 columns with
   shared missingness whose rows sum to one are reported as one-hot blocks, and
