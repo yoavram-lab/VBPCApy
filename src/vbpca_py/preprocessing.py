@@ -5,7 +5,7 @@ from __future__ import annotations
 # ruff: noqa: D102, D107, DOC201, DOC501, TRY003, EM101, EM102, TC003
 import warnings as _warnings_mod
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Literal, cast
 
 import numpy as np
@@ -15,6 +15,7 @@ from ._encoding_checks import detect_one_hot_blocks, encoding_warnings
 from ._missingness_checks import mcar_screen, missingness_summary, scale_warnings
 from ._sklearn_compat import BaseEstimator, TransformerMixin
 from ._sparsity import validate_mask_compatibility
+from .encoding import EncodedVariable, EncodingSchema
 
 __all__ = [
     "AutoEncoder",
@@ -142,6 +143,9 @@ class MissingAwareOneHotEncoder(BaseEstimator, TransformerMixin):
     After fitting, ``feature_groups_`` gives the input column of every
     output column and ``feature_kinds_`` the kind of every input column, so
     model selection can hold out whole variables (#250).
+    ``encoding_schema_`` also records category order, reference drop, fitted
+    means and weights for categorical decoding and scoring (#266). Centering
+    is fitted once; transforming new data retains those means.
     """
 
     def __init__(  # noqa: PLR0913
@@ -166,6 +170,7 @@ class MissingAwareOneHotEncoder(BaseEstimator, TransformerMixin):
         self.feature_groups_: np.ndarray | None = None
         self.feature_kinds_: list[str] = []
         self.column_means_: np.ndarray | None = None
+        self.encoding_schema_: EncodingSchema | None = None
         self.n_features_in_: int | None = None
         self._output_widths: list[int] = []
 
@@ -188,7 +193,6 @@ class MissingAwareOneHotEncoder(BaseEstimator, TransformerMixin):
         self.categories_ = []
         self.feature_names_out_ = []
         self._output_widths = []
-        means: list[float] = []
 
         for j in range(n_features):
             col_obs = obs_mask[:, j]
@@ -198,22 +202,66 @@ class MissingAwareOneHotEncoder(BaseEstimator, TransformerMixin):
             kept = cats[self._first_kept(len(cats)) :]
             self.feature_names_out_.extend(f"col{j}_{c}" for c in kept)
             self._output_widths.append(len(kept))
-            means.extend([0.0] * len(kept))
 
-        self.column_means_ = np.array(means, dtype=self.dtype)
+        self.column_means_ = None
         self.n_features_in_ = n_features
         self.feature_groups_ = np.repeat(np.arange(n_features), self._output_widths)
         self.feature_kinds_ = ["categorical"] * n_features
         self.block_weights_ = np.ones(n_features, dtype=float)
-        if self.block_weighting == "equal_variance":
-            for j in range(n_features):
-                block, _names, _means = self._transform_single(x_arr, obs_mask, j)
+        means: list[float] = []
+        for j in range(n_features):
+            block, _names, block_means = self._transform_single(x_arr, obs_mask, j)
+            means.extend(block_means.tolist())
+            if self.block_weighting == "equal_variance":
                 with np.errstate(invalid="ignore"), _warnings_mod.catch_warnings():
                     _warnings_mod.simplefilter("ignore", RuntimeWarning)
                     total = float(np.nansum(np.nanvar(block, axis=0)))
                 if total > 0.0:
                     self.block_weights_[j] = 1.0 / np.sqrt(total)
+        if self.mean_center:
+            self.column_means_ = np.array(means, dtype=self.dtype)
+        self.encoding_schema_ = self._encoding_schema()
         return self
+
+    def _encoding_schema(self) -> EncodingSchema:
+        variables = []
+        start = 0
+        for j, (cats, width) in enumerate(
+            zip(self.categories_, self._output_widths, strict=True)
+        ):
+            stop = start + width
+            offset = (
+                tuple(float(v) for v in self.column_means_[start:stop])
+                if self.column_means_ is not None
+                else (0.0,) * width
+            )
+            variables.append(
+                EncodedVariable(
+                    kind="categorical",
+                    columns=tuple(range(start, stop)),
+                    categories=tuple(cats),
+                    reference=0 if self._first_kept(len(cats)) else None,
+                    offset=offset,
+                    weight=float(self.block_weights_[j])
+                    if self.block_weights_ is not None
+                    else 1.0,
+                )
+            )
+            start = stop
+        return EncodingSchema(tuple(variables))
+
+    def _center_block(self, block: np.ndarray, j: int) -> np.ndarray:
+        means: np.ndarray = np.zeros(block.shape[1], dtype=self.dtype)
+        if self.mean_center:
+            if self.column_means_ is None:
+                with np.errstate(invalid="ignore"):
+                    means = np.nanmean(block, axis=0)
+            else:
+                start = sum(self._output_widths[:j])
+                means = self.column_means_[start : start + block.shape[1]]
+            block -= means
+            block[~np.isfinite(block)] = np.nan
+        return means
 
     def _first_kept(self, n_cats: int) -> int:
         """Return the index of the first level that gets an indicator."""
@@ -264,12 +312,7 @@ class MissingAwareOneHotEncoder(BaseEstimator, TransformerMixin):
                         )
                     out[row_idx, 0] = 0.0
 
-        means: np.ndarray = np.zeros(1, dtype=self.dtype)
-        if self.mean_center:
-            with np.errstate(invalid="ignore"):
-                means = np.nanmean(out, axis=0)
-            out -= means
-            out[~np.isfinite(out)] = np.nan
+        means = self._center_block(out, j)
         names = [f"col{j}_{cats[1]}"]
         return out, names, means
 
@@ -303,12 +346,7 @@ class MissingAwareOneHotEncoder(BaseEstimator, TransformerMixin):
 
         first = self._first_kept(n_cats)
         out = out[:, first:]
-        means: np.ndarray = np.zeros(n_cats - first, dtype=self.dtype)
-        if self.mean_center:
-            with np.errstate(invalid="ignore"):
-                means = np.nanmean(out, axis=0)
-            out -= means
-            out[~np.isfinite(out)] = np.nan
+        means = self._center_block(out, j)
         names = [f"col{j}_{c}" for c in cats[first:]]
         return out, names, means
 
@@ -318,19 +356,14 @@ class MissingAwareOneHotEncoder(BaseEstimator, TransformerMixin):
         x_arr = np.asarray(x)
         obs_mask = _ensure_mask(x_arr, mask)
         parts: list[np.ndarray] = []
-        means: list[float] = []
         names: list[str] = []
         for j in range(self.n_features_in_):
-            block, block_names, block_means = self._transform_single(x_arr, obs_mask, j)
+            block, block_names, _means = self._transform_single(x_arr, obs_mask, j)
             if self.block_weights_ is not None:
                 block *= self.block_weights_[j]
             parts.append(block)
             names.extend(block_names)
-            means.extend(block_means.tolist())
         self.feature_names_out_ = names
-        self.column_means_ = (
-            np.array(means, dtype=self.dtype) if self.mean_center else None
-        )
         return (
             np.concatenate(parts, axis=1)
             if parts
@@ -920,6 +953,8 @@ class AutoEncoder(BaseEstimator, TransformerMixin):
     ``continuous_scaler``. ``binary``, ``drop`` and
     ``block_weighting`` are passed to the dense one-hot encoder (see
     :class:`MissingAwareOneHotEncoder`).
+    Dense fits expose ``encoding_schema_`` for encoding-aware categorical CV;
+    sparse fits leave it ``None`` (component CV accepts dense input only).
     """
 
     def __init__(  # noqa: PLR0913
@@ -947,6 +982,7 @@ class AutoEncoder(BaseEstimator, TransformerMixin):
         self.feature_names_out_: list[str] = []
         self.feature_groups_: np.ndarray | None = None
         self.feature_kinds_: list[str] = []
+        self.encoding_schema_: EncodingSchema | None = None
         self._plan: list[_ColumnPlan] = []
 
     def _infer_kind(
@@ -988,6 +1024,7 @@ class AutoEncoder(BaseEstimator, TransformerMixin):
 
     def fit(self, x: np.ndarray | sp.spmatrix, mask: Mask | None = None) -> AutoEncoder:
         is_sparse = _is_sparse(x)
+        self.encoding_schema_ = None
         if is_sparse and mask is not None:
             raise ValueError("mask must be None when fitting sparse data")
         if is_sparse:
@@ -1064,7 +1101,28 @@ class AutoEncoder(BaseEstimator, TransformerMixin):
             )
             col_start += width
         self._record_groups()
+        self._record_schema()
         return self
+
+    def _record_schema(self) -> None:
+        variables = []
+        for plan in self._plan:
+            if plan.kind == "categorical":
+                variable = plan.encoder.encoding_schema_.variables[0]
+                variables.append(
+                    replace(
+                        variable,
+                        columns=tuple(c + plan.slice_start for c in variable.columns),
+                    )
+                )
+            else:
+                variables.append(
+                    EncodedVariable(
+                        kind=plan.kind,
+                        columns=tuple(range(plan.slice_start, plan.slice_end)),
+                    )
+                )
+        self.encoding_schema_ = EncodingSchema(tuple(variables))
 
     def _dense_encoder(
         self, kind: Literal["categorical", "continuous", "ordinal"]
