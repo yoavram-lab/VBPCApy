@@ -26,6 +26,11 @@ from vbpca_py.preprocessing import (
     MissingAwareWinsorizer,
     check_data,
 )
+from vbpca_py.raw_model_selection import (
+    PreprocessedFold,
+    cross_validate_raw_components,
+    prepare_raw_cv_folds,
+)
 
 __all__ = [
     "RANK_ZERO_SELECTION_SUPPORTED",
@@ -43,10 +48,13 @@ __all__ = [
     "MissingAwareSparseOneHotEncoder",
     "MissingAwareStandardScaler",
     "MissingAwareWinsorizer",
+    "PreprocessedFold",
     "SelectionConfig",
     "check_data",
     "cross_validate_components",
+    "cross_validate_raw_components",
     "make_xprobe_mask",
+    "prepare_raw_cv_folds",
     "recommend_config",
     "select_n_components",
 ]
