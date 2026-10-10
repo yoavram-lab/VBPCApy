@@ -13,6 +13,11 @@ include pyproject.toml
 include README.md
 include LICENSE
 include MANIFEST.in
+include CITATION.cff
+include CHANGELOG.md
+include docs/releases/0.4.6.md
+include scripts/benchmark_study.md
+recursive-include scripts *.py
 
 # -----------------------------
 # Tests

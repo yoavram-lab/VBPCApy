@@ -148,6 +148,10 @@ example with `just example-raw-cv`, or
 
 ## Development
 
+The [0.4.6 release validation](docs/releases/0.4.6.md) describes the paired
+fitting-compatibility check and package/adoption gates. General scoring and
+benchmark validation commands are in [scripts/benchmark_study.md](scripts/benchmark_study.md).
+
 ```bash
 git clone https://github.com/yoavram-lab/VBPCApy.git
 cd VBPCApy
@@ -181,7 +185,7 @@ If you use this package in your research, please cite:
   title = {{VBPCApy}: Variational Bayesian PCA with Missing Data Support},
   year = {2026},
   url = {https://github.com/yoavram-lab/VBPCApy},
-  version = {0.4.5},
+  version = {0.4.6},
 }
 ```
 
