@@ -61,6 +61,19 @@ def _ensure_mask(x: np.ndarray, mask: Mask | None) -> Mask:
     return observed & finite
 
 
+def _declared_levels(levels: Sequence[Any]) -> list[Any]:
+    values = list(levels)
+    array = np.asarray(values, dtype=object)
+    if (
+        not values
+        or len(_safe_unique(array)) != len(values)
+        or np.any(~_ensure_mask(array[:, None], None))
+    ):
+        msg = "declared levels must be nonempty, unique and nonmissing"
+        raise ValueError(msg)
+    return values
+
+
 def _sparse_col_counts(mat: sp.csc_matrix) -> np.ndarray:
     """Return nonzero counts per column for a CSC matrix."""
     return np.diff(mat.indptr)
@@ -139,6 +152,8 @@ class MissingAwareOneHotEncoder(BaseEstimator, TransformerMixin):
             contributes comparable variance whatever its number of levels;
             ``"none"`` (default) leaves the indicators unscaled. The weights
             are in ``block_weights_`` and are undone by ``inverse_transform``.
+        categories: Optional externally declared category order per column;
+            ``None`` entries infer levels from training observations only.
 
     After fitting, ``feature_groups_`` gives the input column of every
     output column and ``feature_kinds_`` the kind of every input column, so
@@ -157,6 +172,7 @@ class MissingAwareOneHotEncoder(BaseEstimator, TransformerMixin):
         binary: Literal["single", "both"] = "single",
         drop: Literal["first"] | None = None,
         block_weighting: Literal["none", "equal_variance"] = "none",
+        categories: Sequence[Sequence[Any] | None] | None = None,
     ) -> None:
         self.handle_unknown = handle_unknown
         self.mean_center = mean_center
@@ -164,6 +180,7 @@ class MissingAwareOneHotEncoder(BaseEstimator, TransformerMixin):
         self.binary = binary
         self.drop = drop
         self.block_weighting = block_weighting
+        self.categories = categories
         self.block_weights_: np.ndarray | None = None
         self.categories_: list[list[Any]] = []
         self.feature_names_out_: list[str] = []
@@ -190,6 +207,9 @@ class MissingAwareOneHotEncoder(BaseEstimator, TransformerMixin):
         x_arr = np.asarray(x)
         obs_mask = _ensure_mask(x_arr, mask)
         n_features = x_arr.shape[1]
+        if self.categories is not None and len(self.categories) != n_features:
+            msg = "categories must have one entry per input column"
+            raise ValueError(msg)
         self.categories_ = []
         self.feature_names_out_ = []
         self._output_widths = []
@@ -197,7 +217,12 @@ class MissingAwareOneHotEncoder(BaseEstimator, TransformerMixin):
         for j in range(n_features):
             col_obs = obs_mask[:, j]
             observed_vals = x_arr[col_obs, j]
-            cats = _safe_unique(observed_vals)
+            declared = None if self.categories is None else self.categories[j]
+            cats = (
+                _safe_unique(observed_vals)
+                if declared is None
+                else _declared_levels(declared)
+            )
             self.categories_.append(cats)
             kept = cats[self._first_kept(len(cats)) :]
             self.feature_names_out_.extend(f"col{j}_{c}" for c in kept)
@@ -891,7 +916,7 @@ class MissingAwareOrdinalEncoder(BaseEstimator, TransformerMixin):
             if len(self.levels) != n_features:
                 msg = f"levels has {len(self.levels)} entries for {n_features} columns"
                 raise ValueError(msg)
-            self.levels_ = [list(levels) for levels in self.levels]
+            self.levels_ = [_declared_levels(levels) for levels in self.levels]
         else:
             self.levels_ = [
                 sorted(_safe_unique(x_arr[obs_mask[:, j], j]))
@@ -955,6 +980,8 @@ class AutoEncoder(BaseEstimator, TransformerMixin):
     :class:`MissingAwareOneHotEncoder`).
     Dense fits expose ``encoding_schema_`` for encoding-aware categorical CV;
     sparse fits leave it ``None`` (component CV accepts dense input only).
+    ``column_levels`` declares external nominal vocabularies or ordinal level
+    orders; leave continuous columns and training-inferred vocabularies ``None``.
     """
 
     def __init__(  # noqa: PLR0913
@@ -969,6 +996,7 @@ class AutoEncoder(BaseEstimator, TransformerMixin):
         binary: Literal["single", "both"] = "single",
         drop: Literal["first"] | None = None,
         block_weighting: Literal["none", "equal_variance"] = "none",
+        column_levels: Sequence[Sequence[Any] | None] | None = None,
     ) -> None:
         self.cardinality_threshold = cardinality_threshold
         self.continuous_scaler = continuous_scaler
@@ -978,6 +1006,7 @@ class AutoEncoder(BaseEstimator, TransformerMixin):
         self.binary = binary
         self.drop = drop
         self.block_weighting = block_weighting
+        self.column_levels = column_levels
         self.n_features_in_: int | None = None
         self.feature_names_out_: list[str] = []
         self.feature_groups_: np.ndarray | None = None
@@ -1025,6 +1054,11 @@ class AutoEncoder(BaseEstimator, TransformerMixin):
     def fit(self, x: np.ndarray | sp.spmatrix, mask: Mask | None = None) -> AutoEncoder:
         is_sparse = _is_sparse(x)
         self.encoding_schema_ = None
+        if self.column_levels is not None and (
+            is_sparse or len(self.column_levels) != x.shape[1]
+        ):
+            msg = "column_levels needs one entry per column of dense input"
+            raise ValueError(msg)
         if is_sparse and mask is not None:
             raise ValueError("mask must be None when fitting sparse data")
         if is_sparse:
@@ -1084,7 +1118,9 @@ class AutoEncoder(BaseEstimator, TransformerMixin):
                 if self.column_types is not None
                 else self._infer_kind(x_dense[:, j], obs_mask[:, j], j)
             )
-            encoder_dense = self._dense_encoder(kind)
+            encoder_dense = self._dense_encoder(
+                kind, None if self.column_levels is None else self.column_levels[j]
+            )
             encoder_dense.fit(x_dense[:, [j]], mask=obs_mask[:, [j]])
             z = encoder_dense.transform(x_dense[:, [j]], mask=obs_mask[:, [j]])
             width = z.shape[1]
@@ -1120,12 +1156,18 @@ class AutoEncoder(BaseEstimator, TransformerMixin):
                     EncodedVariable(
                         kind=plan.kind,
                         columns=tuple(range(plan.slice_start, plan.slice_end)),
+                        categories=tuple(plan.encoder.levels_[0])
+                        if plan.kind == "ordinal"
+                        else (),
+                        **self._numeric_affine(plan),
                     )
                 )
         self.encoding_schema_ = EncodingSchema(tuple(variables))
 
     def _dense_encoder(
-        self, kind: Literal["categorical", "continuous", "ordinal"]
+        self,
+        kind: Literal["categorical", "continuous", "ordinal"],
+        levels: Sequence[Any] | None = None,
     ) -> Any:  # noqa: ANN401
         if kind == "categorical":
             return MissingAwareOneHotEncoder(
@@ -1134,15 +1176,35 @@ class AutoEncoder(BaseEstimator, TransformerMixin):
                 binary=self.binary,
                 drop=self.drop,
                 block_weighting=self.block_weighting,
+                categories=[levels],
             )
         if kind == "ordinal":
             return MissingAwareOrdinalEncoder(
                 scaler=self.continuous_scaler,
                 handle_unknown=self.handle_unknown,
+                levels=None if levels is None else [levels],
             )
+        if levels is not None:
+            msg = "continuous columns cannot have declared levels"
+            raise ValueError(msg)
         if self.continuous_scaler == "standard":
             return MissingAwareStandardScaler()
         return MissingAwareMinMaxScaler()
+
+    @staticmethod
+    def _numeric_affine(plan: _ColumnPlan) -> dict[str, Any]:
+        scaler = plan.encoder._scaler if plan.kind == "ordinal" else plan.encoder  # noqa: SLF001
+        if isinstance(scaler, MissingAwareStandardScaler):
+            if scaler.mean_ is None or scaler.scale_ is None:
+                raise RuntimeError("Numeric scaler not fitted")
+            return {
+                "offset": tuple(scaler.mean_),
+                "weight": 1.0 / float(scaler.scale_[0]),
+            }
+        return {
+            "offset": tuple(scaler.data_min_),
+            "weight": 1.0 / float(scaler.data_range_[0]),
+        }
 
     def _record_groups(self) -> None:
         widths = [plan.slice_end - plan.slice_start for plan in self._plan]
