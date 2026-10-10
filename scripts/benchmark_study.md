@@ -40,3 +40,9 @@ The `just bench-study-full`, `just bench-study-summary`, and
 `just bench-study-paper` sequence referenced in CONTRIBUTING.md has no recipes
 in the current justfile. Current benchmark recipes are listed by `just --list`;
 use the commands above for this scoring change.
+
+For the 0.4.6 patch, [release validation](../docs/releases/0.4.6.md) adds the
+paired fixed-policy fitting check against 0.4.5. Both snapshots must use the
+same registered policy module, numerical environment and controlled native
+build. This checks the numerical implementation on fixed matrices; adopting
+raw-table CV remains a separately registered preprocessing-method change.

@@ -7,7 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.6] - 2026-10-10
+
+The numerical fitting implementation and recommended options for fixed encoded
+matrices are unchanged from 0.4.5. Encoding-aware scoring and training-only
+preprocessing intentionally change the CV methodology for mixed encodings.
+
 ### Added
+- Fitted `EncodingSchema` / `EncodedVariable` metadata for dense encoders and
+  `CVConfig.encoding_schema` for categorical scoring (#266, PR #271). Scores
+  restore centering, weights, dropped references and single-binary levels,
+  while keeping continuous/ordinal columns out of nominal metrics.
 - Raw-table variable-cell component CV (#267): `cross_validate_raw_components`
   holds out original cells before learning preprocessing, fits one fresh
   `AutoEncoder` per fold, and reuses its schema across candidate capacities.
@@ -15,6 +25,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   for audit. Numeric errors are reported in continuous input or ordinal-index
   units. External vocabularies/orders can be supplied with `column_levels`
   (`categories` on `MissingAwareOneHotEncoder`); unknown held-out levels raise.
+- A reproducible fitting-identity gate and release validation instructions in
+  `docs/releases/0.4.6.md` for the pp-eigentest #195 adoption decision.
+
+### Fixed
+- Dense one-hot transforms retain training-fitted means when centering new
+  observations (#266). Schema-free categorical selection rejects ambiguous
+  single-indicator and transformed targets with an actionable error.
+- Trade-study installation recipes use the sibling checkout or the configurable
+  `TRADE_STUDY_PATH` instead of a workstation-specific absolute path (#269,
+  PR #270).
+- Source distributions include release metadata, validation scripts and these
+  release instructions.
 
 ## [0.4.5] - 2026-10-02
 
