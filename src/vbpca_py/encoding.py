@@ -17,10 +17,10 @@ class EncodedVariable:
             nominal categorical scores.
         columns: Encoded feature indices, in category order with the reference
             omitted when applicable.
-        categories: Fitted category order for categorical variables.
+        categories: Fitted nominal category or ordinal level order.
         reference: Index of an omitted category, or ``None`` for full coding.
-        offset: Unweighted indicator means subtracted before weighting.
-        weight: Positive multiplier applied to the entire indicator block.
+        offset: Unweighted means (or numeric minima) subtracted before scaling.
+        weight: Positive multiplier applied to the block or numeric column.
     """
 
     kind: Literal["categorical", "continuous", "ordinal"]
@@ -54,6 +54,34 @@ class EncodedVariable:
         if self.reference is not None:
             reference = 1.0 - decoded.sum(axis=0)
             decoded = np.insert(decoded, self.reference, reference, axis=0)
+        return decoded
+
+    def decode_numeric(self, block: np.ndarray) -> np.ndarray:
+        """Restore continuous values or unrounded ordinal level-index scores.
+
+        Args:
+            block: Encoded features-by-samples values for this numeric variable.
+
+        Returns:
+            Values in continuous input units or ordinal level-index units.
+
+        Raises:
+            ValueError: If numeric affine metadata or dimensions are unavailable.
+        """
+        dimensions_match = block.ndim == 2 and block.shape[0] == len(self.columns)
+        finite_affine = np.all(np.isfinite(self.offset)) and np.isfinite(self.weight)
+        if (
+            self.kind not in {"continuous", "ordinal"}
+            or not dimensions_match
+            or len(self.offset) != len(self.columns)
+            or not finite_affine
+            or self.weight <= 0
+        ):
+            msg = "numeric decoding needs matching columns and fitted affine metadata"
+            raise ValueError(msg)
+        decoded: np.ndarray = (
+            block / self.weight + np.asarray(self.offset)[:, np.newaxis]
+        )
         return decoded
 
 

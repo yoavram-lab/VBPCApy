@@ -96,14 +96,55 @@ can yield different predictions. Schema-free categorical selection requires
 full unweighted one-hot blocks and rejects singleton groups and transformed
 targets. `feature_groups` alone cannot identify binary versus numeric columns.
 
-This API splits an already encoded matrix. Fit learned preprocessing on each
-training fold in an external adapter for leakage-safe reconstruction CV
-(#267); passing a schema does not make preprocessing fold-local. Fit centering
-once and reuse the same encoder and schema when transforming new data.
+This API splits an already encoded matrix. A schema describes the transform;
+use the raw-table API below when learning preprocessing within CV folds.
 Unknown categories cannot be distinguished from a dropped reference when
 `handle_unknown="ignore"`; use `"raise"` when scoring new raw data. See the
 [model-selection guide](docs/concepts/model-selection.md) and
 [benchmark validation note](scripts/benchmark_study.md).
+
+## Raw-table component selection
+
+`cross_validate_raw_components` accepts **samples × original variables**, with
+NaNs or an explicit observation mask. It holds out original variable cells
+before fitting means, scales, categorical centering and block weights. A fresh
+`AutoEncoder` is fitted once per fold and reused across every candidate rank,
+including first-minimum early stopping.
+
+```python
+from vbpca_py import AutoEncoder, CVConfig, cross_validate_raw_components
+
+def make_encoder():
+    return AutoEncoder(
+        column_types=["categorical", "continuous", "ordinal"],
+        # External codebook; do not derive this from held-out values.
+        column_levels=[["no", "yes"], None, ["low", "medium", "high"]],
+        mean_center_ohe=True,
+        block_weighting="equal_variance",
+        handle_unknown="raise",
+    )
+
+best_k, results, folds = cross_validate_raw_components(
+    X, encoder_factory=make_encoder, components=range(4),
+    config=CVConfig(n_splits=3, metric="brier", seed=11),
+    maxiters=200,
+)
+```
+
+Declare column kinds explicitly. `column_levels=None` (or a `None` entry) learns
+levels from training cells; a held-only unknown level raises an error. External
+nominal vocabularies and ordinal orders support declared levels absent from
+training. Each returned `PreprocessedFold` exposes original training/holdout
+masks, encoded matrices, the fitted encoder and its schema;
+`prepare_raw_cv_folds` constructs these without fitting candidate models.
+
+Results include nominal Brier/log/accuracy scores and `rmse_variable_j` for each
+numeric input column: continuous values in input units, ordinal values in
+unrounded level-index units. Numeric summaries report contributing fold counts;
+encoded `prms` is also retained. This predicts cells of the same samples;
+sample-wise sklearn CV evaluates new samples. Run the complete mixed-data
+example with `just example-raw-cv`, or
+`python scripts/example_raw_cell_cv.py` after installing the package.
 
 ## Development
 

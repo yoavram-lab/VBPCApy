@@ -30,7 +30,7 @@ from ._pca_full import (
 )
 
 if TYPE_CHECKING:  # pragma: no cover
-    from collections.abc import Iterable, Mapping, Sequence
+    from collections.abc import Callable, Iterable, Mapping, Sequence
 
     from ._pca_full import Matrix
     from .encoding import EncodingSchema
@@ -162,6 +162,10 @@ def _fit_candidate(
     xprobe = candidate_opts.pop("xprobe", None)
     groups = candidate_opts.pop("_cell_groups", None)
     schema = candidate_opts.pop("_encoding_schema", None)
+    scorer = cast(
+        "Callable[[np.ndarray], dict[str, float]] | None",
+        candidate_opts.pop("_extra_scorer", None),
+    )
     if k == 0:
         return _fit_mean_only_candidate(
             x_arr,
@@ -170,6 +174,7 @@ def _fit_candidate(
             bias=bool(candidate_opts.get("bias", True)),
             groups=cast("Sequence[object] | None", groups),
             encoding_schema=cast("EncodingSchema | None", schema),
+            extra_scorer=scorer,
         )
     est = VBPCA(k, **candidate_opts)  # type: ignore[arg-type]
     est.fit(x_arr, mask=mask, xprobe=cast("Matrix | None", xprobe))
@@ -195,11 +200,12 @@ def _fit_candidate(
         if est.mean_ is not None:
             prediction += np.ravel(est.mean_)[:, np.newaxis]
         entry.update(
-            categorical_scores(
+            _prediction_scores(
                 prediction,
                 np.asarray(xprobe, dtype=float),
                 cast("Sequence[object]", groups),
-                schema=cast("EncodingSchema | None", schema),
+                cast("EncodingSchema | None", schema),
+                scorer,
             )
         )
     return entry, est
@@ -213,6 +219,7 @@ def _fit_mean_only_candidate(  # noqa: PLR0913
     bias: bool,
     groups: Sequence[object] | None = None,
     encoding_schema: EncodingSchema | None = None,
+    extra_scorer: Callable[[np.ndarray], dict[str, float]] | None = None,
 ) -> tuple[dict[str, object], None]:
     """Evaluate an explicit rank-zero (mean-only) candidate.
 
@@ -285,9 +292,24 @@ def _fit_mean_only_candidate(  # noqa: PLR0913
     if groups is not None and probe_arr is not None:
         prediction = np.broadcast_to(means[:, np.newaxis], x_arr.shape)
         entry.update(
-            categorical_scores(prediction, probe_arr, groups, schema=encoding_schema)
+            _prediction_scores(
+                prediction, probe_arr, groups, encoding_schema, extra_scorer
+            )
         )
     return entry, None
+
+
+def _prediction_scores(
+    prediction: np.ndarray,
+    held_out: np.ndarray,
+    groups: Sequence[object],
+    schema: EncodingSchema | None,
+    scorer: Callable[[np.ndarray], dict[str, float]] | None,
+) -> dict[str, float]:
+    scores = categorical_scores(prediction, held_out, groups, schema=schema)
+    if scorer is not None:
+        scores.update(scorer(prediction))
+    return scores
 
 
 def _compute_evr_for_best(
@@ -1264,8 +1286,9 @@ def _run_fold(  # noqa: PLR0913
         int(cast("int", t["k"])): {
             **{
                 m: float(cast("float", t[m]))
-                for m in (*_TRACKED_METRICS, *CATEGORICAL_METRICS)
-                if m in t
+                for m in t
+                if m in {*_TRACKED_METRICS, *CATEGORICAL_METRICS}
+                or m.startswith("rmse_variable_")
             },
             "n_iter": int(cast("int", t["n_iter"])),
             "converged": bool(t["converged"]),
@@ -1300,6 +1323,7 @@ def _aggregate_cv_results(
     k_list: list[int],
     fold_metrics: list[dict[int, dict[str, object]]],
     selection_metric: _CVMetric,
+    extra_metrics: Sequence[str] = (),
 ) -> tuple[int, list[dict[str, object]]]:
     """Aggregate fold metrics and select *k* via the 1-SE rule.
 
@@ -1311,6 +1335,8 @@ def _aggregate_cv_results(
         fold_metrics: Per-fold dicts mapping *k* to a dict of all tracked
             metric values.
         selection_metric: The metric used for the 1-SE selection rule.
+        extra_metrics: Additional per-variable scores; summaries omit folds
+            without a finite score and record the number of contributing folds.
 
     Returns:
         Tuple ``(best_k, cv_results)`` where *cv_results* is a list of
@@ -1320,7 +1346,11 @@ def _aggregate_cv_results(
     cv_results: list[dict[str, object]] = []
 
     present = {m for fold in fold_metrics for values in fold.values() for m in values}
-    metrics = [m for m in (*_TRACKED_METRICS, *CATEGORICAL_METRICS) if m in present]
+    metrics = [
+        m
+        for m in (*_TRACKED_METRICS, *CATEGORICAL_METRICS, *extra_metrics)
+        if m in present
+    ]
     for k in k_list:
         entry: dict[str, object] = {"k": k}
         for m in metrics:
@@ -1329,6 +1359,9 @@ def _aggregate_cv_results(
                 for fold in fold_metrics
                 if k in fold and m in fold[k]
             ]
+            if m in extra_metrics:
+                vals = [v for v in vals if np.isfinite(v)]
+                entry[f"n_folds_{m}"] = len(vals)
             n = len(vals)
             std_val = float(np.std(vals, ddof=1)) if n > 1 else 0.0
             entry[f"mean_{m}"] = float(np.mean(vals)) if n > 0 else float("nan")

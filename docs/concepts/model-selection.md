@@ -172,16 +172,79 @@ reference level, so use `handle_unknown="raise"` on new raw tables.
 ### Preprocessing and the CV target
 
 This API accepts an already encoded matrix. A schema describes its transform,
-but does not fit preprocessing separately inside each fold. For learned
-centering, scaling or weights, an external fold-aware adapter must construct
-raw variable-cell holdouts first, fit on training observations and reuse that
-fold's fitted encoder and schema for all candidate ranks (#267). Fixed or
-externally fitted transforms can use this API directly. Centering in the
-dense one-hot encoder is learned at fit time and remains fixed on transform.
+but does not fit preprocessing separately inside each fold. Fixed or externally
+fitted transforms can use it directly. For learned centering, scaling, category
+frequencies or weights, use the raw-table path below. Centering in the dense
+one-hot encoder is learned at fit time and remains fixed on transform.
 
 Variable-cell reconstruction CV predicts missing cells of the same samples;
 sample-wise sklearn CV evaluates held-out samples. These answer different
 prediction questions.
+
+## `cross_validate_raw_components` — training-only preprocessing
+
+Pass a dense **samples-by-original-variables** table and a factory returning a
+fresh `AutoEncoder` with explicit `column_types` and `handle_unknown="raise"`.
+The raw mask has that same shape. Holdouts are assigned using only this
+observation pattern and `CVConfig.seed`; changing held-out values cannot affect
+fold assignments or the fitted preprocessing in that fold.
+
+```python
+from vbpca_py import AutoEncoder, CVConfig, cross_validate_raw_components
+
+def make_encoder():
+    return AutoEncoder(
+        column_types=["categorical", "continuous", "ordinal"],
+        column_levels=[["no", "yes"], None, ["low", "medium", "high"]],
+        binary="single", mean_center_ohe=True,
+        block_weighting="equal_variance", handle_unknown="raise",
+    )
+
+best_k, results, folds = cross_validate_raw_components(
+    X, encoder_factory=make_encoder, components=range(4),
+    config=CVConfig(n_splits=3, metric="brier", seed=11,
+                    selection_rule="first_minimum", early_stop=True),
+    maxiters=200,
+)
+```
+
+All nontraining raw cells are replaced with NaNs before fitting each encoder.
+Its fitted means, scales, category order and weights then transform both
+training and held-out cells. Every encoded indicator belonging to a raw cell
+shares that cell's observation mask. The same fitted encoder is reused for all
+candidate ranks, including early stopping. The three return values are selected
+capacity, aggregate records and `PreprocessedFold` audit objects. To inspect
+preprocessing alone, call `prepare_raw_cv_folds` with the same inputs.
+
+Use `column_levels` for vocabularies and ordinal order declared independently
+of these held-out data, such as a survey codebook. A `None` entry learns levels
+from training observations (ordinals use sorted training levels). Unknown
+held-out levels raise an actionable error instead of becoming a dropped
+reference. Declared but training-absent categories retain their indicator and
+zero training frequency. A one-level categorical variable retains one indicator.
+
+The training-support backbone remains in every training fold: not every observed
+cell is validation-eligible. Every original variable/sample and encoded
+feature/sample must retain training support. Too few eligible cells, nonfinite
+encoded observations, or a categorical objective with no categorical holdouts
+in a fold raise errors. Candidate capacities must fit the smallest encoded fold
+dimension. Raw CV derives groups and schemas; leave `CVConfig.feature_groups`
+and `encoding_schema` unset and do not supply an external `xprobe`.
+
+Nominal scores decode each fold's schema. `rmse_variable_j` measures continuous
+error in input units or ordinal error in unrounded level-index units; it is
+reported per numeric variable, avoiding a combined score across incompatible
+units. These metrics have `mean_`, `std_`, `se_`, per-fold values and
+`n_folds_rmse_variable_j` counts. Folds without held-out cells of a variable have
+NaN for that score and do not contribute to its numeric summary. If no fold can
+hold out that variable, the mean is NaN and the contributing count is zero.
+Numeric means average the contributing fold RMSEs, rather than pooling cells.
+Selection still uses `prms` in encoded units or nominal Brier/log score.
+
+This is reconstruction CV for missing cells of the same samples. For
+generalization to new samples, use a sample-wise sklearn split and fit the
+entire preprocessing/model pipeline on each training sample set. See the
+installed-package example in `scripts/example_raw_cell_cv.py`.
 
 ## Choosing between the two
 
