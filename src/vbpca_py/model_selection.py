@@ -15,7 +15,11 @@ from typing import TYPE_CHECKING, Any, Literal, SupportsFloat, SupportsIndex, ca
 import numpy as np
 import scipy.sparse as sp
 
-from ._categorical_scores import CATEGORICAL_METRICS, categorical_scores
+from ._categorical_scores import (
+    CATEGORICAL_METRICS,
+    categorical_scores,
+    validate_legacy_categorical_input,
+)
 from ._memory import exceeds_budget, format_bytes, resolve_max_dense_bytes
 from ._missing import make_xprobe_mask
 from ._pca_full import (
@@ -29,6 +33,7 @@ if TYPE_CHECKING:  # pragma: no cover
     from collections.abc import Iterable, Mapping, Sequence
 
     from ._pca_full import Matrix
+    from .encoding import EncodingSchema
     from .estimators import VBPCA
 
 __all__ = [
@@ -156,6 +161,7 @@ def _fit_candidate(
     candidate_opts = dict(opts)
     xprobe = candidate_opts.pop("xprobe", None)
     groups = candidate_opts.pop("_cell_groups", None)
+    schema = candidate_opts.pop("_encoding_schema", None)
     if k == 0:
         return _fit_mean_only_candidate(
             x_arr,
@@ -163,6 +169,7 @@ def _fit_candidate(
             cast("Matrix | None", xprobe),
             bias=bool(candidate_opts.get("bias", True)),
             groups=cast("Sequence[object] | None", groups),
+            encoding_schema=cast("EncodingSchema | None", schema),
         )
     est = VBPCA(k, **candidate_opts)  # type: ignore[arg-type]
     est.fit(x_arr, mask=mask, xprobe=cast("Matrix | None", xprobe))
@@ -192,18 +199,20 @@ def _fit_candidate(
                 prediction,
                 np.asarray(xprobe, dtype=float),
                 cast("Sequence[object]", groups),
+                schema=cast("EncodingSchema | None", schema),
             )
         )
     return entry, est
 
 
-def _fit_mean_only_candidate(
+def _fit_mean_only_candidate(  # noqa: PLR0913
     x: np.ndarray | sp.csr_matrix,
     mask: Matrix | None,
     xprobe: Matrix | None,
     *,
     bias: bool,
     groups: Sequence[object] | None = None,
+    encoding_schema: EncodingSchema | None = None,
 ) -> tuple[dict[str, object], None]:
     """Evaluate an explicit rank-zero (mean-only) candidate.
 
@@ -275,7 +284,9 @@ def _fit_mean_only_candidate(
     }
     if groups is not None and probe_arr is not None:
         prediction = np.broadcast_to(means[:, np.newaxis], x_arr.shape)
-        entry.update(categorical_scores(prediction, probe_arr, groups))
+        entry.update(
+            categorical_scores(prediction, probe_arr, groups, schema=encoding_schema)
+        )
     return entry, None
 
 
@@ -923,6 +934,10 @@ class CVConfig:
         early_stop: With ``selection_rule="first_minimum"``, evaluate
             capacities in increasing order across all folds and stop as soon
             as the rule triggers, skipping every larger capacity (#248).
+        encoding_schema: Fitted dense encoder metadata for categorical decoding
+            (#266). Groups are derived from it unless explicitly supplied; an
+            explicit group list must match. Learned preprocessing is still
+            external to this encoded-array CV API (#267).
     """
 
     metric: _CVMetric = "prms"
@@ -932,6 +947,7 @@ class CVConfig:
     feature_groups: Sequence[Any] | None = None
     selection_rule: Literal["one_se", "minimum", "first_minimum"] | None = None
     early_stop: bool = False
+    encoding_schema: EncodingSchema | None = None
 
     def resolved_rule(self) -> str:
         """Return the selection rule in effect.
@@ -1478,9 +1494,6 @@ def cross_validate_components(
             "cost is a training objective, not a held-out fold metric"
         )
         raise ValueError(msg)
-    if cv_cfg.metric != "prms" and cv_cfg.feature_groups is None:
-        msg = f"metric={cv_cfg.metric!r} needs CVConfig.feature_groups"
-        raise ValueError(msg)
     if cv_cfg.n_splits < 2:
         msg = f"n_splits must be >= 2 (got {cv_cfg.n_splits})"
         raise ValueError(msg)
@@ -1503,13 +1516,15 @@ def cross_validate_components(
             raise ValueError(msg)
         x_arr[~mask_arr] = np.nan
 
+    groups = _cv_groups(cv_cfg, x_arr)
+
     rule = cv_cfg.resolved_rule()
     k_list = _normalize_components(components, x_arr.shape[0], x_arr.shape[1])
     fold_rng = np.random.default_rng(cv_cfg.seed)
     folds = (
         _make_element_folds(x_arr, cv_cfg.n_splits, fold_rng)
-        if cv_cfg.feature_groups is None
-        else _make_group_folds(x_arr, cv_cfg.feature_groups, cv_cfg.n_splits, fold_rng)
+        if groups is None
+        else _make_group_folds(x_arr, groups, cv_cfg.n_splits, fold_rng)
     )
 
     fit_opts: dict[str, object] = dict(opts)
@@ -1520,8 +1535,10 @@ def cross_validate_components(
         )
     )
     fit_opts["verbose"] = 0
-    if cv_cfg.feature_groups is not None:
-        fit_opts["_cell_groups"] = list(cv_cfg.feature_groups)
+    if groups is not None:
+        fit_opts["_cell_groups"] = list(groups)
+    if cv_cfg.encoding_schema is not None:
+        fit_opts["_encoding_schema"] = cv_cfg.encoding_schema
 
     k_list, all_fold_metrics = _cv_sweep(
         x_arr,
@@ -1549,3 +1566,36 @@ def cross_validate_components(
         )
 
     return best_k, cv_results
+
+
+def _cv_groups(config: CVConfig, x: np.ndarray) -> Sequence[Any] | None:
+    """Resolve and validate the encoding contract before fitting candidates.
+
+    Returns:
+        Variable labels, derived from the schema when provided.
+
+    Raises:
+        ValueError: If categorical selection lacks groups or suitable targets,
+            or schema metadata does not match the input.
+    """
+    groups = config.feature_groups
+    if config.encoding_schema is not None:
+        config.encoding_schema.validate(x.shape[0])
+        if groups is None:
+            groups = config.encoding_schema.feature_groups
+        scores = categorical_scores(x, x, groups, schema=config.encoding_schema)
+        if config.metric != "prms" and not np.isfinite(scores[config.metric]):
+            msg = "categorical selection needs observed categorical cells in the schema"
+            raise ValueError(msg)
+    if config.metric != "prms" and groups is None:
+        msg = (
+            f"metric={config.metric!r} needs CVConfig.feature_groups or encoding_schema"
+        )
+        raise ValueError(msg)
+    if (
+        config.metric != "prms"
+        and config.encoding_schema is None
+        and groups is not None
+    ):
+        validate_legacy_categorical_input(x, groups)
+    return groups
