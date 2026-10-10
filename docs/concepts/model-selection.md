@@ -76,7 +76,8 @@ Partitions the *observed entries* (not full rows) into folds, fits on each
 training fold, and evaluates on the held-out fold.
 
 Cross-validation currently accepts dense matrices only. It uses held-out probe
-RMS (`"prms"`) as its selection objective; variational cost is still reported
+RMS (`"prms"`) or categorical Brier/log score as its selection objective;
+variational cost is still reported
 as a training diagnostic but is not presented as a held-out CV metric. Fold
 construction preserves at least one training observation in every non-empty
 row and column.
@@ -99,6 +100,7 @@ best_k, results = cross_validate_components(
 | `one_se_rule` | `True` | Select the simplest model within 1 SE of the best |
 | `seed` | `0` | Random seed for fold assignment and candidate fits |
 | `feature_groups` | `None` | Variable label per feature; folds hold out whole (variable, sample) cells |
+| `encoding_schema` | `None` | Fitted dense encoding metadata; derives groups and decodes categorical scores |
 | `selection_rule` | `None` | `"one_se"`, `"minimum"` or `"first_minimum"`; `None` follows `one_se_rule` |
 | `early_stop` | `False` | With `"first_minimum"`, stop the sweep once the rule triggers |
 
@@ -125,7 +127,7 @@ Entrywise folds are not a valid holdout for one-hot encoded variables: the
 other indicators of a held-out cell stay in training and, because they sum to
 one, nearly determine the held-out value. When the data have real structure,
 held-out error then keeps falling with rank and capacity is overestimated.
-Pass the encoder's `feature_groups_` so every indicator of a cell is held out
+Pass the encoder's `encoding_schema_` so every indicator of a cell is held out
 together. Each result then also reports categorical scores of the held-out
 cells, reading the reconstructed block as level probabilities: `brier`,
 `log_score` and `accuracy`. `metric="brier"` selects on the Brier score, which
@@ -136,18 +138,50 @@ Gaussian low-rank reconstruction is not a calibrated categorical model.
 ```python
 from vbpca_py import AutoEncoder, CVConfig, cross_validate_components
 
-encoder = AutoEncoder(binary="both")
+encoder = AutoEncoder(binary="both", handle_unknown="raise")
 Z = encoder.fit_transform(X)  # samples x features
 best_k, cv = cross_validate_components(
     Z.T,
     components=range(10),
     config=CVConfig(
-        feature_groups=encoder.feature_groups_,
+        encoding_schema=encoder.encoding_schema_,
         selection_rule="first_minimum",
         metric="brier",
     ),
 )
 ```
+
+The fitted schema records variable kind, category order, encoded columns,
+reference category, centering offsets and block weights. Scores first undo
+the affine encoding, then restore a reference level as one minus the sum of
+the retained indicators. This includes single-indicator binaries. Values
+are clipped at `1e-6` and normalized before scoring. Continuous and ordinal
+columns are excluded from nominal scores; `prms` remains in encoded units.
+The schema also identifies a one-level categorical variable correctly.
+
+`feature_groups` without a schema retains the full unweighted one-hot
+convention. Categorical selection rejects singleton groups (their kind is
+ambiguous) and targets that are not full one-hot blocks; pass fitted metadata
+for mixed, centered, weighted or dropped encodings. An explicitly supplied
+group list must match the schema. Partial categorical cells, invalid targets
+and nonfinite held-out predictions raise errors instead of producing a
+misleading score. Unknown levels coded as all zeros are rejected for full
+blocks; a dropped-reference encoding cannot distinguish them from its
+reference level, so use `handle_unknown="raise"` on new raw tables.
+
+### Preprocessing and the CV target
+
+This API accepts an already encoded matrix. A schema describes its transform,
+but does not fit preprocessing separately inside each fold. For learned
+centering, scaling or weights, an external fold-aware adapter must construct
+raw variable-cell holdouts first, fit on training observations and reuse that
+fold's fitted encoder and schema for all candidate ranks (#267). Fixed or
+externally fitted transforms can use this API directly. Centering in the
+dense one-hot encoder is learned at fit time and remains fixed on transform.
+
+Variable-cell reconstruction CV predicts missing cells of the same samples;
+sample-wise sklearn CV evaluates held-out samples. These answer different
+prediction questions.
 
 ## Choosing between the two
 

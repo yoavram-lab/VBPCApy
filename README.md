@@ -62,6 +62,49 @@ More examples: [quickstart](https://yoavram-lab.github.io/VBPCApy/getting-starte
 
 See the [concept guides](https://yoavram-lab.github.io/VBPCApy/concepts/algorithm/) and [API reference](https://yoavram-lab.github.io/VBPCApy/api/vbpca/) for full details.
 
+## Categorical component selection
+
+Dense `AutoEncoder` and `MissingAwareOneHotEncoder` fits expose an
+`encoding_schema_` snapshot (`EncodingSchema` / `EncodedVariable`, exported
+from `vbpca_py`). Pass it to CV to hold out whole variable cells and decode
+single-binary, dropped-reference, centered and weighted indicators before
+categorical scoring:
+
+```python
+from vbpca_py import AutoEncoder, CVConfig, cross_validate_components
+
+encoder = AutoEncoder(
+    column_types=["categorical", "categorical", "continuous"],
+    drop="first",
+    block_weighting="equal_variance",
+    handle_unknown="raise",
+)
+Z = encoder.fit_transform(X)  # samples x encoded features
+best_k, results = cross_validate_components(
+    Z.T,
+    components=range(5),
+    config=CVConfig(encoding_schema=encoder.encoding_schema_, metric="brier"),
+)
+```
+
+Continuous and ordinal variables contribute to encoded probe RMS, but are
+excluded from nominal categorical scores. Gaussian reconstructions are
+decoded, clipped at `1e-6` and normalized as approximate category
+probabilities; this is not a calibrated categorical likelihood. Equivalent
+decoded predictions have equivalent scores; refitting different encodings
+can yield different predictions. Schema-free categorical selection requires
+full unweighted one-hot blocks and rejects singleton groups and transformed
+targets. `feature_groups` alone cannot identify binary versus numeric columns.
+
+This API splits an already encoded matrix. Fit learned preprocessing on each
+training fold in an external adapter for leakage-safe reconstruction CV
+(#267); passing a schema does not make preprocessing fold-local. Fit centering
+once and reuse the same encoder and schema when transforming new data.
+Unknown categories cannot be distinguished from a dropped reference when
+`handle_unknown="ignore"`; use `"raise"` when scoring new raw data. See the
+[model-selection guide](docs/concepts/model-selection.md) and
+[benchmark validation note](scripts/benchmark_study.md).
+
 ## Development
 
 ```bash
