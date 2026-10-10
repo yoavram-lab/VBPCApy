@@ -1,5 +1,7 @@
 set shell := ["bash", "-lc"]
 
+trade_study_path := env_var_or_default("TRADE_STUDY_PATH", "../trade-study")
+
 # Show available recipes.
 help:
 	just --list
@@ -150,11 +152,11 @@ stability-smoke:
 	uv run --extra analysis python analysis/stability_analysis.py --smoke --fmt png
 
 # ── Trade study (hyperparameter optimisation) ────────────────────
-# Requires: pip install -e "/path/to/trade-study[all]" in the venv.
+# Requires: trade-study[all]; run trade-a-install-adaptive after uv-sync.
 
-# Install local trade-study with adaptive extra (Optuna) into this venv.
+# Install all trade-study extras from a sibling checkout or TRADE_STUDY_PATH.
 trade-a-install-adaptive:
-	uv pip install -p .venv/bin/python -e /home/jcmacdo/Documents/GitHub/jcm-sci/trade-study[adaptive]
+	uv pip install -p .venv/bin/python -e "{{trade_study_path}}[all]"
 
 # ── Trade study: Option A (surrogate-first, rank_mae primary) ────
 
