@@ -74,6 +74,19 @@ just docs-serve  # local docs preview
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
+The `trade-a-*` analysis recipes require a local
+[trade-study](https://github.com/jcm-sci/trade-study) checkout. After syncing
+the environment, install its full extras (including adaptive optimisation,
+surrogate fitting and sensitivity analysis):
+
+```bash
+# Default: trade-study is checked out alongside VBPCApy.
+just trade-a-install-adaptive
+
+# Override the checkout location, including paths containing spaces.
+TRADE_STUDY_PATH="/path/to/trade study" just trade-a-install-adaptive
+```
+
 ## Citation
 
 If you use this package in your research, please cite:
