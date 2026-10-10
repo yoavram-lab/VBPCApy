@@ -74,6 +74,10 @@ example:
 example-sparse:
 	uv run python scripts/example_sparse_pca.py
 
+# Run mixed raw-cell CV with training-only preprocessing.
+example-raw-cv:
+	uv run python scripts/example_raw_cell_cv.py
+
 # Ensure Octave + mkoctfile are installed for full legacy parity tests.
 check-octave:
 	command -v octave >/dev/null || (echo "Missing octave. Install Octave first." && exit 1)

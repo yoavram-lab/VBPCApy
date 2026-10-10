@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Raw-table variable-cell component CV (#267): `cross_validate_raw_components`
+  holds out original cells before learning preprocessing, fits one fresh
+  `AutoEncoder` per fold, and reuses its schema across candidate capacities.
+  `prepare_raw_cv_folds` and `PreprocessedFold` expose masks and fitted metadata
+  for audit. Numeric errors are reported in continuous input or ordinal-index
+  units. External vocabularies/orders can be supplied with `column_levels`
+  (`categories` on `MissingAwareOneHotEncoder`); unknown held-out levels raise.
+
 ## [0.4.5] - 2026-10-02
 
 Preprocessing and diagnostics only: model fitting is unchanged from 0.4.4.

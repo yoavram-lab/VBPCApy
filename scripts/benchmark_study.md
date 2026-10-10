@@ -13,6 +13,8 @@ Reproduce the validation from a clean checkout:
 uv sync --extra dev --extra data --extra plot
 just ci
 uv run pytest -q tests/test_encoding_aware_scores.py
+uv run pytest -q tests/test_raw_model_selection.py
+just example-raw-cv
 just build-check
 ```
 
@@ -21,8 +23,18 @@ policy and full-one-hot scoring contract. Adopting these changes requires a
 new software pin and an explicit encoding schema; no production results or
 locked benchmark artifacts are regenerated in this PR. The tests compare
 decoded scores, original-variable masks and rank-zero CV across encoding
-modes, and exercise positive-rank candidates separately. Fold-local learned
-preprocessing is tracked by #267.
+modes, and exercise positive-rank candidates separately.
+
+The #267 raw-table path constructs original-variable cell holdouts before
+learning means, scales, category frequencies or block weights. Each fold fits
+one encoder and reuses its schema for all capacities. External codebooks can
+declare categorical/ordinal levels; an undeclared held-only level raises an
+error. The diagnostic tests change held-out values with the training mask fixed
+and compare fitted statistics, then check decoded scores and original-unit
+numeric RMSE. `scripts/example_raw_cell_cv.py` runs against an installed package
+and prints the fold-specific numeric training statistics. The new path leaves
+the encoded-array API and locked 0.4.5 publication settings in place; adopting
+fold-local preprocessing is a separately registered methodology change.
 
 The `just bench-study-full`, `just bench-study-summary`, and
 `just bench-study-paper` sequence referenced in CONTRIBUTING.md has no recipes
