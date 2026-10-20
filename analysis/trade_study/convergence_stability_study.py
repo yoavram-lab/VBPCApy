@@ -381,7 +381,9 @@ def _production_policies(base_options: dict[str, Any]) -> list[DetectorPolicy]:
             resolved,
             disabled=(criterion,),
         )
-        for criterion in production.enabled
+        # Keep the historical v2 ablation name even when it is an exact alias
+        # of the now-explicitly-disabled production criterion.
+        for criterion in dict.fromkeys((*production.enabled, "slowing_down"))
     ]
     return [production, *ablations]
 

@@ -2299,6 +2299,14 @@ def _validate_convergence_opts(opts: dict[str, object]) -> None:
                 f"Valid names: {sorted(_VALID_CRITERION_NAMES)}"
             )
             raise ValueError(msg)
+        if any(
+            not isinstance(value, (bool, np.bool_)) for value in conv_criteria.values()
+        ):
+            msg = "convergence_criteria values must be booleans"
+            raise TypeError(msg)
+        opts["convergence_criteria"] = {
+            name: bool(value) for name, value in conv_criteria.items()
+        }
 
 
 def _build_options(kwargs: Mapping[str, object]) -> dict[str, object]:
@@ -2430,10 +2438,27 @@ def _build_options(kwargs: Mapping[str, object]) -> dict[str, object]:
     opts["explained_var_gram_ratio"] = ratio
 
     _validate_convergence_opts(opts)
+    _disable_unavailable_slowing_down(opts)
 
     if wrnmsg:
         logger.warning("pca_full options warning: %s", wrnmsg)
     return opts
+
+
+def _disable_unavailable_slowing_down(opts: dict[str, object]) -> None:
+    """Resolve the inert legacy criterion without mutating caller-owned options."""
+    supplied = opts.get("convergence_criteria")
+    enabled = dict(supplied) if isinstance(supplied, dict) else {}
+    if enabled.get("slowing_down", False):
+        warnings.warn(
+            "slowing_down has no event counter in the live fitter and is disabled. "
+            "Set convergence_criteria['slowing_down']=False; use a supported "
+            "criterion or maxiters to control stopping.",
+            UserWarning,
+            stacklevel=3,
+        )
+    enabled["slowing_down"] = False
+    opts["convergence_criteria"] = enabled
 
 
 def _select_algorithm(opts: Mapping[str, object]) -> tuple[bool, bool]:

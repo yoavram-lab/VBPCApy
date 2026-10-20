@@ -1,6 +1,6 @@
 # Encoding-aware selection validation
 
-The #266 change affects categorical scoring and the selected capacity for
+Encoding-aware selection affects categorical scoring and the selected capacity for
 mixed encodings. It adds a fitted schema for dense encoders, preserves fitted
 centering on later transforms, and decodes nominal categorical predictions
 before scoring. Probe RMS remains in encoded units. Fitting a different
@@ -21,11 +21,11 @@ just build-check
 Publication studies already pinned to 0.4.5 retain their registered fitting
 policy and full-one-hot scoring contract. Adopting these changes requires a
 new software pin and an explicit encoding schema; no production results or
-locked benchmark artifacts are regenerated in this PR. The tests compare
+locked benchmark artifacts are regenerated for this change. The tests compare
 decoded scores, original-variable masks and rank-zero CV across encoding
 modes, and exercise positive-rank candidates separately.
 
-The #267 raw-table path constructs original-variable cell holdouts before
+The raw-table path constructs original-variable cell holdouts before
 learning means, scales, category frequencies or block weights. Each fold fits
 one encoder and reuses its schema for all capacities. External codebooks can
 declare categorical/ordinal levels; an undeclared held-only level raises an
@@ -61,4 +61,23 @@ uv run pytest -q tests/test_native_failures.py
 just numerical-reference
 just ci
 just build-check
+```
+
+## Unavailable stopping option and flag validation
+
+Live fitting reports the legacy `slowing_down` event stream as unavailable and
+resolves its flag to disabled. Explicit requests warn; removing the inert flag
+from recommendations does not change their computed endpoints. Convergence
+flags now require booleans, with NumPy boolean scalars normalized into a copied
+mapping. Invalid strings/numbers cannot silently enable a stop.
+
+These changes do not restore a new stopping event, retune supported thresholds,
+change optimization updates, or alter locked publication software pins. The
+existing posterior-stability screen did not qualify a replacement default;
+prospective policy confirmation remains separate. Reproduce this option check:
+
+```bash
+uv sync --extra dev --extra data --extra plot
+uv run pytest -q tests/test_unavailable_slowing_down.py tests/test_converge.py tests/test_defaults.py
+just ci
 ```

@@ -258,7 +258,11 @@ def _elbo_curvature_stop(
 
 
 def _slowing_down_message(sd_iter: int | None) -> str | None:
-    """Return a slowing-down message if sd_iter hits the threshold."""
+    """Interpret an explicitly supplied legacy counter; live fitting has none.
+
+    Returns:
+        A legacy terminal message at the threshold, otherwise no message.
+    """
     if sd_iter is not None and sd_iter == 40:
         return (
             "Slowing-down stop: step size repeatedly reduced. "
@@ -555,6 +559,7 @@ def convergence_check(
     # Preserve each cost rule independently in addition to the aggregate
     # ``criterion_satisfied_cost`` trace used by the public criterion order.
     _append_cost_diagnostics(lc, cost_subcriteria)
+    _append_slowing_availability(lc, sd_iter)
 
     patience_val = opts.get("patience")
     patience = int(patience_val) if patience_val is not None else 1
@@ -575,6 +580,17 @@ def convergence_check(
         lc.pop("_candidate_convergence_reason", None)  # type: ignore[attr-defined]
 
     return candidate
+
+
+def _append_slowing_availability(
+    lc: Mapping[str, Sequence[float]], sd_iter: int | None
+) -> None:
+    """Keep a missing live event stream distinct from an unsatisfied criterion."""
+    mutable_lc = cast("dict[str, Any]", lc)
+    available = mutable_lc.setdefault(
+        "criterion_available_slowing_down", [0.0] * max(0, len(lc.get("rms", [])) - 1)
+    )
+    cast("list[float]", available).append(float(sd_iter is not None))
 
 
 # ---------------------------------------------------------------------------

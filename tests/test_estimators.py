@@ -752,7 +752,8 @@ def test_convergence_criteria_forwarded_through_estimator() -> None:
     crit = {"angle": False, "cost": True}
     model = VBPCA(n_components=2, convergence_criteria=crit)
     resolved = model.get_options()
-    assert resolved["convergence_criteria"] == crit
+    assert resolved["convergence_criteria"] == crit | {"slowing_down": False}
+    assert crit == {"angle": False, "cost": True}
 
 
 def test_criterion_order_invalid_name_raises() -> None:

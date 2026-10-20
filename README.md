@@ -57,7 +57,7 @@ More examples: [quickstart](https://yoavram-lab.github.io/VBPCApy/getting-starte
 - scikit-learn-compatible estimator (`fit`/`transform`/`inverse_transform`, `get_params`/`set_params`, cloning) — scikit-learn is an optional dependency
 - Model selection via `select_n_components` and `cross_validate_components`
 - Configurable convergence: subspace angle, RMS/cost plateau, ELBO, curvature, composite rules, patience, with per-criterion enable/disable and custom ordering
-- Convergence diagnostics (`n_iter_`, `converged_`, `convergence_reason_`, `learning_curve_`, best-probe state metadata) and calibrated `predictive_variance_` (includes observation noise)
+- Convergence diagnostics (`n_iter_`, `converged_`, `convergence_reason_`, `learning_curve_`, best-probe state metadata) and `predictive_variance_` (includes observation noise)
 - `recommend_config(n, p, priority)` — regime-aware default hyperparameters from a surrogate trade study
 
 See the [concept guides](https://yoavram-lab.github.io/VBPCApy/concepts/algorithm/) and [API reference](https://yoavram-lab.github.io/VBPCApy/api/vbpca/) for full details.
@@ -102,6 +102,12 @@ Unknown categories cannot be distinguished from a dropped reference when
 `handle_unknown="ignore"`; use `"raise"` when scoring new raw data. See the
 [model-selection guide](docs/concepts/model-selection.md) and
 [benchmark validation note](scripts/benchmark_study.md).
+
+Live fitting disables the legacy `slowing_down` criterion because no event
+counter is supplied. Explicit requests warn, and the learning curve records its
+unavailability. Stopping flags must be booleans. Accepted heuristic stops do not
+certify posterior stability; supported thresholds and frozen study policies are
+unchanged. See the [convergence guide](docs/concepts/convergence.md).
 
 ## Raw-table component selection
 

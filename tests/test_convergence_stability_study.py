@@ -171,7 +171,11 @@ def test_v2_evaluator_includes_exact_production_policy_and_ablations() -> None:
         fidelity,
         base_options=base_options,
     )
-    names = {row["policy"] for row in result["rows"]}
+    names = {row["policy"] for row in result["rows"]} | set(result["aliases"])
+    assert (
+        result["aliases"]["production_without_slowing_down"]
+        == result["aliases"]["production"]
+    )
 
     assert {
         "production",

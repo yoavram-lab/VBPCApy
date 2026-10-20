@@ -95,7 +95,9 @@ class VBPCA(BaseEstimator):
             convergence_criteria: Per-criterion enable/disable dict.  Keys
                 are criterion names, values are booleans.  Criteria set to
                 ``False`` are still evaluated for diagnostics but excluded
-                from the stop decision.  Defaults to all enabled.
+                from the stop decision. Supported criteria default to enabled.
+                ``slowing_down`` is unavailable in live fitting and resolves to
+                disabled; explicitly requesting it emits a warning.
             random_state: Seed (or existing ``Generator``) controlling
                 internal randomness: parameter initialization when no
                 explicit ``init`` value is supplied, and the automatically

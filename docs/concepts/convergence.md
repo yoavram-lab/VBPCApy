@@ -95,7 +95,6 @@ separately and cannot jointly satisfy patience.
 
 ## Other stopping conditions
 
-- **Slowing-down guard:** internal backtracking hits 40 steps.
 - **Hard cap:** `maxiters` (default 1000).
 - **Broad-prior warmup:** during the first `niter_broadprior` iterations (default
   100), stopping messages are suppressed when `use_prior` is active, allowing the
@@ -103,16 +102,28 @@ separately and cannot jointly satisfy patience.
 
 A fit that reaches `maxiters` without accepting a criterion reports
 `convergence_reason_ == "maxiters"` and `converged_ == False`. Probe-based early
-stopping and the slowing-down guard also set `converged_ == False` because they
-terminate for validation or stability reasons rather than numerical
-convergence. VBPCA warns whenever the resolved options have
+stopping also sets `converged_ == False` because it terminates for validation
+rather than numerical convergence. VBPCA warns whenever the resolved options have
 `maxiters <= niter_broadprior`: that configuration leaves no eligible
 post-warmup iteration in which a convergence criterion can stop the fit.
+
+The legacy `slowing_down` name is unavailable in live fitting: the fitter does
+not supply its backtracking counter. Recommendations and resolved fit options
+disable it. An explicit `True` request emits a warning and resolves to `False`,
+without mutating the caller's dictionary or changing the already inert rule's
+fit endpoints. `criterion_available_slowing_down` is zero throughout the returned
+learning curve, distinguishing an unavailable event stream from an evaluated
+criterion that did not fire. The legacy helper can still interpret an explicitly
+supplied diagnostic counter; this does not enable it in the fitter.
+
+An accepted heuristic stopping rule does not certify posterior stability or
+predictive calibration. Changing a recommended threshold or policy requires
+separate evidence on the intended regimes and independent confirmation.
 
 ## Criterion ordering — `criterion_order`
 
 Individual criteria have **OR semantics** by default. Criteria are evaluated in
-a fixed priority order (angle first, slowing-down last), and the first eligible
+a fixed priority order (angle first), and the first eligible
 criterion whose own patience streak is complete wins. Reordering determines
 the winner when multiple criteria are ready on the same iteration; it does not
 require an earlier criterion to converge before a later one may stop the fit.
