@@ -74,10 +74,22 @@ mapping. Invalid strings/numbers cannot silently enable a stop.
 These changes do not restore a new stopping event, retune supported thresholds,
 change optimization updates, or alter locked publication software pins. The
 existing posterior-stability screen did not qualify a replacement default;
-prospective policy confirmation remains separate. Reproduce this option check:
+the held-out no-RMS candidate also failed its safety gate. Further policy
+confirmation remains separate. Reproduce this option check:
 
 ```bash
 uv sync --extra dev --extra data --extra plot
 uv run pytest -q tests/test_unavailable_slowing_down.py tests/test_converge.py tests/test_defaults.py
 just ci
 ```
+
+
+## Retained-curve policy replay
+
+The [convergence-detector analysis](../analysis/trade_study/CONVERGENCE_DETECTOR.md)
+now provides a policy-only command for the retained v2 screen. It reproduces
+selected baseline stops before evaluating exploratory policies, requires a
+complete consistent shard set, reports unavailable policies and unstable
+endpoints separately, and writes a new provenance-bearing report. No fits,
+frozen policies or publication pins change. The completed held-out confirmation
+remains negative; replay results alone cannot qualify a replacement default.

@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.8] - 2026-10-20
+
+### Added
+
+- Guarded offline convergence-policy replay from complete retained version 2
+  screen artifacts (#283). Verify input/source identities and selected stored
+  baselines, preserve named aliases and per-policy denominators, and write a
+  separate exploratory report without refitting or changing frozen results.
+
 ### Fixed
 
 - Disable the unavailable live `slowing_down` criterion in recommendations and
