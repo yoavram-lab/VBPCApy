@@ -103,15 +103,6 @@ frozen seed. It failed its prespecified gate. The released production policy
 remains in place; neither these screens nor the held-out result establishes it
 as a qualified posterior-fidelity detector.
 
-A separate [pp-eigentest convergence audit](https://github.com/yoavram-lab/pp-eigentest/blob/main/analysis/eigentest_study/CONVERGENCE_AUDIT_RESULTS.md)
-completed 8,800 records. Disabling cost and composite stops passed that study's
-rank/capacity agreement gates against strict fitting. A further 1,800 candidate
-records supported the consumer's explicit `production_no_cost_post_rotation`
-policy, frozen with VBPCApy 0.4.5. That decision is already encoded in its shared
-generator; historical manifests retain their original pins. These downstream
-decision-agreement gates differ from this screen's posterior-fidelity gate and
-do not qualify a universal library default.
-
 Further policy replay is exploratory. Posterior drift, predictive scores,
 coverage, generator-capacity selection and downstream PA/Seq decisions require
 independent safety assessment. Iteration count and wall time can distinguish
