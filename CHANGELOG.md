@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Disable the unavailable live `slowing_down` criterion in recommendations and
+  resolved fit options (#193). Explicit requests warn without mutating the caller's
+  dictionary. Record its unavailable event stream in learning-curve diagnostics;
+  no backtracking counter or new stopping policy is enabled. Removing this already
+  inert flag preserves fitted endpoints and supported numerical thresholds.
+- Reject nonboolean convergence flags before fitting (#281). A string such as
+  `"False"` previously enabled its criterion through Python truthiness. Normalize
+  supported NumPy boolean scalars into a separate mapping; valid boolean controls
+  retain their meaning and caller-owned inputs remain unchanged.
+
 ## [0.4.7] - 2026-10-20
 
 This patch repairs native failure handling and strengthens numerical reference

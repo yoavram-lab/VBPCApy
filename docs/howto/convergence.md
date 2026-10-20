@@ -161,3 +161,12 @@ model = VBPCA(
 )
 model.fit(X, mask=mask)
 ```
+
+## Unavailable legacy criterion
+
+`slowing_down` is disabled in live fitting because no event counter is supplied.
+Requesting it explicitly emits a warning and resolves to disabled. The returned
+`learning_curve_["criterion_available_slowing_down"]` values are zero. Existing
+configurations keep their fitted endpoints because this rule was already inert.
+Use boolean values for every `convergence_criteria` entry; strings such as
+`"False"` are rejected rather than interpreted through Python truthiness.

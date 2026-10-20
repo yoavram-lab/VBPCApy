@@ -90,16 +90,15 @@ __all__ = ["recommend_config"]
 
 Priority = Literal["balanced", "accuracy", "speed"]
 
-# All six VBPCA convergence criteria enabled -- matches the trade study's
-# "all" active_criteria preset, used by every extreme-aspect-ratio bucket
-# below (#120).
-_ALL_CRITERIA_TRUE: dict[str, bool] = {
+# Supported criteria retain the fitted recommendations. The legacy slowing-down
+# name has no event counter in the live fitter and must not be advertised active.
+_SUPPORTED_CRITERIA: dict[str, bool] = {
     "angle": True,
     "earlystop": True,
     "rms_plateau": True,
     "cost": True,
     "composite": True,
-    "slowing_down": True,
+    "slowing_down": False,
 }
 
 # Per-bucket baked recommendations (median of the surrogate's per-regime
@@ -164,7 +163,7 @@ _BUCKET_CONFIGS: dict[str, dict[str, Any]] = {
             "earlystop",
             "slowing_down",
         ],
-        "convergence_criteria": _ALL_CRITERIA_TRUE,
+        "convergence_criteria": _SUPPORTED_CRITERIA,
         "maxiters": 500,
         "patience": 3,
         "rmsstop": [50, 0.008774842663257003, 0.007353359727600819],
@@ -188,7 +187,7 @@ _BUCKET_CONFIGS: dict[str, dict[str, Any]] = {
             "composite",
             "slowing_down",
         ],
-        "convergence_criteria": _ALL_CRITERIA_TRUE,
+        "convergence_criteria": _SUPPORTED_CRITERIA,
         "maxiters": 1600,
         "patience": 2,
         "rmsstop": [200, 0.003702216843854189, 0.0001644115991233856],
@@ -212,7 +211,7 @@ _BUCKET_CONFIGS: dict[str, dict[str, Any]] = {
             "composite",
             "slowing_down",
         ],
-        "convergence_criteria": _ALL_CRITERIA_TRUE,
+        "convergence_criteria": _SUPPORTED_CRITERIA,
         "maxiters": 800,
         "patience": 2,
         "rmsstop": [200, 0.0037467515336500863, 0.006262340557985221],
@@ -236,7 +235,7 @@ _BUCKET_CONFIGS: dict[str, dict[str, Any]] = {
             "composite",
             "slowing_down",
         ],
-        "convergence_criteria": _ALL_CRITERIA_TRUE,
+        "convergence_criteria": _SUPPORTED_CRITERIA,
         "maxiters": 400,
         "patience": 2,
         "rmsstop": [200, 0.003702216843854189, 0.0001644115991233856],
