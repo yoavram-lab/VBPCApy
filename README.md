@@ -153,8 +153,9 @@ for input and failed-fit semantics.
 
 ## Development
 
-The [0.4.6 release validation](docs/releases/0.4.6.md) describes the paired
-fitting-compatibility check and package/adoption gates. General scoring and
+The [0.4.7 validation](docs/releases/0.4.7.md) covers native failure repairs
+and numerical references. The [0.4.6 release validation](docs/releases/0.4.6.md)
+describes the paired fitting-compatibility check and package/adoption gates. General scoring and
 benchmark validation commands are in [scripts/benchmark_study.md](scripts/benchmark_study.md).
 
 ```bash
@@ -195,7 +196,7 @@ If you use this package in your research, please cite:
   title = {{VBPCApy}: Variational Bayesian PCA with Missing Data Support},
   year = {2026},
   url = {https://github.com/yoavram-lab/VBPCApy},
-  version = {0.4.6},
+  version = {0.4.7},
 }
 ```
 

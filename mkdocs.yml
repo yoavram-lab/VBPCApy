@@ -99,5 +99,7 @@ nav:
     - Plotting: api/plotting.md
   - Limitations: limitations.md
   - Changelog: changelog.md
-  - Release Validation: releases/0.4.6.md
+  - Release Validation:
+    - 0.4.7: releases/0.4.7.md
+    - 0.4.6: releases/0.4.6.md
   - Citation: citation.md
