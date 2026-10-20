@@ -6,15 +6,23 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <cmath>
 #include <stdexcept>
 #include <string>
 #include <thread>
 
 
 #include "thread_limits.h"
+#include "thread_workers.h"
 namespace py = pybind11;
 
 namespace {
+void validate_noise_variance(double value) {
+    if (!std::isfinite(value) || value <= 0.0) {
+        throw std::invalid_argument("noise_var must be finite and positive.");
+    }
+}
+
 using DoubleArray = py::array_t<double, py::array::forcecast>;
 
 struct MatrixView {
@@ -205,6 +213,7 @@ py::dict score_update_dense_no_av(
     double noise_var,
     bool return_covariance
 ) {
+    validate_noise_variance(noise_var);
     const int n_features = static_cast<int>(x_data.rows());
     const int n_samples = static_cast<int>(x_data.cols());
     const int n_components = static_cast<int>(loadings.cols());
@@ -238,6 +247,7 @@ py::dict loadings_update_dense_no_sv(
     double noise_var,
     bool return_covariance
 ) {
+    validate_noise_variance(noise_var);
     const int n_features = static_cast<int>(x_data.rows());
     const int n_samples = static_cast<int>(x_data.cols());
     const int n_components = static_cast<int>(scores.rows());
@@ -280,6 +290,7 @@ py::dict score_update_dense_masked_nopattern(
     bool use_complement,
     int num_cpu
 ) {
+    validate_noise_variance(noise_var);
     const MatrixView x_data = matrix_view(x_data_array, "x_data");
     const MaskView mask = mask_view(mask_array);
     const MatrixView loadings = matrix_view(loadings_array, "loadings");
@@ -414,26 +425,7 @@ py::dict score_update_dense_masked_nopattern(
 
     {
         py::gil_scoped_release release;
-
-        if (actual_threads <= 1) {
-            worker(0, n_samples);
-        } else {
-            std::vector<std::thread> pool;
-            pool.reserve(static_cast<std::size_t>(actual_threads));
-            const int rows_per_thread = n_samples / actual_threads;
-            const int remainder = n_samples % actual_threads;
-            int current = 0;
-            for (int t = 0; t < actual_threads; ++t) {
-                const int extra = (t < remainder) ? 1 : 0;
-                const int start = current;
-                const int end = start + rows_per_thread + extra;
-                current = end;
-                pool.emplace_back(worker, start, end);
-            }
-            for (auto &th : pool) {
-                th.join();
-            }
-        }
+        vbpca_threads::parallel_ranges(n_samples, actual_threads, worker);
     }
 
     py::dict out;
@@ -457,6 +449,7 @@ py::dict loadings_update_dense_masked_nopattern(
     bool use_complement,
     int num_cpu
 ) {
+    validate_noise_variance(noise_var);
     const MatrixView x_data = matrix_view(x_data_array, "x_data");
     const MaskView mask = mask_view(mask_array);
     const MatrixView scores = matrix_view(scores_array, "scores");
@@ -602,26 +595,7 @@ py::dict loadings_update_dense_masked_nopattern(
 
     {
         py::gil_scoped_release release;
-
-        if (actual_threads <= 1) {
-            worker(0, n_features);
-        } else {
-            std::vector<std::thread> pool;
-            pool.reserve(static_cast<std::size_t>(actual_threads));
-            const int rows_per_thread = n_features / actual_threads;
-            const int remainder = n_features % actual_threads;
-            int current = 0;
-            for (int t = 0; t < actual_threads; ++t) {
-                const int extra = (t < remainder) ? 1 : 0;
-                const int start = current;
-                const int end = start + rows_per_thread + extra;
-                current = end;
-                pool.emplace_back(worker, start, end);
-            }
-            for (auto &th : pool) {
-                th.join();
-            }
-        }
+        vbpca_threads::parallel_ranges(n_features, actual_threads, worker);
     }
 
     py::dict out;

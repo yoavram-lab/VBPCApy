@@ -23,6 +23,7 @@
 
 
 #include "thread_limits.h"
+#include "thread_workers.h"
 namespace py = pybind11;
 
 static int resolve_num_threads(int requested, int n_rows) {
@@ -117,21 +118,7 @@ static py::dict errpca_pt(
         }
     };
 
-    std::vector<std::thread> pool;
-    pool.reserve(static_cast<std::size_t>(threads));
-
-    const int rows_per_thread = n_rows / threads;
-    const int remainder = n_rows % threads;
-
-    int cur = 0;
-    for (int t = 0; t < threads; ++t) {
-        const int extra = (t < remainder) ? 1 : 0;
-        const int start = cur;
-        const int end   = start + rows_per_thread + extra;
-        cur = end;
-        pool.emplace_back(worker, start, end);
-    }
-    for (auto &th : pool) th.join();
+    vbpca_threads::parallel_ranges(n_rows, threads, worker);
 
     // Build numpy arrays for output; copy indices/indptr verbatim.
     py::array_t<double> out_data(nnz);

@@ -11,6 +11,7 @@
 
 
 #include "thread_limits.h"
+#include "thread_workers.h"
 namespace py = pybind11;
 
 namespace {
@@ -184,6 +185,7 @@ double noise_sxv_sum(
             worker(0, 0, n_obs);
         } else {
             std::vector<std::thread> pool;
+            vbpca_threads::ThreadJoiner joining(pool);
             pool.reserve(static_cast<std::size_t>(threads));
 
             const int per_thread = n_obs / threads;

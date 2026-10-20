@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Dense worker factorization errors propagate as Python exceptions after all
+  workers join, including safe unwinding after a thread-launch failure (#265).
+  Dense and sparse update kernels reject nonfinite/nonpositive noise variances.
+- Sparse score/loading updates reject negative, out-of-range and descending
+  compressed pointers before reading data (#277).
+
 ### Testing
 
 - Require bounded independent dense/sparse update and noise-moment references

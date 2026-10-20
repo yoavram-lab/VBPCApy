@@ -46,3 +46,19 @@ paired fixed-policy fitting check against 0.4.5. Both snapshots must use the
 same registered policy module, numerical environment and controlled native
 build. This checks the numerical implementation on fixed matrices; adopting
 raw-table CV remains a separately registered preprocessing-method change.
+
+## Native failure checks
+
+Runtime failure handling rejects invalid noise variances and sparse pointers,
+and propagates native worker errors as Python exceptions. It does not change
+update equations, numerical defaults or locked publication settings. Do not
+regenerate study artifacts for this repair. Reproduce the process-survival and
+numerical checks with:
+
+```bash
+uv sync --extra dev --extra plot
+uv run pytest -q tests/test_native_failures.py
+just numerical-reference
+just ci
+just build-check
+```

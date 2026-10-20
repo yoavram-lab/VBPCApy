@@ -34,6 +34,7 @@
 
 
 #include "thread_limits.h"
+#include "thread_workers.h"
 namespace py = pybind11;
 
 constexpr double EPS = 1e-15;
@@ -227,6 +228,7 @@ py::array_t<double> subtract_mu_from_sparse(
             worker(0, n_rows);
         } else {
             std::vector<std::thread> threads;
+            vbpca_threads::ThreadJoiner joining(threads);
             threads.reserve(static_cast<std::size_t>(num_threads));
 
             const int rows_per_thread = n_rows / num_threads;

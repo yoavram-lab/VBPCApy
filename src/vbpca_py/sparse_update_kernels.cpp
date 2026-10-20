@@ -5,6 +5,7 @@
 #include <Eigen/Dense>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <exception>
 #include <mutex>
@@ -14,6 +15,7 @@
 
 
 #include "thread_limits.h"
+#include "thread_workers.h"
 namespace py = pybind11;
 
 namespace {
@@ -58,6 +60,13 @@ void validate_csc(const py::buffer_info &data, const py::buffer_info &indices, c
     if (indptr.size < 1) {
         throw std::invalid_argument("CSC indptr length must be >= 1.");
     }
+    const auto *pointers = static_cast<const int *>(indptr.ptr);
+    for (py::ssize_t i = 0; i < indptr.size; ++i) {
+        if (pointers[i] < 0 || pointers[i] > data.size ||
+            (i > 0 && pointers[i] < pointers[i - 1])) {
+            throw std::invalid_argument("CSC indptr must be nondecreasing and within [0, nnz].");
+        }
+    }
 }
 
 void validate_csr(const py::buffer_info &data, const py::buffer_info &indices, const py::buffer_info &indptr) {
@@ -69,6 +78,13 @@ void validate_csr(const py::buffer_info &data, const py::buffer_info &indices, c
     }
     if (indptr.size < 1) {
         throw std::invalid_argument("CSR indptr length must be >= 1.");
+    }
+    const auto *pointers = static_cast<const int *>(indptr.ptr);
+    for (py::ssize_t i = 0; i < indptr.size; ++i) {
+        if (pointers[i] < 0 || pointers[i] > data.size ||
+            (i > 0 && pointers[i] < pointers[i - 1])) {
+            throw std::invalid_argument("CSR indptr must be nondecreasing and within [0, nnz].");
+        }
     }
 }
 
@@ -102,6 +118,9 @@ py::dict score_update_sparse_nopattern(
     bool return_covariances,
     int num_cpu
 ) {
+    if (!std::isfinite(noise_var) || noise_var <= 0.0) {
+        throw std::invalid_argument("noise_var must be finite and positive.");
+    }
     const auto data_buf = x_data_arr.request();
     const auto indices_buf = x_indices_arr.request();
     const auto indptr_buf = x_indptr_arr.request();
@@ -233,6 +252,7 @@ py::dict score_update_sparse_nopattern(
             worker(0, n_samples);
         } else {
             std::vector<std::thread> pool;
+            vbpca_threads::ThreadJoiner joining(pool);
             pool.reserve(static_cast<std::size_t>(threads));
 
             const int cols_per_thread = n_samples / threads;
@@ -276,6 +296,9 @@ py::dict loadings_update_sparse_nopattern(
     bool return_covariances,
     int num_cpu
 ) {
+    if (!std::isfinite(noise_var) || noise_var <= 0.0) {
+        throw std::invalid_argument("noise_var must be finite and positive.");
+    }
     const auto data_buf = x_data_arr.request();
     const auto indices_buf = x_indices_arr.request();
     const auto indptr_buf = x_indptr_arr.request();
@@ -410,6 +433,7 @@ py::dict loadings_update_sparse_nopattern(
             worker(0, n_features);
         } else {
             std::vector<std::thread> pool;
+            vbpca_threads::ThreadJoiner joining(pool);
             pool.reserve(static_cast<std::size_t>(threads));
 
             const int rows_per_thread = n_features / threads;
