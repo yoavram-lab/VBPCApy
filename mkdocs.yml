@@ -84,6 +84,7 @@ nav:
   - How-To Guides:
     - Convergence Tuning: howto/convergence.md
     - Runtime & Threading: howto/runtime-tuning.md
+    - Numerical Validation: howto/numerical-validation.md
     - Plotting: howto/plotting.md
   - Concepts:
     - Algorithm Overview: concepts/algorithm.md

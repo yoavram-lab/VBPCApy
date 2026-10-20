@@ -1129,15 +1129,9 @@ def _load_cost_mat(mat_out: Path) -> tuple[float, float, float, float, float]:
 # Octave regression tests
 # ======================================================================================
 
-pytestmark = [
-    pytest.mark.octave,
-    pytest.mark.skipif(
-        not _octave_available(),
-        reason="Octave not available on PATH; skipping Octave regression tests.",
-    ),
-]
 
-
+@pytest.mark.octave
+@pytest.mark.skipif(not _octave_available(), reason="Octave not available")
 def test_cost_regression_dense_cf_full_octave(tmp_path: Path) -> None:
     """
     Dense regression vs tools/cf_full.m (convenience mode).
@@ -1229,6 +1223,8 @@ def test_cost_regression_dense_cf_full_octave(tmp_path: Path) -> None:
     np.testing.assert_allclose(cost_py_s, cost_s_oc, rtol=1e-10, atol=1e-10)
 
 
+@pytest.mark.octave
+@pytest.mark.skipif(not _octave_available(), reason="Octave not available")
 def test_cost_regression_dense_patterned_sv_cf_full_octave(tmp_path: Path) -> None:
     """
     Dense regression with patterned Sv + Isv (pattern index mapping).
@@ -1303,6 +1299,8 @@ def test_cost_regression_dense_patterned_sv_cf_full_octave(tmp_path: Path) -> No
     np.testing.assert_allclose(cost_py, cost_oc, rtol=1e-8, atol=1e-8)
 
 
+@pytest.mark.octave
+@pytest.mark.skipif(not _octave_available(), reason="Octave not available")
 def test_cost_regression_sparse_cf_full_octave_optional(
     tmp_path: Path,
     octave_mex_errpca_and_subtract_mu_in_tools: bool,

@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Testing
+
+- Require bounded independent dense/sparse update and noise-moment references
+  in local CI and every pull request. Fail unavailable/skipped references and
+  retain explicit modern/legacy comparison scopes (#268).
+- Correct complement-update tests to forward their requested modes and check
+  the native path used by the trajectory fit (#275).
+- Run Python cost-formula and validation tests without Octave; apply optional
+  Octave markers only to the three tests that need that runtime (#276).
+
 ### Documentation
 
 - Replace issue and pull-request breadcrumbs in guides and API docstrings with

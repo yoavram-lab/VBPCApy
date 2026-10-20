@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
+import scipy.sparse as sp
 from numpy.testing import assert_allclose
 
 from vbpca_py import dense_update_kernels as kernels
+from vbpca_py import noise_update_kernels, sparse_update_kernels
 
 
 def _score_reference(
@@ -136,6 +138,7 @@ def test_score_update_matches_model_equations(
         loading_covariances=loading_covariances,
         noise_var=noise_var,
         return_covariances=True,
+        use_complement=use_complement,
         num_cpu=num_cpu,
     )
 
@@ -192,3 +195,79 @@ def test_loading_update_matches_model_equations(
         rtol=1e-12,
         atol=1e-13,
     )
+
+
+@pytest.mark.parametrize("num_cpu", [1, 4])
+def test_sparse_updates_match_model_equations(update_problem, num_cpu) -> None:
+    """CSR/CSC updates retain an explicitly stored observed zero."""
+    x = np.array(update_problem["x"], copy=True)
+    x[0, 0] = 0.0
+    mask = np.asarray(update_problem["mask"])
+    rows, columns = np.where(mask)
+    sparse = sp.coo_matrix((x[rows, columns], (rows, columns)), shape=x.shape)
+    loadings = np.asarray(update_problem["loadings"])
+    scores = np.asarray(update_problem["scores"])
+    av = np.asarray(update_problem["loading_covariances"])
+    sv = np.asarray(update_problem["score_covariances"])
+    precision = np.asarray(update_problem["prior_precision"])
+    noise = float(update_problem["noise_var"])
+    csc, csr = sparse.tocsc(), sparse.tocsr()
+    expected_s, expected_sv = _score_reference(x, mask, loadings, av, noise)
+    result_s = sparse_update_kernels.score_update_sparse_nopattern(
+        csc.data,
+        csc.indices,
+        csc.indptr,
+        loadings,
+        av,
+        noise,
+        return_covariances=True,
+        num_cpu=num_cpu,
+    )
+    expected_a, expected_av = _loading_reference(x, mask, scores, sv, precision, noise)
+    result_a = sparse_update_kernels.loadings_update_sparse_nopattern(
+        csr.data,
+        csr.indices,
+        csr.indptr,
+        scores,
+        sv,
+        precision,
+        noise,
+        return_covariances=True,
+        num_cpu=num_cpu,
+    )
+    for actual, expected in [
+        (result_s["scores"], expected_s),
+        (result_s["score_covariances"], expected_sv),
+        (result_a["loadings"], expected_a),
+        (result_a["loading_covariances"], expected_av),
+    ]:
+        assert_allclose(actual, expected, rtol=1e-12, atol=1e-13)
+
+
+@pytest.mark.parametrize("num_cpu", [1, 4])
+@pytest.mark.parametrize("with_loading_covariance", [False, True])
+def test_noise_kernel_matches_second_moments(
+    update_problem, num_cpu, with_loading_covariance
+) -> None:
+    """Independent factor second moments determine predictive uncertainty."""
+    loadings = np.asarray(update_problem["loadings"])
+    scores = np.asarray(update_problem["scores"])
+    av = np.asarray(update_problem["loading_covariances"])
+    sv = np.asarray(update_problem["score_covariances"])
+    rows, columns = np.where(update_problem["mask"])
+    expected = 0.0
+    for i, j in zip(rows, columns, strict=True):
+        a, s = loadings[i], scores[:, j]
+        second_a = np.outer(a, a) + (av[i] if with_loading_covariance else 0.0)
+        second_s = np.outer(s, s) + sv[j]
+        expected += float(np.trace(second_a @ second_s) - (a @ s) ** 2)
+    actual = noise_update_kernels.noise_sxv_sum(
+        rows.astype(np.int32),
+        columns.astype(np.int32),
+        loadings,
+        scores,
+        sv,
+        av if with_loading_covariance else None,
+        num_cpu,
+    )
+    assert_allclose(actual, expected, rtol=1e-12, atol=1e-13)
