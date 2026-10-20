@@ -191,10 +191,8 @@ Record the library version, full resolved options, variance-update order and
 random seeds alongside the results. A longer cap permits more iterations but
 does not override another active stopping rule.
 
-The [pp-eigentest audit](https://github.com/yoavram-lab/pp-eigentest/blob/main/analysis/eigentest_study/CONVERGENCE_AUDIT_RESULTS.md)
-supported a no-cost policy for its registered rank-selection comparisons and
-subsequently froze a post-rotation variant with VBPCApy 0.4.5. That evidence is
-specific to the consumer's design and reference policy. It does not establish
-posterior stability or predictive calibration for every use of this recipe.
-Existing pinned studies should retain their recorded settings; adopting another
-policy or release requires an explicit new scientific configuration.
+This recipe changes which rules may stop a fit. It does not establish posterior
+stability or predictive calibration. Compare the chosen policy with longer fits
+and the outcomes needed by the study. Existing pinned studies should retain
+their recorded settings; adopting another policy or release requires an explicit
+new scientific configuration.

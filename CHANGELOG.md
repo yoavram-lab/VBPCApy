@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.4.8] - 2026-10-20
+## [0.4.9] - 2026-10-20
 
 ### Added
 
@@ -18,6 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Remove inaccessible external audit citations from the convergence guides and
+  keep their examples scoped to public evidence.
 - Disable the unavailable live `slowing_down` criterion in recommendations and
   resolved fit options (#193). Explicit requests warn without mutating the caller's
   dictionary. Record its unavailable event stream in learning-curve diagnostics;
@@ -27,6 +29,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `"False"` previously enabled its criterion through Python truthiness. Normalize
   supported NumPy boolean scalars into a separate mapping; valid boolean controls
   retain their meaning and caller-owned inputs remain unchanged.
+
+## [0.4.8] - 2026-10-20
+
+Withdrawn before PyPI publication. Superseded by 0.4.9.
 
 ## [0.4.7] - 2026-10-20
 
