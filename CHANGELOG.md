@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.7] - 2026-10-20
+
+This patch repairs native failure handling and strengthens numerical reference
+checks. Valid-input update equations, numerical defaults and preprocessing/CV
+policies are unchanged from 0.4.6. Existing scientific studies retain their
+registered software pins until a separately recorded adoption decision.
+
 ### Fixed
 - Dense worker factorization errors propagate as Python exceptions after all
   workers join, including safe unwinding after a thread-launch failure (#265).
