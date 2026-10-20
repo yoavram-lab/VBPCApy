@@ -146,6 +146,11 @@ sample-wise sklearn CV evaluates new samples. Run the complete mixed-data
 example with `just example-raw-cv`, or
 `python scripts/example_raw_cell_cv.py` after installing the package.
 
+Native update kernels reject nonpositive or nonfinite noise variances and
+malformed sparse pointers with `ValueError`. Worker factorization failures
+raise `RuntimeError` after workers join. See the [runtime guide](docs/howto/runtime-tuning.md#native-failures)
+for input and failed-fit semantics.
+
 ## Development
 
 The [0.4.6 release validation](docs/releases/0.4.6.md) describes the paired

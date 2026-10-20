@@ -113,3 +113,18 @@ model = VBPCA(n_components=10, dense_sufficient_statistics="auto")
 
 The runtime report records the requested mode, resolved score/loading modes,
 observed fraction, and thresholds. Explicit modes are useful for benchmarking.
+
+## Native failures
+
+Dense and sparse update kernels require finite, positive `noise_var`. Invalid
+shapes, indices and compressed sparse pointers raise `ValueError` before
+workers start. A Cholesky factorization failure raises `RuntimeError`, including
+when it occurs in a worker. Native pools join their workers before propagating
+an exception to Python; this also applies if launching a later worker fails.
+
+The update kernels allocate their outputs and do not modify supplied data or
+factors. On failure they return no partial output. A failed estimator fit may
+have completed earlier iterations; discard that fit rather than interpreting
+its attributes as a completed result. Catching an error does not make invalid
+inputs numerically meaningful. These guarantees concern C++ exceptions, not
+external process termination or hardware faults.
