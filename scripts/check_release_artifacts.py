@@ -1,4 +1,4 @@
-"""Verify that a release directory holds every advertised artifact (#177).
+"""Verify that a release directory holds every advertised artifact.
 
 The package advertises CPython versions through its trove classifiers and is
 built for Linux x86_64, macOS arm64 and Windows amd64. Publishing must not

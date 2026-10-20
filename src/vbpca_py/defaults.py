@@ -24,7 +24,7 @@ can't see, so which single factor (if any) is "dominant" remains
 unreconciled; treat the recommendation as a joint-optimal bundle rather
 than attributing its effect to any one factor.
 
-**Validation status (#111):** the exact configs this module ships *are*
+**Validation status:** the exact configs this module ships *are*
 now validated with real replication and seeded VBPCA initialization
 (``analysis/trade_study/validate_shipped_defaults.py``, n_reps=8 across
 training + held-out regimes) — replicated ``rank_mae`` for the shipped
@@ -35,7 +35,7 @@ small cost in holdout RMSE (+0.4-3.8%). What remains unvalidated is the
 Recommendations use feature count ``p`` inside the original validation grid
 and matrix aspect ratio outside it.
 
-**Validated range (#116) and extreme-aspect-ratio buckets (#120):** the
+**Validated range and extreme-aspect-ratio buckets:** the
 dense factorial grid behind ``smallp``/``trans``/``large`` only covers
 ``p`` up to 200 and ``p/n`` up to 2.0 (``n/p`` up to 15.0 in the other
 direction) — outside that, e.g. small-cohort, thousands-of-features
@@ -51,7 +51,7 @@ grid the original three buckets were tuned and replicated against — a
 real, validated recommendation for that aspect ratio, just a coarser one
 (warned about accordingly).
 
-**Convergence-margin validation (#133/#166):** four coarse buckets originally
+**Convergence-margin validation:** four coarse buckets originally
 shipped with an iteration cap no larger than their broad-prior warmup, so no
 numerical convergence criterion could fire. A preregistered paired validation
 across ten complete/MCAR/MNAR/block regimes (12 replicates each) supports
@@ -62,7 +62,7 @@ from 0.848 to 0.588; selected-fit budget hits fell from 100% to 5%. The
 remaining hits occurred in wide and tall-extreme MNAR settings, so callers
 should still inspect convergence diagnostics for difficult data.
 
-**Post-backend validation (#214/#226/#237):** a preregistered screen of 30
+**Post-backend validation:** a preregistered screen of 30
 configurations across 14 regimes did not identify an alternative prior, probe
 fraction, iteration budget, or convergence policy that passed every safety
 gate. Independent confirmation and a 5,846-feature by 2,504-sample scale check
@@ -316,7 +316,7 @@ def recommend_config(
         n: Number of samples (columns of the ``p x n`` data matrix). Used
             (alongside ``p``) to select an aspect-ratio-aware bucket when
             ``p/n`` or ``n/p`` falls outside the ``smallp``/``trans``/
-            ``large`` buckets' validated range (#116/#120) -- otherwise
+            ``large`` buckets' validated range -- otherwise
             only ``p`` selects the bucket.
         p: Number of features (rows).  Selects the recommendation bucket.
         missingness: Missingness descriptor. **Not currently branched on** —
@@ -326,11 +326,10 @@ def recommend_config(
             recommendations span only 4 missingness categories x 3 p-buckets
             from 23 design points total (some cells have a single point), too
             sparse to bucket on without shipping unreplicated, effectively
-            arbitrary per-cell values (see #111). Passing anything other than
+            arbitrary per-cell values. Passing anything other than
             the default ``"auto"`` raises a :class:`UserWarning` rather than
-            silently doing nothing. Tracked in #110, blocked on trade-study
-            replication support (`jcm-sci/trade-study#112
-            <https://github.com/jcm-sci/trade-study/issues/112>`_).
+            silently doing nothing. Missingness-specific recommendations require
+            additional replicated validation before they can be supplied.
         priority: Trade-off preset.  ``"balanced"`` (default) uses the
             tuned configuration as-is; ``"accuracy"`` raises the iteration
             budget; ``"speed"`` lowers it and disables the broad-prior
@@ -350,10 +349,10 @@ def recommend_config(
             ``large_scale`` bucket rather than ``smallp``/``trans``/``large`` --
             those five are
             each derived from adaptive search at a single representative
-            example regime (#120: bulk_rnaseq, microbiome, ecological,
+            example regime (bulk_rnaseq, microbiome, ecological,
             cultural, and single_cell respectively), not the dense factorial
             grid ``smallp``/``trans``/``large`` were tuned and replicated
-            against (#111). Still a real, validated recommendation for
+            against. Still a real, validated recommendation for
             that specific matrix shape -- just a coarser one.
     """
     if n <= 0 or p <= 0:

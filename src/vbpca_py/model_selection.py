@@ -948,18 +948,18 @@ class CVConfig:
         feature_groups: Optional variable label for every feature (row of
             ``x``), for example an encoder's ``feature_groups_``. Folds then
             hold out (variable, sample) cells, so every indicator of a
-            one-hot encoded variable is held out together (#250).
+            one-hot encoded variable is held out together.
         selection_rule: ``"one_se"``, ``"minimum"`` or ``"first_minimum"``.
             ``"first_minimum"`` selects the smallest *k* whose successor does
             not lower the mean metric by more than the successor's standard
             error. ``None`` follows ``one_se_rule``.
         early_stop: With ``selection_rule="first_minimum"``, evaluate
             capacities in increasing order across all folds and stop as soon
-            as the rule triggers, skipping every larger capacity (#248).
-        encoding_schema: Fitted dense encoder metadata for categorical decoding
-            (#266). Groups are derived from it unless explicitly supplied; an
-            explicit group list must match. Learned preprocessing is still
-            external to this encoded-array CV API (#267).
+            as the rule triggers, skipping every larger capacity.
+        encoding_schema: Fitted dense encoder metadata for categorical decoding.
+            Groups are derived from it unless explicitly supplied; an explicit
+            group list must match. Learned preprocessing is still
+            external to this encoded-array CV API.
     """
 
     metric: _CVMetric = "prms"

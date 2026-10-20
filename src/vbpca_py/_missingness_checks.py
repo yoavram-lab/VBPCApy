@@ -1,4 +1,4 @@
-"""Missingness and scale diagnostics for check_data (#249)."""
+"""Missingness and scale diagnostics for check_data."""
 
 from __future__ import annotations
 

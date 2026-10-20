@@ -1,4 +1,4 @@
-"""Detect categorical encodings in an already-encoded matrix (#250).
+"""Detect categorical encodings in an already-encoded matrix.
 
 When data are one-hot encoded before reaching VBPCApy, the variable structure
 is lost: entrywise cross-validation then leaks through each block's
