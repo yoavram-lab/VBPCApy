@@ -58,6 +58,29 @@ jobs:
         run: uv run mypy --strict src
       - name: Release metadata check
         run: uv run python scripts/check_release_metadata.py
+      - name: Source archive test collection
+        run: |
+          uv build --sdist --out-dir dist-source-check
+          uv run python scripts/check_sdist_tests.py dist-source-check
+
+  replay-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+          cache-dependency-glob: "**/pyproject.toml"
+      - name: Install Eigen
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://gitlab.com/libeigen/eigen/-/archive/3.4.0/eigen-3.4.0.zip" -OutFile eigen.zip
+          Expand-Archive eigen.zip -DestinationPath C:\eigen
+          echo "EIGEN_INCLUDE_DIR=C:\eigen\eigen-3.4.0" >> $env:GITHUB_ENV
+      - name: Sync environment
+        run: uv sync --extra dev --extra plot --python 3.12
+      - name: Replay and stopping-option regressions
+        run: uv run pytest -q tests/test_convergence_replay.py tests/test_unavailable_slowing_down.py
 
   test:
     runs-on: ubuntu-latest

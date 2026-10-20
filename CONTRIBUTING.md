@@ -251,3 +251,11 @@ By contributing to VBPCApy, you agree that your contributions will be licensed u
 Contributors will be acknowledged in the project documentation and release notes.
 
 Thank you for contributing to VBPCApy!
+
+
+Source archives include the analysis Python modules and fixed manifests used by
+included tests. Generated analysis results are excluded. After building a source
+archive, `uv run python scripts/check_sdist_tests.py dist` checks collection from
+the extracted tree without using the checkout's analysis modules. Run repository
+analysis commands from the checkout or extracted source root after installing
+the library and required development dependencies.

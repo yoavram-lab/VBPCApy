@@ -146,7 +146,11 @@ with a JSON list such as:
 Counts must be integers, flags booleans and thresholds finite and nonnegative.
 New policies cannot request the unavailable `slowing_down` event stream.
 The output records all input content hashes, original generating identities and
-current replay source-file hashes/runtime. Hashes describe compatibility and
+current replay source-file hashes/runtime. Core hashes identify the modules
+actually imported from the installed library. Source archives have no Git
+metadata: revision and tracked-change state are then explicitly unknown, while
+source content hashes remain required. The original generating revision and
+manifest checksum must still be provided independently. Hashes describe compatibility and
 provenance; they do not authenticate a publisher. Changing inputs or replay
 source during the run is refused. Use a new output path outside the retained
 input directory: existing results are never overwritten.

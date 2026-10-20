@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib
 import json
 import math
 import os
@@ -111,38 +112,47 @@ def _validate_policy(payload: dict[str, Any]) -> DetectorPolicy:
 
 def _source_identity() -> dict[str, Any]:
     root = Path(__file__).resolve().parents[2]
-    paths = [
-        *sorted((root / "analysis/trade_study").glob("*convergence*.py")),
-        *[
-            root / "src/vbpca_py" / name
-            for name in (
-                "_converge.py",
-                "_pca_full.py",
-                "defaults.py",
-            )
-        ],
-    ]
+    paths = sorted((root / "analysis/trade_study").glob("*convergence*.py"))
     files = {str(path.relative_to(root)): _digest(path.read_bytes()) for path in paths}
+    loaded = {}
+    for name in ("_converge", "_pca_full", "defaults"):
+        module = importlib.import_module(f"vbpca_py.{name}")
+        if module.__file__ is None:
+            msg = f"Loaded core module has no file-backed identity: {module.__name__}"
+            raise ValueError(msg)
+        origin = Path(module.__file__).resolve()
+        loaded[module.__name__] = {
+            "path": str(origin),
+            "sha256": _digest(origin.read_bytes()),
+        }
     git = shutil.which("git")
-    if git is None:
-        msg = "Git is required to record replay source identity"
-        raise FileNotFoundError(msg)
-    revision = subprocess.run(  # noqa: S603 - read-only fixed Git argv
-        [git, "-C", str(root), "rev-parse", "HEAD"],
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout.strip()
-    dirty = subprocess.run(  # noqa: S603 - read-only fixed Git argv
-        [git, "-C", str(root), "status", "--porcelain", "--untracked-files=no"],
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout.strip()
+    revision: str | None = None
+    tracked_changes: bool | None = None
+    if git is not None and (root / ".git").exists():
+        head = subprocess.run(  # noqa: S603 - read-only fixed Git argv
+            [git, "-C", str(root), "rev-parse", "HEAD"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        status = subprocess.run(  # noqa: S603 - read-only fixed Git argv
+            [git, "-C", str(root), "status", "--porcelain", "--untracked-files=no"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if head.returncode == status.returncode == 0 and re.fullmatch(
+            r"[0-9a-f]{40}|[0-9a-f]{64}",
+            head.stdout.strip(),
+        ):
+            revision = head.stdout.strip()
+            tracked_changes = bool(status.stdout.strip())
     return {
         "revision": revision,
-        "tracked_changes": bool(dirty),
+        "tracked_changes": tracked_changes,
+        "git_metadata_available": revision is not None,
         "files": files,
+        "loaded_core": loaded,
         "vbpca_release": vbpca_version,
         "python": platform.python_version(),
         "numpy": np.__version__,
@@ -396,15 +406,19 @@ def replay(
 def write_report(path: Path, report: dict[str, Any]) -> None:
     """Publish a complete JSON report atomically, refusing any existing file."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, delete=False) as handle:
-        temporary = Path(handle.name)
-        try:
+    temporary: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", dir=path.parent, delete=False
+        ) as handle:
+            temporary = Path(handle.name)
             json.dump(report, handle, allow_nan=False, sort_keys=True, indent=2)
             handle.write("\n")
             handle.flush()
             os.fsync(handle.fileno())
-            os.link(temporary, path)
-        finally:
+        os.link(temporary, path)
+    finally:
+        if temporary is not None:
             temporary.unlink(missing_ok=True)
 
 

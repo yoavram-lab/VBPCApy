@@ -24,3 +24,9 @@ recursive-include scripts *.py
 # -----------------------------
 # Include all lightweight tests
 recursive-include tests *.py
+
+# Repository analysis modules and fixed manifests used by the shipped tests.
+# Generated results and figures remain outside the source distribution.
+recursive-include analysis *.py
+recursive-include analysis/trade_study/manifests *.json
+prune analysis/results

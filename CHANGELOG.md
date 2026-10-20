@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.4.9] - 2026-10-20
+## [0.4.10] - 2026-10-20
 
 ### Added
 
@@ -18,6 +18,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Close replay report temporary files before publication and cleanup on Windows
+  (#287). Keep atomic refusal to overwrite, clean failed writes, record unavailable
+  Git metadata explicitly, and hash actual loaded core modules.
+- Include analysis Python modules and fixed manifests needed by source-archive
+  tests (#286); check collection from the extracted archive and run Windows replay
+  and stopping-option regressions in PR CI.
 - Remove inaccessible external audit citations from the convergence guides and
   keep their examples scoped to public evidence.
 - Disable the unavailable live `slowing_down` criterion in recommendations and
@@ -29,6 +35,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `"False"` previously enabled its criterion through Python truthiness. Normalize
   supported NumPy boolean scalars into a separate mapping; valid boolean controls
   retain their meaning and caller-owned inputs remain unchanged.
+
+## [0.4.9] - 2026-10-20
+
+Withdrawn before PyPI publication after Windows report-writer validation failed.
+Superseded by 0.4.10.
 
 ## [0.4.8] - 2026-10-20
 
