@@ -170,3 +170,31 @@ Requesting it explicitly emits a warning and resolves to disabled. The returned
 configurations keep their fitted endpoints because this rule was already inert.
 Use boolean values for every `convergence_criteria` entry; strings such as
 `"False"` are rejected rather than interpreted through Python truthiness.
+
+
+## Specify a study's stopping policy
+
+For a study that disables cost and composite stopping, copy the recommended
+controls and override those flags explicitly:
+
+```python
+from vbpca_py import VBPCA, recommend_config
+
+options = recommend_config(n=60, p=180)
+flags = dict(options.get("convergence_criteria", {}))
+flags.update(cost=False, composite=False)
+options.update(convergence_criteria=flags, cfstop_rel=None, maxiters=1200)
+model = VBPCA(n_components=3, **options)
+```
+
+Record the library version, full resolved options, variance-update order and
+random seeds alongside the results. A longer cap permits more iterations but
+does not override another active stopping rule.
+
+The [pp-eigentest audit](https://github.com/yoavram-lab/pp-eigentest/blob/main/analysis/eigentest_study/CONVERGENCE_AUDIT_RESULTS.md)
+supported a no-cost policy for its registered rank-selection comparisons and
+subsequently froze a post-rotation variant with VBPCApy 0.4.5. That evidence is
+specific to the consumer's design and reference policy. It does not establish
+posterior stability or predictive calibration for every use of this recipe.
+Existing pinned studies should retain their recorded settings; adopting another
+policy or release requires an explicit new scientific configuration.

@@ -1,7 +1,6 @@
 # Convergence-detector validation
 
-**Issue:** #186  
-**Status:** Stage 1 screen complete; no stopping-policy change recommended
+**Status:** Screen and held-out safety confirmation complete; no replacement policy qualified
 
 This study treats convergence as a detector of a stable posterior. A rule
 firing is not itself evidence that the fit is ready to stop.
@@ -83,8 +82,8 @@ tall matrices, and 16.0% for wide matrices. Removing RMS plateau eliminated
 premature stops in the square and tall groups, but every evaluable fit in those
 groups then stopped late or reached the limit. The unchanged
 `production_without_slowing_down` row confirms that the nominally enabled
-criterion has no event input from the current training loop; issue #193 tracks
-that integration defect.
+criterion has no event input from the training loop. Live fitting now disables
+this unavailable rule explicitly and records its availability separately.
 
 Neither screen identifies a stopping policy that balances posterior-fidelity
 safety and efficiency. Version 2 also rejects the current production rule as a
@@ -96,23 +95,75 @@ replay without another forced-long fit. The run used VBPCApy revision
 `869eef8`, manifest SHA-256 prefix `7a688859ad59`, and summary SHA-256 prefix
 `a4c8ddcb8057`.
 
-Stage 2 will proceed only if subsequent replay identifies a nondominated safe
-policy worth confirming on new seeds.
-Posterior drift, predictive scores, coverage, generator-capacity selection, and
-pp-eigentest PA/Seq decisions are safety gates. Iteration count and wall time
-are descriptive and can choose among policies only after all safety gates pass.
+## Held-out confirmation and further analysis
 
-## Immediate next steps
+The [held-out safety confirmation](CONVERGENCE_POLICY_SAFETY.md) subsequently
+compared the no-RMS candidate with production on 375 paired shards using a new
+frozen seed. It failed its prespecified gate. The released production policy
+remains in place; neither these screens nor the held-out result establishes it
+as a qualified posterior-fidelity detector.
 
-1. Do not promote any screened rule as a replacement default.
-2. Quantify downstream rank and predictive effects of disabling RMS plateau,
-   accepting that the safer candidate may require substantially more work.
-3. Add a policy-only command that replays new registered policies from the
-   retained version 2 curves.
-4. Repair the unreachable `slowing_down` integration separately and keep it
-   disabled until it passes the same detector safety gates.
-5. Define a held-out Stage 2 seed set only if a replayed policy passes every
-   safety gate.
+A separate [pp-eigentest convergence audit](https://github.com/yoavram-lab/pp-eigentest/blob/main/analysis/eigentest_study/CONVERGENCE_AUDIT_RESULTS.md)
+completed 8,800 records. Disabling cost and composite stops passed that study's
+rank/capacity agreement gates against strict fitting. A further 1,800 candidate
+records supported the consumer's explicit `production_no_cost_post_rotation`
+policy, frozen with VBPCApy 0.4.5. That decision is already encoded in its shared
+generator; historical manifests retain their original pins. These downstream
+decision-agreement gates differ from this screen's posterior-fidelity gate and
+do not qualify a universal library default.
+
+Further policy replay is exploratory. Posterior drift, predictive scores,
+coverage, generator-capacity selection and downstream PA/Seq decisions require
+independent safety assessment. Iteration count and wall time can distinguish
+policies only after the intended safety gates pass. The 16 unstable screen
+endpoints remain reported and excluded from detector classifications.
+
+## Offline replay
+
+`convergence_replay` reads the complete original version 2 shard set. Provide
+the trusted original manifest checksum and generating revision. It validates
+shard/cell/replicate identities, runtime consistency, aligned finite curves and
+frozen fidelity labels. Selected stored baseline stop times and safety
+classifications must agree before any exploratory report can be published. A changed
+baseline stops the analysis rather than silently redefining the comparison.
+
+Named aliases receive separate rows, even when equivalent policies share replay
+work. Per-policy availability and evaluable counts remain explicit: an ablation
+absent from a regime differs from a present policy on an unstable endpoint.
+Simultaneous-rule ordering can change the attributed reason; reports retain the
+stored baseline reason separately from the replay representative's reason.
+
+```bash
+python -m analysis.trade_study.convergence_replay \
+  --manifest /path/to/retained/manifest.json \
+  --input-dir /path/to/retained \
+  --manifest-sha256 7a688859ad59c90513902cdc824c8cbb1de970ffc0bb8acfea2623bfa36baaed \
+  --generating-revision 869eef8ea675a0da59b128318e65cfee00fa509c \
+  --policy production --policy production_without_rms_plateau \
+  --policy production_without_cost --policy production_without_slowing_down \
+  --output /path/to/new-analysis/baseline-replay.json
+```
+
+To explore another policy, add `--policies /path/to/additional-policies.json`,
+with a JSON list such as:
+
+```json
+[{"name": "exploratory_angle", "enabled": ["angle"], "minangle": 0.000001,
+  "patience": 3, "warmup": 100}]
+```
+
+Counts must be integers, flags booleans and thresholds finite and nonnegative.
+New policies cannot request the unavailable `slowing_down` event stream.
+The output records all input content hashes, original generating identities and
+current replay source-file hashes/runtime. Hashes describe compatibility and
+provenance; they do not authenticate a publisher. Changing inputs or replay
+source during the run is refused. Use a new output path outside the retained
+input directory: existing results are never overwritten.
+
+Replaying additional policies on the screen is not independent confirmation.
+Any promising candidate requires a separately frozen design and new data or
+seeds before a production policy can change. No default or scientific software
+pin is changed by this command.
 
 ## Commands
 
