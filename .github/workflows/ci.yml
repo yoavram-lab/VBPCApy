@@ -82,6 +82,21 @@ jobs:
           --cov-report=term-missing
           --cov-fail-under=89
 
+  numerical-reference:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+          cache-dependency-glob: "**/pyproject.toml"
+      - name: Install Eigen
+        run: sudo apt-get install -y libeigen3-dev
+      - name: Build package and native reference helpers
+        run: uv sync --extra dev --extra plot --python 3.12
+      - name: Required numerical references
+        run: uv run --extra dev python scripts/check_numerical_reference.py
+
   octave-parity:
     needs: changes
     if: needs.changes.outputs.octave == 'true'

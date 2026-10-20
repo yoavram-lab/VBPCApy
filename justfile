@@ -101,7 +101,11 @@ bench-study-repro:
 	uv run --extra data python scripts/validate_benchmark_reproducibility.py
 
 # Run format check, lint, strict typecheck, and tests in sequence.
-ci: format-check lint typecheck test-cov
+ci: format-check lint typecheck numerical-reference test-cov
+
+# Always-required independent equations and bounded fit-loop regressions.
+numerical-reference:
+	uv run --extra dev python scripts/check_numerical_reference.py
 
 # Run lint, typecheck, and smoke tests only.
 ci-smoke: lint typecheck test-smoke

@@ -156,11 +156,16 @@ benchmark validation commands are in [scripts/benchmark_study.md](scripts/benchm
 git clone https://github.com/yoavram-lab/VBPCApy.git
 cd VBPCApy
 uv sync --extra dev --extra plot
-just ci          # lint + typecheck + test
+just ci          # lint + typecheck + numerical references + tests
+just numerical-reference  # bounded mathematical/reference checks
 just docs-serve  # local docs preview
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+The [numerical validation guide](docs/howto/numerical-validation.md) describes
+the always-run reference checks, compatibility scope and tolerances. Extended
+Octave comparisons remain separate from the required numerical gate.
 
 The `trade-a-*` analysis recipes require a local
 [trade-study](https://github.com/jcm-sci/trade-study) checkout. After syncing

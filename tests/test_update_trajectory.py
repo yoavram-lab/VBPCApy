@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 from numpy.testing import assert_allclose
 
+import vbpca_py._full_update as updates
 from vbpca_py._pca_full import pca_full
 from vbpca_py.model_selection import SelectionConfig, select_n_components
 
@@ -17,6 +18,29 @@ _CONVERGENCE_OFF = {
     "composite": False,
     "slowing_down": False,
 }
+
+
+@pytest.mark.parametrize("mode", ["observed", "complement"])
+def test_trajectory_selects_requested_native_path(monkeypatch, mode) -> None:
+    """A fit must exercise the update mode named by its trajectory test."""
+    calls = []
+    native = updates._score_update_dense_masked_ext
+
+    def record(**kwargs):
+        calls.append(kwargs["use_complement"])
+        return native(**kwargs)
+
+    monkeypatch.setattr(updates, "_score_update_dense_masked_ext", record)
+    rng = np.random.default_rng(209)
+    x = rng.normal(size=(11, 13))
+    _fit_fixed_trajectory(
+        x,
+        np.ones_like(x, dtype=bool),
+        num_cpu=1,
+        dense_sufficient_statistics=mode,
+    )
+    assert calls
+    assert all(value == (mode == "complement") for value in calls)
 
 
 def _fit_fixed_trajectory(
@@ -38,6 +62,7 @@ def _fit_fixed_trajectory(
         record_cost=True,
         return_diagnostics=False,
         runtime_tuning="off",
+        dense_sufficient_statistics=dense_sufficient_statistics,
         num_cpu=num_cpu,
         compat_mode="modern",
         random_state=207,
