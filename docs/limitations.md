@@ -30,6 +30,6 @@
   remains the `compat_mode="strict_legacy"` default
   (`variance_update_order="legacy"`); `variance_update_order="post_rotation"`
   re-estimates the prior variances after the rotation. A paired comparison of
-  the two orders is planned before any change to `recommend_config()` (#214).
+  the two orders is required before changing `recommend_config()`.
 
-- **Fits are non-reproducible unless seeded.** `VBPCA(random_state=None)` (the default) draws fresh entropy for parameter initialization and any auto-generated xprobe mask on every call to `fit()`, so repeated fits on the same data can converge to different results. Pass an `int` or `np.random.Generator` via `random_state` for reproducible runs. Prior to #109, the default initialization was silently seeded with a fixed value; this is no longer the case.
+- **Fits are non-reproducible unless seeded.** `VBPCA(random_state=None)` (the default) draws fresh entropy for parameter initialization and any auto-generated xprobe mask on every call to `fit()`, so repeated fits on the same data can converge to different results. Pass an `int` or `np.random.Generator` via `random_state` for reproducible runs. Initialization is not seeded implicitly.

@@ -157,9 +157,9 @@ class MissingAwareOneHotEncoder(BaseEstimator, TransformerMixin):
 
     After fitting, ``feature_groups_`` gives the input column of every
     output column and ``feature_kinds_`` the kind of every input column, so
-    model selection can hold out whole variables (#250).
+    model selection can hold out whole variables.
     ``encoding_schema_`` also records category order, reference drop, fitted
-    means and weights for categorical decoding and scoring (#266). Centering
+    means and weights for categorical decoding and scoring. Centering
     is fitted once; transforming new data retains those means.
     """
 
@@ -849,7 +849,7 @@ class MissingAwareMinMaxScaler(_BaseScaler):
 
 
 class MissingAwareOrdinalEncoder(BaseEstimator, TransformerMixin):
-    """Code ordered categorical columns as scaled numeric scores (#249).
+    """Code ordered categorical columns as scaled numeric scores.
 
     Each column's levels map to equally spaced scores ``0, 1, ..., L - 1`` in
     their order, which are then scaled like a continuous column, so an

@@ -1,4 +1,4 @@
-"""Held-out scores for one-hot encoded categorical variables (#250).
+"""Held-out scores for one-hot encoded categorical variables.
 
 Per-indicator error measures how well each 0/1 entry is reproduced. For a
 categorical variable the prediction of interest is the level of a held-out
