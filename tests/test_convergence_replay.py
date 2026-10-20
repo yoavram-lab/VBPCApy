@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import subprocess
 import sys
 from dataclasses import asdict
 from pathlib import Path
@@ -315,3 +316,38 @@ def test_additional_policy_requires_explicit_name_and_criteria():
     ):
         with pytest.raises(ValueError):
             replay._validate_policy(payload)
+
+
+def test_failed_report_write_leaves_no_output_or_temporary_file(tmp_path, monkeypatch):
+    def fail(*args, **kwargs):
+        raise OSError("simulated full disk")
+
+    monkeypatch.setattr(replay.json, "dump", fail)
+    with pytest.raises(OSError, match="simulated full disk"):
+        replay.write_report(tmp_path / "report.json", {"complete": False})
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize("missing_git", [True, False])
+def test_unavailable_git_is_unknown_while_loaded_code_remains_identified(
+    monkeypatch,
+    missing_git,
+):
+    if missing_git:
+        monkeypatch.setattr(replay.shutil, "which", lambda name: None)
+    else:
+        monkeypatch.setattr(
+            replay.subprocess,
+            "run",
+            lambda *args, **kwargs: subprocess.CompletedProcess(
+                args, 128, stdout="", stderr=""
+            ),
+        )
+    identity = replay._source_identity()
+    assert identity["revision"] is None
+    assert identity["tracked_changes"] is None
+    assert identity["git_metadata_available"] is False
+    assert identity["files"]
+    core = identity["loaded_core"]["vbpca_py._converge"]
+    assert core["sha256"] == hashlib.sha256(Path(core["path"]).read_bytes()).hexdigest()
+    assert Path(core["path"]).name == "_converge.py"
