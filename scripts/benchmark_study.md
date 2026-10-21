@@ -167,6 +167,11 @@ uv run pytest -q tests/test_sparse_views.py tests/test_sparse_observed_zero_indi
 just numerical-reference
 uv run --extra dev python scripts/check_sparse_allocations.py \
   --output /tmp/vbpca-sparse-allocations.json
+OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+  uv run --extra dev python analysis/benchmark_backend_phases.py \
+  --features 193 --samples 257 --components 32 --iterations 4 --threads 1 \
+  --sparse --skip-rotation --skip-diagnostics \
+  --output /tmp/vbpca-sparse-phases.json
 ```
 
 The allocation command requires Linux/glibc and a C compiler. It builds a
@@ -185,6 +190,11 @@ rotation/bias-update settings and explicit in-place invalidation. Conversion
 and packing remain included in phase/whole-fit measurements. Timing comparisons
 should still use the fresh-process procedure below on the target allocation;
 these allocation counts alone do not establish a whole-fit speedup.
+The phase profiler records sparse-view conversion counts and time separately,
+inside the score/loading and total-fit measurements. Add `--skip-bias` to
+exercise reuse across iterations; remove `--skip-rotation` to include rotation
+and its invalidation. The defaults of existing dense profiling commands are
+unchanged. Preserve snapshots and identities for each paired revision run.
 
 ## Source-revision memory and thread profiles
 
