@@ -215,6 +215,11 @@ For source-revision comparisons, the
 checks fixed-policy numerical outputs alongside fit time, RMS allocation and
 process peak memory under explicit CPU and thread limits. It leaves published
 study settings unchanged.
+Posterior variance diagnostics use blocked full-covariance matrix products,
+preserving bias uncertainty and off-diagonal terms while bounding covariance
+packing and avoiding extra full reconstruction-sized temporary arrays.
+See the [diagnostic benchmark](scripts/benchmark_study.md#posterior-variance-contractions)
+for comparisons with the historical and optimized einsum implementations.
 The [dense-mask repair validation](analysis/BACKEND_COPY_VALIDATION_2026_10_20.md)
 records paired measurements and the limits of their interpretation.
 

@@ -69,6 +69,7 @@ from ._memory import (
 )
 from ._monitoring import InitialMonitoringInputs, InitShapes, _initial_monitoring
 from ._options import _options
+from ._posterior_variance import marginal_variance
 from ._runtime_policy import (
     DenseMaskedAutotuneInputs,
     RuntimeThreadConfig,
@@ -2057,37 +2058,7 @@ def _marginal_variance(final: FinalState) -> np.ndarray:
     Returns:
         Marginal variance matrix of shape (n_features, n_samples).
     """
-    loadings = np.asarray(final.a, dtype=float)
-    scores = np.asarray(final.s, dtype=float)
-    n_features, n_samples = loadings.shape[0], scores.shape[1]
-    n_components = loadings.shape[1]
-
-    av_stack = (
-        np.stack([np.asarray(x, dtype=float) for x in final.av], axis=0)
-        if final.av
-        else np.zeros((n_features, n_components, n_components), dtype=float)
-    )
-
-    if not final.sv:
-        sv_stack = np.zeros((n_samples, n_components, n_components), dtype=float)
-    elif final.pattern_index is None:
-        sv_stack = np.stack([np.asarray(x, dtype=float) for x in final.sv], axis=0)
-    else:
-        pattern_stack = np.stack([np.asarray(x, dtype=float) for x in final.sv], axis=0)
-        pattern_index_arr = np.asarray(final.pattern_index, dtype=int)
-        sv_stack = pattern_stack[pattern_index_arr]
-
-    term_loadings = np.einsum("ik,jkl,il->ij", loadings, sv_stack, loadings)
-    term_scores = np.einsum("ikl,kj,lj->ij", av_stack, scores, scores)
-    term_cross = np.einsum("ikl,jkl->ij", av_stack, sv_stack)
-
-    mu_var = np.asarray(final.muv, dtype=float)
-    if mu_var.size == 0:
-        mu_var = np.zeros((n_features, 1), dtype=float)
-    elif mu_var.ndim == 1:
-        mu_var = mu_var[:, None]
-
-    return term_loadings + term_scores + term_cross + mu_var  # type: ignore[no-any-return]
+    return marginal_variance(final)
 
 
 def _explained_variance(
