@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Development builds use `0.5.0.dev0` while the estimator and typing migration is
+in progress. The stable citation remains at the most recent public release.
+The development version is not a release announcement.
+
 ### Added
 
 - String-compatible enums for solver algorithms, numerical policies, runtime
