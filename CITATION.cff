@@ -32,7 +32,7 @@ keywords:
   - variational inference
   - machine learning
 license: MIT
-version: "0.4.11"
+version: "0.4.12"
 date-released: "2026-10-21"
 identifiers:
   - type: doi
