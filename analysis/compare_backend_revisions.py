@@ -235,23 +235,24 @@ def main() -> None:
     parser.add_argument(
         "--cpus",
         type=int,
-        nargs=4,
+        nargs="+",
         required=True,
-        help="Four distinct physical-core CPU IDs from the current allocation",
+        help="One to four distinct physical-core CPU IDs from the current allocation",
     )
     parser.add_argument("--repeats", type=int, default=3)
     parser.add_argument(
-        "--suite", choices=("allocations", "masked-noise"), default="allocations"
+        "--suite", choices=("allocations", "masked-noise", "ci"), default="allocations"
     )
     args = parser.parse_args()
     if not hasattr(os, "sched_setaffinity"):
         parser.error("Linux CPU affinity control is required")
     if (
         args.repeats < 1
-        or len(set(args.cpus)) != 4
+        or not 1 <= len(args.cpus) <= 4
+        or len(set(args.cpus)) != len(args.cpus)
         or not set(args.cpus).issubset(os.sched_getaffinity(0))
     ):
-        parser.error("Use positive repeats and four distinct allocated CPU IDs")
+        parser.error("Use positive repeats and one to four distinct allocated CPU IDs")
     roots = {"baseline": args.baseline.resolve(), "candidate": args.candidate.resolve()}
     for root in roots.values():
         if not (root / "src/vbpca_py/_pca_full.py").is_file():
@@ -259,7 +260,8 @@ def main() -> None:
     args.output.mkdir(parents=True, exist_ok=False)
     driver = Path(__file__).resolve()
     benchmark = driver.with_name("benchmark_backend_phases.py")
-    profiles = [(1, 1, 1), (2, 2, 1), (4, 4, 1), (4, 1, 4), (4, 4, 4)]
+    all_profiles = [(1, 1, 1), (2, 2, 1), (4, 4, 1), (4, 1, 4), (4, 4, 4)]
+    profiles = [profile for profile in all_profiles if profile[0] <= len(args.cpus)]
     workloads = {
         "dense-q8": [
             "--features",
@@ -286,6 +288,55 @@ def main() -> None:
     }
     workloads = {
         "allocations": workloads,
+        "ci": {
+            "dense-f-q8": [
+                "--features",
+                "256",
+                "--samples",
+                "192",
+                "--components",
+                "8",
+                "--missing-rate",
+                "0.01",
+                "--order",
+                "F",
+            ],
+            "dense-q32": [
+                "--features",
+                "192",
+                "--samples",
+                "128",
+                "--components",
+                "32",
+                "--missing-rate",
+                "0.2",
+            ],
+            "sparse-frozen-q8": [
+                "--features",
+                "256",
+                "--samples",
+                "192",
+                "--components",
+                "8",
+                "--missing-rate",
+                "0.8",
+                "--sparse",
+                "--skip-bias",
+                "--skip-rotation",
+            ],
+            "startup-safe-q8": [
+                "--features",
+                "256",
+                "--samples",
+                "192",
+                "--components",
+                "8",
+                "--missing-rate",
+                "0.01",
+                "--runtime-tuning",
+                "safe",
+            ],
+        },
         "masked-noise": {
             "noise-q8": [
                 "--features",
@@ -327,6 +378,9 @@ def main() -> None:
         "benchmark_sha256": _digest(benchmark),
         "roots": {key: str(root) for key, root in roots.items()},
         "suite": args.suite,
+        "unavailable_profiles": [
+            list(profile) for profile in all_profiles if profile not in profiles
+        ],
         "pairs": [],
     }
     report_path = args.output / "comparison.json"
@@ -371,11 +425,14 @@ def main() -> None:
                             "complement",
                             "--noise-sufficient-statistics",
                             "auto"
-                            if args.suite == "masked-noise" and revision == "candidate"
+                            if args.suite == "ci"
+                            or (
+                                args.suite == "masked-noise" and revision == "candidate"
+                            )
                             else "observed",
                             *(
                                 ["--record-cost"]
-                                if args.suite == "masked-noise"
+                                if args.suite in {"ci", "masked-noise"}
                                 else []
                             ),
                             "--snapshot-dir",
@@ -390,8 +447,8 @@ def main() -> None:
                 fidelity = _compare_snapshots(
                     snapshots["baseline"],
                     snapshots["candidate"],
-                    tolerant=args.suite == "masked-noise",
-                    align_latent=args.suite == "masked-noise",
+                    tolerant=args.suite in {"ci", "masked-noise"},
+                    align_latent=args.suite in {"ci", "masked-noise"},
                 )
                 record = {
                     "case": label,
