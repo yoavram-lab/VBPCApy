@@ -5,7 +5,7 @@
 #SBATCH --cpus-per-task=4
 #SBATCH --hint=nomultithread
 #SBATCH --mem=4G
-#SBATCH --time=00:20:00
+#SBATCH --time=00:10:00
 #SBATCH --no-requeue
 #SBATCH --output=slurm-%x-%j.out
 set -Eeuo pipefail

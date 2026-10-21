@@ -4,10 +4,12 @@ This qualification repeats the paired source comparison on Rockfish and
 Skipjack. It uses synthetic matrices, not the SNP analysis, and does not
 qualify a stopping policy or change a statistical default.
 
-Each host receives one job with four physical cores, 4 GiB and a 20-minute
-wall limit. Skipjack also receives one environment preparation job with one
-core, 2 GiB and a ten-minute limit. The total allocation ceiling is **three
-CPU-hours**, including preparation. There are no automatic retries; failed
+Each host receives one job with four physical cores, 4 GiB and a ten-minute
+wall limit. Allow up to eight accounted logical CPUs per profile for SMT
+rounding. Skipjack also receives one environment preparation job requesting
+one CPU, 2 GiB and a ten-minute limit; allow two accounted CPUs for that job.
+The total allocation ceiling is **three CPU-hours**, including preparation.
+There are no automatic retries; failed
 or preempted jobs require a new recorded decision within the remaining budget.
 Existing jobs and scientific environments are left in place.
 
@@ -43,3 +45,9 @@ Report within-host paired timing and memory changes. Hardware, Python and
 wheel builds can differ across clusters, so absolute times alone do not
 establish hardware scaling. Preserve incomplete receipts on failure and keep
 generated matrices and snapshots out of Git.
+
+The first registration and its allocation amendment are retained under
+`registrations/2026-10-20/`. The frozen source archive has a 20-minute launcher
+default. Its submissions use the amended ten-minute limit: an explicit
+override on Skipjack and a reduction of the pending Rockfish job's time limit.
+The newer launcher defaults to ten minutes. Numerical sources are identical.

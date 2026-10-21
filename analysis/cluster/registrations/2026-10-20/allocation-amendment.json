@@ -1,0 +1,19 @@
+{
+  "original_registration_sha256": "ed92e7adbb61496c59a835950f903473018343b41933e2a5448759dd8c36f5a3",
+  "reason": "Skipjack preparation requested one CPU but Slurm allocated two logical CPUs for one physical core. Bound both profile jobs for possible SMT-rounded accounting before they start.",
+  "unchanged_total_allocated_cpu_hour_ceiling": 3,
+  "profile_time_limit_minutes": 10,
+  "maximum_accounted_cpus_per_profile": 8,
+  "requested_physical_cores_per_profile": 4,
+  "preparation_maximum_accounted_cpus": 2,
+  "preparation_maximum_minutes": 10,
+  "worst_case_allocated_cpu_hours": 3,
+  "automatic_retries": false,
+  "rockfish_job_id": "32325436",
+  "skipjack_preparation_job_id": "1192139",
+  "skipjack_preparation_actual": {
+    "allocated_cpus": 2,
+    "elapsed_seconds": 28,
+    "state": "COMPLETED"
+  }
+}
