@@ -64,6 +64,21 @@ def _physical_cpus():
     return selected[: min(4, cap)]
 
 
+def _cpu_model():
+    try:
+        lines = Path("/proc/cpuinfo").read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return platform.processor()
+    return next(
+        (
+            line.split(":", 1)[1].strip()
+            for line in lines
+            if line.startswith("model name")
+        ),
+        platform.processor(),
+    )
+
+
 def _summarize(report):
     groups = defaultdict(list)
     for pair in report["pairs"]:
@@ -144,7 +159,7 @@ def main():
             for k in ["RUNNER_NAME", "RUNNER_OS", "RUNNER_ARCH", "GITHUB_RUN_ID"]
         },
         "runner_label_is_not_a_hardware_guarantee": True,
-        "cpu_model": platform.processor(),
+        "cpu_model": _cpu_model(),
         "full_affinity": sorted(os.sched_getaffinity(0)),
     }
     (args.output / "registration.json").write_text(
