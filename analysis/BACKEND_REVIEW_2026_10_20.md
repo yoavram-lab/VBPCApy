@@ -233,6 +233,6 @@ release notes and retain portable builds.
 Posterior-family, stopping-policy, rank-target or broad default changes need
 separate scientific qualification and an explicit study-adoption decision.
 Do not bundle them into an urgent performance patch or silently rerun locked
-publication analyses. Hosted CI is currently blocked by organization billing;
-run relevant checks locally and retain the results, without representing
-unstarted hosted jobs as green.
+publication analyses. Earlier hosted runs were blocked by organization billing.
+Retain local check results separately and verify the current PR checks before
+merging; local passes do not establish hosted-job status.
