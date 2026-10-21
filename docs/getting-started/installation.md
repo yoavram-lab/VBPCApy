@@ -25,6 +25,11 @@ pip install vbpca-py[plot]
 
 Building from source requires Eigen and a C++14-compatible compiler.
 
+Source checkouts can carry an unreleased `.dev` version while a release is
+being prepared. Use a release tag to reproduce a published version. During
+development, the citation identifies the most recent stable release; it does
+not assign a publication date to unfinished work.
+
 ### Install Eigen
 
 === "Ubuntu / Debian"
