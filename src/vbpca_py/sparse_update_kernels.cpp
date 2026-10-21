@@ -182,6 +182,7 @@ py::dict score_update_sparse_nopattern(
 
     auto worker = [&](int col_start, int col_end) {
         try {
+            Eigen::VectorXd a(n_components);
             for (int j = col_start; j < col_end; ++j) {
                 const int start = x_indptr[j];
                 const int end = x_indptr[j + 1];
@@ -191,7 +192,7 @@ py::dict score_update_sparse_nopattern(
 
                 for (int p = start; p < end; ++p) {
                     const int i = x_indices[p];
-                    const Eigen::VectorXd a = loadings.row(i).transpose();
+                    a = loadings.row(i).transpose();
                     psi.noalias() += a * a.transpose();
                     rhs.noalias() += a * x_data[p];
 
@@ -363,6 +364,7 @@ py::dict loadings_update_sparse_nopattern(
 
     auto worker = [&](int row_start, int row_end) {
         try {
+            Eigen::VectorXd s(n_components);
             for (int i = row_start; i < row_end; ++i) {
                 const int start = x_indptr[i];
                 const int end = x_indptr[i + 1];
@@ -372,7 +374,7 @@ py::dict loadings_update_sparse_nopattern(
 
                 for (int p = start; p < end; ++p) {
                     const int j = x_indices[p];
-                    const Eigen::VectorXd s = scores.col(j);
+                    s = scores.col(j);
                     phi.noalias() += s * s.transpose();
                     rhs.noalias() += s * x_data[p];
 

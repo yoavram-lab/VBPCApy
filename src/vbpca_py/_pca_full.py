@@ -306,6 +306,8 @@ class TrainingState:
     a_old: np.ndarray
     time_start: float
     runtime_report: dict[str, object] | None
+    sparse_view_source: Matrix | None = None
+    sparse_csc: sp.csc_matrix | None = None
 
 
 @dataclass
@@ -1561,6 +1563,12 @@ def _bias_and_center(ctx: IterationContext) -> tuple[Matrix, Matrix | None]:
     m = training.model
     cfg = ctx.cfg
 
+    if bool(cfg.opts["bias"]):
+        # Centering changes sparse values, even if an implementation reuses
+        # the CSR object. Never retain a CSC value snapshot across that update.
+        training.sparse_view_source = None
+        training.sparse_csc = None
+
     ctx.bias_state.noise_var = float(m.noise_var)
     ctx.bias_state.vmu = float(m.vmu)
 
@@ -1585,9 +1593,8 @@ def _score_and_rotate(
 ) -> tuple[Matrix, Matrix | None, float]:
     m = ctx.training.model
     cfg = ctx.cfg
-    score_x_csr, score_x_csc = _coerce_sparse_views(x_data)
-
     score_start = time.perf_counter()
+    score_x_csr, score_x_csc = _score_sparse_views(ctx.training, x_data)
     masked_batch_size = max(0, _int_opt(cfg.opts.get("masked_batch_size", 0)))
 
     score_state = ScoreState(
@@ -1630,6 +1637,9 @@ def _score_and_rotate(
         )
         ctx.centering_state.x_data = x_data
         ctx.centering_state.x_probe = x_probe
+        if bool(cfg.opts["bias"]):
+            ctx.training.sparse_view_source = None
+            ctx.training.sparse_csc = None
 
     return x_data, x_probe, phase_scores_sec
 
@@ -1637,9 +1647,9 @@ def _score_and_rotate(
 def _update_loadings_phase(ctx: IterationContext, x_data: Matrix) -> float:
     m = ctx.training.model
     cfg = ctx.cfg
-    loadings_x_csr, loadings_x_csc = _coerce_sparse_views(x_data)
-
     loadings_start = time.perf_counter()
+    # Loading updates consume rows only; constructing a CSC here was wasted.
+    loadings_x_csr = sp.csr_matrix(x_data, copy=False) if sp.issparse(x_data) else None
     m.a, m.av = _update_loadings(
         LoadingsUpdateState(
             x_data=x_data,
@@ -1652,7 +1662,6 @@ def _update_loadings_phase(ctx: IterationContext, x_data: Matrix) -> float:
             noise_var=float(m.noise_var),
             verbose=cfg.verbose,
             x_csr=loadings_x_csr,
-            x_csc=loadings_x_csc,
             sparse_num_cpu=cfg.runtime_threads.loadings_update_sparse,
             dense_num_cpu=cfg.runtime_threads.loadings_update_dense,
             dense_use_complement=bool(
@@ -1861,6 +1870,18 @@ def _append_phase_timings(
     for key, value in timings.items():
         lc.setdefault(key, [0.0])
         lc[key].append(max(0.0, float(value)))
+
+
+def _score_sparse_views(
+    training: TrainingState, x_data: Matrix
+) -> tuple[sp.csr_matrix | None, sp.csc_matrix | None]:
+    if not sp.issparse(x_data):
+        return None, None
+    if training.sparse_view_source is not x_data or training.sparse_csc is None:
+        x_csr, training.sparse_csc = _coerce_sparse_views(x_data)
+        training.sparse_view_source = x_data
+        return x_csr, training.sparse_csc
+    return sp.csr_matrix(x_data, copy=False), training.sparse_csc
 
 
 def _coerce_sparse_views(

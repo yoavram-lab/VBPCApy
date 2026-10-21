@@ -141,6 +141,8 @@ jobs:
         run: uv sync --extra dev --extra plot --python 3.12
       - name: Required numerical references
         run: uv run --extra dev python scripts/check_numerical_reference.py
+      - name: Sparse native allocation contract (Linux/glibc)
+        run: uv run --extra dev python scripts/check_sparse_allocations.py
 
   octave-parity:
     needs: changes

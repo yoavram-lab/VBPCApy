@@ -160,6 +160,32 @@ a shared host is advisory; pin CPU allocation and repeat on target hardware
 before interpreting throughput. The rewrite changes diagnostic evaluation,
 and leaves numerical stopping, statistical defaults and publication pins alone.
 
+## Sparse allocation and view lifetimes
+
+```bash
+uv run pytest -q tests/test_sparse_views.py tests/test_sparse_observed_zero_indices.py
+just numerical-reference
+uv run --extra dev python scripts/check_sparse_allocations.py \
+  --output /tmp/vbpca-sparse-allocations.json
+```
+
+The allocation command requires Linux/glibc and a C compiler. It builds a
+temporary allocator interposer, launches a fresh interpreter, warms both sparse
+kernels, and records three allocation counts at ranks 8 and 32 for fixed
+193 × 257 axes with 2,480 versus 39,681 stored observations. Explicitly stored
+observed zeros remain in both workloads. Single native/BLAS threads isolate the
+count. Whole-call setup/output costs are included; the gate rejects allocation
+growth with observation count. The helper is never linked into production
+wheels. Numerical, thread-error and sparse-pointer checks remain independent.
+
+The view-lifetime tests count one CSC conversion in a four-iteration fit without
+bias changes and four with bias changes, instead of the previous eight. They
+check exact trajectories against uncached conversions, pattern grouping, both
+rotation/bias-update settings and explicit in-place invalidation. Conversion
+and packing remain included in phase/whole-fit measurements. Timing comparisons
+should still use the fresh-process procedure below on the target allocation;
+these allocation counts alone do not establish a whole-fit speedup.
+
 ## Source-revision memory and thread profiles
 
 `analysis/compare_backend_revisions.py` compares a baseline and candidate source
