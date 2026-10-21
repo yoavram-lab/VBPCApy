@@ -196,6 +196,25 @@ exercise reuse across iterations; remove `--skip-rotation` to include rotation
 and its invalidation. The defaults of existing dense profiling commands are
 unchanged. Preserve snapshots and identities for each paired revision run.
 
+## Selection cost diagnostics
+
+```bash
+OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+  uv run --extra dev python scripts/benchmark_selection_cost.py \
+  --repeats 5 --output /tmp/vbpca-selection-cost.json
+uv run pytest -q tests/test_endpoint_cost.py
+just numerical-reference
+```
+
+This paired probe measures complete PRMS capacity sweeps with identical probes,
+seeds and fixed iterations, including a mean-only candidate. It alternates
+trace/endpoint order after warmup, compares selected capacity and endpoint
+metrics exactly, and records full sweep times, cost-call counts, versions,
+affinity and BLAS pools. Full cost traces remain the default and are required
+for cost-based selection, cost-consuming stopping and requested replay evidence.
+The endpoint mode is an explicit diagnostic option, rather than a change to
+stopping criteria, scientific defaults or frozen publication profiles.
+
 ## Source-revision memory and thread profiles
 
 `analysis/compare_backend_revisions.py` compares a baseline and candidate source

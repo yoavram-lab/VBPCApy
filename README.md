@@ -226,6 +226,11 @@ unchanged; loading updates consume CSR directly. Centering and bias-enabled
 rotation invalidate cached values. Sparse native observation loops reuse
 worker-local scratch vectors, with a Linux CI allocation check that detects
 allocation growth with the observation count.
+
+Component selection preserves full per-iteration cost traces by default.
+For fixed-policy PRMS sweeps, `SelectionConfig(cost_diagnostics="endpoint")`
+can retain only the returned iteration's cost when no enabled stopping event
+needs a cost trace. See the [diagnostic-mode guide](docs/concepts/model-selection.md#cost-diagnostic-modes).
 The [dense-mask repair validation](analysis/BACKEND_COPY_VALIDATION_2026_10_20.md)
 records paired measurements and the limits of their interpretation.
 

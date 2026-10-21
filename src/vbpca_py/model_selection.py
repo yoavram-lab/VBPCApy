@@ -68,7 +68,13 @@ _AllowedFloat = (
 
 @dataclass
 class SelectionConfig:
-    """Configuration for component selection."""
+    """Configuration for component selection.
+
+    ``cost_diagnostics='trace'`` preserves full per-iteration cost recording.
+    Opt-in ``'endpoint'`` evaluates only the returned iteration, provided the
+    selection metric and enabled stopping events do not consume cost traces.
+    Requested ``record_cost=True`` is incompatible with endpoint mode.
+    """
 
     metric: _Metric = "prms"
     stop_on_metric_reversal: bool = False
@@ -77,6 +83,7 @@ class SelectionConfig:
     compute_explained_variance: bool = True
     return_best_model: bool = False
     reuse_runtime_policy: bool = True
+    cost_diagnostics: Literal["trace", "endpoint"] = "trace"
 
 
 _PROBE_FRACTION = 0.1
@@ -450,16 +457,29 @@ def _ensure_metric_opts(
 
     Mutates *fit_opts* in place:
 
-    * **record_cost** — enabled so endpoint diagnostics remain complete without
-      enabling any cost-based convergence criterion.
+    * **record_cost** — historical full traces remain the default. Explicit
+      endpoint mode leaves cost recording disabled; the fitter rejects any
+      enabled event that requires a cost trace.
     * **xprobe** — when no probe set has been supplied, a random hold-out
       of observed entries is created when the selection metric is ``"prms"``
       or the caller requested a positive ``xprobe_fraction``. The requested
       fraction is used when present; ``"prms"`` otherwise falls back to the
       historical 10 % default. Candidate fits receive the same explicit probe;
       the estimator removes those entries from its training data and mask.
+
+    Raises:
+        ValueError: If the diagnostic mode is invalid or incompatible with the
+            selection metric.
     """
-    fit_opts["record_cost"] = True
+    if cfg.cost_diagnostics not in {"trace", "endpoint"}:
+        msg = "cost_diagnostics must be 'trace' or 'endpoint'"
+        raise ValueError(msg)
+    if cfg.cost_diagnostics == "endpoint" and cfg.metric == "cost":
+        msg = "cost selection requires cost_diagnostics='trace'"
+        raise ValueError(msg)
+    if cfg.cost_diagnostics == "trace":
+        fit_opts["record_cost"] = True
+    fit_opts["cost_diagnostics"] = cfg.cost_diagnostics
 
     # --- prms: ensure xprobe is populated -----------------------------------
     if fit_opts.get("xprobe") is not None:
@@ -776,6 +796,7 @@ def _sweep_components(
             inputs=inputs,
             cache=runtime_policy_cache,
         )
+        entry["cost_diagnostics"] = cfg.cost_diagnostics if k else "not_applicable"
         trace.append(entry)
 
         metric_val = _metric_value_from_entry(cfg.metric, entry)
@@ -1314,6 +1335,10 @@ def _run_fold(  # noqa: PLR0913
             max_trials=len(k_list),
             compute_explained_variance=False,
             return_best_model=False,
+            cost_diagnostics=cast(
+                "Literal['trace', 'endpoint']",
+                fold_opts.pop("cost_diagnostics", "trace"),
+            ),
         ),
         **fold_opts,  # type: ignore[arg-type]
     )
@@ -1329,6 +1354,7 @@ def _run_fold(  # noqa: PLR0913
             "n_iter": int(cast("int", t["n_iter"])),
             "converged": bool(t["converged"]),
             "convergence_reason": str(t["convergence_reason"]),
+            "cost_diagnostics": str(t.get("cost_diagnostics", "trace")),
         }
         for t in trace
     }
@@ -1350,6 +1376,12 @@ def _add_cv_convergence_summary(
     entry["max_n_iter"] = max(iterations, default=0)
     entry["convergence_rate"] = float(np.mean(converged)) if converged else float("nan")
     entry["convergence_reason_counts"] = reason_counts
+    diagnostic_modes = {
+        str(fold.get("cost_diagnostics", "trace")) for fold in candidate_folds
+    }
+    entry["cost_diagnostics"] = (
+        next(iter(diagnostic_modes)) if len(diagnostic_modes) == 1 else "mixed"
+    )
     for fold_index, fold in enumerate(candidate_folds, start=1):
         for field in _CONVERGENCE_FIELDS:
             entry[f"{field}_fold_{fold_index}"] = fold[field]
