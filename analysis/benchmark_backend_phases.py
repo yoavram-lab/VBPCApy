@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
+from threadpoolctl import threadpool_info
 
 import vbpca_py
 import vbpca_py._pca_full as pca_module  # noqa: PLC2701
@@ -247,6 +248,7 @@ def main() -> None:
         if hasattr(os, "sched_getaffinity")
         else None,
         "versions": {name: version(name) for name in ("numpy", "scipy", "vbpca_py")},
+        "blas_pools": threadpool_info(),
         "source_sha256": {
             path.name: hashlib.sha256(path.read_bytes()).hexdigest()
             for path in sorted(package.glob("*.py"))

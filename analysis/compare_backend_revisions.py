@@ -30,6 +30,7 @@ def _rms_child(argv: list[str]) -> None:
     import resource
 
     import numpy as np
+    from threadpoolctl import threadpool_info
 
     import vbpca_py
     from vbpca_py._rms import RmsConfig, compute_rms  # noqa: PLC2701
@@ -65,6 +66,7 @@ def _rms_child(argv: list[str]) -> None:
         "traced_peak_bytes": peak,
         "max_rss_after_kib": rss,
         "identity": {
+            "blas_pools": threadpool_info(),
             "affinity": sorted(os.sched_getaffinity(0)),
             "source_path": str(package),
             "source_sha256": {
@@ -117,6 +119,8 @@ def _child_environment(root: Path, native: int, blas: int) -> dict[str, str]:
         "OMP_NUM_THREADS": str(blas),
         "OPENBLAS_NUM_THREADS": str(blas),
         "MKL_NUM_THREADS": str(blas),
+        "BLIS_NUM_THREADS": str(blas),
+        "NUMEXPR_NUM_THREADS": str(blas),
         "MKL_DYNAMIC": "FALSE",
         "OMP_DYNAMIC": "FALSE",
         "VBPCA_NUM_THREADS": str(native),
@@ -124,7 +128,7 @@ def _child_environment(root: Path, native: int, blas: int) -> dict[str, str]:
     return environment
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class _Profile:
     cpus: tuple[int, ...]
     native_threads: int
@@ -149,6 +153,11 @@ def _run_child(
         raise ValueError("Child CPU affinity differs from the profile")
     if Path(record["identity"]["source_path"]).resolve() != root / "src/vbpca_py":
         raise ValueError("Child imported the wrong source tree")
+    pools = [
+        pool for pool in record["identity"]["blas_pools"] if pool["user_api"] == "blas"
+    ]
+    if not pools or any(pool["num_threads"] != profile.blas_threads for pool in pools):
+        raise ValueError("Loaded BLAS thread limits differ from the profile")
     return record
 
 
