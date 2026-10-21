@@ -20,6 +20,7 @@ from scipy.sparse import spmatrix
 from ._cost import CostParams, compute_full_cost
 from ._monitoring import display_progress, log_step
 from ._sparsity import validate_mask_compatibility
+from .options import Criterion
 
 Array = np.ndarray
 Sparse = spmatrix
@@ -28,14 +29,7 @@ Matrix = Array | Sparse
 logger = logging.getLogger(__name__)
 
 #: Default priority order used by :func:`convergence_check`.
-DEFAULT_CRITERION_ORDER: list[str] = [
-    "angle",
-    "earlystop",
-    "rms_plateau",
-    "cost",
-    "composite",
-    "slowing_down",
-]
+DEFAULT_CRITERION_ORDER: list[str] = [criterion.value for criterion in Criterion]
 
 _VALID_CRITERION_NAMES: frozenset[str] = frozenset(DEFAULT_CRITERION_ORDER)
 

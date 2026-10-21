@@ -25,11 +25,13 @@ jobs:
           filters: |
             octave:
               - 'src/vbpca_py/_rotate.py'
+              - 'src/vbpca_py/rotate_update_kernels.cpp'
               - 'src/vbpca_py/_rms.py'
               - 'src/vbpca_py/_mean.py'
               - 'src/vbpca_py/_cost.py'
               - 'src/vbpca_py/_sparse_error.py'
               - 'tests/test_rotate.py'
+              - 'tests/test_rank_zero_rotation.py'
               - 'tests/test_rms_regression.py'
               - 'tests/test_mean.py'
               - 'tests/test_cost.py'

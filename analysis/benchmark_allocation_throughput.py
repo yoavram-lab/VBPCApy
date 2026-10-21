@@ -24,6 +24,8 @@ from compare_backend_revisions import (
     _digest,  # noqa: PLC2701
 )
 
+from vbpca_py._cpu_limits import available_cpu_count  # noqa: PLC2701 - allocation oracle
+
 
 def _batch(args: argparse.Namespace, workers: int, destination: Path) -> dict:
     destination.mkdir()
@@ -124,6 +126,10 @@ def main() -> None:
     args = parser.parse_args()
     if not shutil.which("taskset") or not hasattr(os, "sched_getaffinity"):
         parser.error("Linux taskset and CPU affinity are required")
+    if len(args.cpus) > available_cpu_count():
+        parser.error(
+            "CPU set exceeds the effective affinity/scheduler/cgroup allocation"
+        )
     positive_limits = all(
         value > 0 for value in [args.fits, args.repeats, args.memory_mib]
     )

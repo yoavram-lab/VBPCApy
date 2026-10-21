@@ -20,3 +20,15 @@ def check_result_types(result: PCAResult, estimator: VBPCA) -> None:
     assert_type(result["lc"].get("rms"), list[float] | None)
     assert_type(result["lc"].get("prior_trace"), list[list[float]] | None)
     assert_type(estimator.learning_curve_, LearningCurve | None)
+
+
+# Negative checks also run with warn_unused_ignores: losing the option types
+# would make these suppressions unused and fail strict consumer typing.
+def check_categorical_options() -> None:
+    from vbpca_py.options import Algorithm, CompatMode
+
+    value: Algorithm = Algorithm.parse("vb")
+    assert_type(value, Algorithm)
+    value = CompatMode.MODERN  # type: ignore[assignment]
+    value = "vb"  # type: ignore[assignment]
+    Algorithm.NOT_AN_ALGORITHM  # type: ignore[attr-defined]  # noqa: B018

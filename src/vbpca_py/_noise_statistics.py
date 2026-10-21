@@ -15,6 +15,7 @@ import numpy as np
 import numpy.typing as npt
 
 from .noise_update_kernels import noise_sxv_sum
+from .options import StatisticsMode
 
 if TYPE_CHECKING:
     from ._full_update import NoiseState
@@ -43,7 +44,7 @@ def normalize_noise_statistics(
         ValueError: If the value is not a supported mode.
     """
     mode = str(value).strip().lower()
-    if mode not in {"auto", "observed", "complement"}:
+    if mode not in {item.value for item in StatisticsMode}:
         msg = (
             "noise_sufficient_statistics must be one of "
             "{'auto', 'observed', 'complement'} "

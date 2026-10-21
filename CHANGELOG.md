@@ -11,6 +11,13 @@ Development builds use `0.5.0.dev0` while the estimator and typing migration is
 in progress. The stable citation remains at the most recent public release.
 The development version is not a release announcement.
 
+### Added
+
+- String-compatible enums for solver algorithms, numerical policies, runtime
+  modes and stopping-rule names, with explicit parsing and executable examples.
+  Existing string normalizers and numerical defaults remain unchanged.
+  Initialization continues to accept warm-start mappings and MAT filenames.
+
 ### Performance
 
 - Use screened complete-minus-missing full-covariance noise statistics for
@@ -20,6 +27,10 @@ The development version is not a release announcement.
   plan/call metadata without changing priors, residuals or variance floors.
 
 ### Fixed
+
+- Return a valid empty eigensystem for rank-zero native rotation instead of
+  calling an unsupported Eigen decomposition and crashing the Python process.
+  Retain shape and normalizer validation and positive-rank calculations.
 
 - Stop enabling relative cost-change and composite stopping in coarse
   `recommend_config()` profiles, following the registered downstream audit.
