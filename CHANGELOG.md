@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Normalize dense and sparse observation index types independently for NumPy
+  2.4 static checking, with a pinned cross-platform typing regression check.
 - Retain explicitly stored observed zeros in modern sparse noise-update
   coordinates, probe exclusion and NaN cleanup. Dense and sparse observations
   now use the same mask-defined set; strict-legacy handling is retained.
