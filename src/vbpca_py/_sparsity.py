@@ -11,6 +11,19 @@ import scipy.sparse as sp
 __all__ = ["validate_mask_compatibility"]
 
 
+def _as_dense_mask(mask: object) -> np.ndarray:
+    """Retain boolean storage while preserving legacy numeric-mask coercion.
+
+    Shape and sparse/dense compatibility are validated by the caller. Boolean
+    views can be strided or read-only; consumers must not modify them.
+
+    Returns:
+        A boolean view when possible, otherwise the historical float array.
+    """
+    array = np.asarray(mask)
+    return array if array.dtype == np.bool_ else np.asarray(mask, dtype=float)
+
+
 def _record_preflight(
     preflight: list[dict[str, object]] | None,
     *,

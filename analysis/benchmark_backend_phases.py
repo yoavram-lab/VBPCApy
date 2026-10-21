@@ -11,15 +11,20 @@ The JSON output is intended for comparisons between git revisions.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import os
+import platform
 import resource
 import time
 from contextlib import contextmanager
+from importlib.metadata import version
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+import vbpca_py
 import vbpca_py._pca_full as pca_module  # noqa: PLC2701
 
 if TYPE_CHECKING:
@@ -69,6 +74,7 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--skip-diagnostics", action="store_true")
     parser.add_argument("--output", type=Path)
+    parser.add_argument("--snapshot-dir", type=Path)
     return parser
 
 
@@ -168,6 +174,31 @@ def _run_once(
     rss_after = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     runtime_report = result["RuntimeReport"] or {}
 
+    if args.snapshot_dir is not None:
+        arrays = {
+            key: np.asarray(result[key])
+            for key in (
+                "A",
+                "S",
+                "Mu",
+                "Muv",
+                "Av",
+                "Sv",
+                "V",
+                "Va",
+                "Vmu",
+                "Xrec",
+                "Vr",
+                "Vpred",
+            )
+            if result[key] is not None
+        }
+        arrays.update({
+            f"lc_{key}": np.asarray(result["lc"][key])
+            for key in ("rms", "prms", "cost")
+        })
+        np.savez(args.snapshot_dir / f"fit-{repeat}.npz", **arrays)
+
     return {
         "repeat": repeat,
         "shape": [args.features, args.samples],
@@ -201,9 +232,42 @@ def main() -> None:
         raise ValueError("missing-rate must be in [0, 1)")
     if min(args.features, args.samples, args.components, args.iterations) <= 0:
         raise ValueError("shape, components, and iterations must be positive")
+    if args.repeats <= 0:
+        raise ValueError("repeats must be positive")
+    if args.snapshot_dir is not None:
+        args.snapshot_dir.mkdir(parents=True, exist_ok=False)
 
     x, mask = _make_problem(args)
     records = [_run_once(args, x, mask, repeat) for repeat in range(args.repeats)]
+    package = Path(vbpca_py.__file__).parent
+    identity = {
+        "source_path": str(package),
+        "platform": platform.platform(),
+        "affinity": sorted(os.sched_getaffinity(0))
+        if hasattr(os, "sched_getaffinity")
+        else None,
+        "versions": {name: version(name) for name in ("numpy", "scipy", "vbpca_py")},
+        "source_sha256": {
+            path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+            for path in sorted(package.glob("*.py"))
+        },
+        "native_sha256": {
+            path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+            for suffix in ("*.so", "*.pyd")
+            for path in sorted(package.glob(suffix))
+        },
+        "thread_environment": {
+            key: os.environ.get(key)
+            for key in (
+                "OPENBLAS_NUM_THREADS",
+                "MKL_NUM_THREADS",
+                "OMP_NUM_THREADS",
+                "VBPCA_NUM_THREADS",
+            )
+        },
+    }
+    for record in records:
+        record["identity"] = identity
     payload = json.dumps(records, indent=2, sort_keys=True)
     print(payload)
     if args.output is not None:

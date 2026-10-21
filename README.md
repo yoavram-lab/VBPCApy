@@ -185,6 +185,14 @@ requirements. Its diagnostic probes and algebraic prototypes are analysis
 tools; they do not change the installed solver. Reproduction commands are in
 [scripts/benchmark_study.md](scripts/benchmark_study.md#backend-review-probes).
 
+For source-revision comparisons, the
+[fresh-process profiling procedure](scripts/benchmark_study.md#source-revision-memory-and-thread-profiles)
+checks fixed-policy numerical outputs alongside fit time, RMS allocation and
+process peak memory under explicit CPU and thread limits. It leaves published
+study settings unchanged.
+The [dense-mask repair validation](analysis/BACKEND_COPY_VALIDATION_2026_10_20.md)
+records paired measurements and the limits of their interpretation.
+
 The `trade-a-*` analysis recipes require a local
 [trade-study](https://github.com/jcm-sci/trade-study) checkout. After syncing
 the environment, install its full extras (including adaptive optimisation,

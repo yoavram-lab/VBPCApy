@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Retain boolean masks through dense updates and RMS calculations, skip
+  ineligible fully observed checks, and mask newly owned residuals in place.
+  Remove a duplicate preparation copy while retaining C layout, caller input
+  ownership, numeric-mask behavior and probe isolation.
+
 ### Documentation
 
 - Correct the scope of `max_dense_bytes`, describe dense diagnostic outputs,
