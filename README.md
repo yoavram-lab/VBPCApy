@@ -182,6 +182,13 @@ malformed sparse pointers with `ValueError`. Worker factorization failures
 raise `RuntimeError` after workers join. See the [runtime guide](docs/howto/runtime-tuning.md#native-failures)
 for input and failed-fit semantics.
 
+`recommend_config()` now disables the relative cost-change and composite stops
+that the registered downstream convergence audit found could truncate fits.
+Other recommended controls are retained. This scoped correction does not
+certify posterior stability for every data regime; see the
+[convergence guide](docs/howto/convergence.md#recommended-cost-stop-correction)
+for evidence, remaining limitations and fixed-iteration reference fits.
+
 ## Development
 
 The [0.4.7 validation](docs/releases/0.4.7.md) covers native failure repairs

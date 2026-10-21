@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Stop enabling relative cost-change and composite stopping in coarse
+  `recommend_config()` profiles, following the registered downstream audit.
+  Priors, probes, caps, angle and RMS controls remain as recommended. Explicit
+  fitter cost rules and independent cost recording remain available. This
+  scoped correction does not certify general posterior stability or migrate
+  pinned scientific policies.
+
 ## [0.4.12] - 2026-10-21
 
 ### Fixed

@@ -3,9 +3,10 @@
 Recipes for adjusting stopping criteria when the defaults don't fit your
 dataset.
 
-## Tighten convergence for publication results
+## Record a fixed-iteration reference
 
-Use both RMS and cost plateau criteria with a patience window:
+An active criterion can stop a fit even when another criterion is still moving.
+For a comparison reference, disable numerical and probe stopping explicitly:
 
 ```python
 from vbpca_py import VBPCA
@@ -13,13 +14,39 @@ from vbpca_py import VBPCA
 model = VBPCA(
     n_components=5,
     maxiters=2000,
-    rmsstop=[200, 1e-6, 1e-5],
-    cfstop=[200, 1e-6, 1e-5],
-    patience=5,
+    convergence_criteria={
+        "angle": False, "earlystop": False, "rms_plateau": False,
+        "cost": False, "composite": False, "slowing_down": False,
+    },
+    record_cost=True,
     verbose=1,
 )
 model.fit(X, mask=mask)
 ```
+
+Compare reconstruction mean, predictive variance, noise and subspace with a
+longer cap whose tail is itself stable. A small relative cost change alone
+does not establish posterior stability.
+
+## Recommended cost-stop correction
+
+`recommend_config()` no longer enables relative cost-change or composite
+stopping in its coarse shape buckets. A
+[registered downstream audit](https://github.com/yoavram-lab/pp-eigentest/blob/1668bad5d207b4e0b9a8f4ed47a237db1290edb5/analysis/eigentest_study/CONVERGENCE_AUDIT_RESULTS.md)
+completed 8,800 records. The original policy failed agreement gates in every
+audited group; disabling cost/composite passed each group, with rank agreement
+at least 99.75%, capacity agreement at least 99%, and no changed rank-zero
+classifications. Its separate variance-order confirmation retained the choice.
+The fitter still supports explicitly requested cost criteria, and
+`record_cost=True` records cost without enabling a cost stop.
+
+This correction retains recommended priors, probes, caps, angle and RMS rules.
+It does not qualify a universal convergence detector. The
+[broader posterior-stability study](https://github.com/yoavram-lab/VBPCApy/blob/main/analysis/trade_study/CONVERGENCE_DETECTOR.md)
+found remaining premature stops, chiefly from RMS plateau, and its held-out
+replacement candidate failed qualification. Inspect posterior stability for
+the intended use; existing pinned scientific policies stay explicit and are
+not migrated by this recommendation change.
 
 ## Speed up exploratory fits
 
@@ -42,6 +69,10 @@ Require multiple criteria to trigger simultaneously:
 ```python
 model = VBPCA(
     n_components=5,
+    convergence_criteria={
+        "angle": False, "earlystop": False, "rms_plateau": False,
+        "cost": False, "composite": True, "slowing_down": False,
+    },
     composite_stop={
         "angle": 1e-4,
         "rms": 1e-3,
@@ -85,7 +116,7 @@ probe iteration. Inspect `best_probe_iteration_`, `best_probe_rms_`, and
 3. **Increase `maxiters`.** The default (1000) may not be enough for large or
    noisy data.
 
-4. **Relax `minangle`.** The subspace-angle criterion can trigger prematurely on
+4. **Tighten `minangle`.** The subspace-angle criterion can trigger prematurely on
    near-singular problems. Try `minangle=1e-10` or disable it.
 
 5. **Inspect the learning curve.** Set `verbose=1` to watch RMS and cost per
@@ -105,12 +136,14 @@ probe iteration. Inspect `best_probe_iteration_`, `best_probe_rms_`, and
 See [Convergence Criteria](../concepts/convergence.md) for a reference of all
 options and their defaults.
 
-## Use ELBO as the stopping gate
+## Configure a cost-only experiment
 
 If the subspace-angle criterion fires too early (for example under heavy
 missingness), disable it and the other individual criteria so ELBO is the only
-eligible numerical-convergence stop. Ordering alone is only a tie-breaker when
-multiple OR criteria are ready on the same iteration.
+eligible numerical stopping rule. This is an explicit experimental policy;
+the relative-cost failure above is a reason to check it against stable longer
+fits. Ordering alone is a tie-breaker when multiple OR criteria are ready on
+the same iteration.
 
 ```python
 model = VBPCA(
@@ -174,8 +207,8 @@ Use boolean values for every `convergence_criteria` entry; strings such as
 
 ## Specify a study's stopping policy
 
-For a study that disables cost and composite stopping, copy the recommended
-controls and override those flags explicitly:
+For a study that disables cost and composite stopping, record those flags
+explicitly even though current recommendations now leave them disabled:
 
 ```python
 from vbpca_py import VBPCA, recommend_config

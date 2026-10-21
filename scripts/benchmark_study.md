@@ -99,6 +99,32 @@ just ci
 ```
 
 
+## Recommendation cost-stop correction
+
+Recommendations disable relative cost-change/composite stopping following the
+[completed registered audit](https://github.com/yoavram-lab/pp-eigentest/blob/1668bad5d207b4e0b9a8f4ed47a237db1290edb5/analysis/eigentest_study/CONVERGENCE_AUDIT_RESULTS.md).
+It compared 8,800 records and qualified the scoped `production_no_cost` policy;
+the original policy failed. The separate 1,800-record variance-order
+confirmation retained that choice. Neither result qualifies a universal
+posterior-stability detector, and the library's broader detector confirmation
+remains negative. This change does not disable RMS/angle/probe rules, tune
+priors or change frozen publication software/policies.
+
+```bash
+OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+  uv run pytest -q tests/test_recommended_stopping.py tests/test_defaults.py
+just numerical-reference
+just ci
+```
+
+The bounded rank-one regression compares the historical early-cost policy and
+the corrected recommendation on the same 400 × 400 matrix and initialization,
+then checks both against a stopping-disabled fit whose endpoint is stable
+under a larger cap. It is a numerical regression, not a new calibration study.
+All recommendation buckets and priority presets are checked for inactive
+relative-cost stopping. Existing retained-curve replay still uses its recorded
+options and immutable generating identities.
+
 ## Retained-curve policy replay
 
 The [convergence-detector analysis](../analysis/trade_study/CONVERGENCE_DETECTOR.md)
