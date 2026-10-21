@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import operator
+
 import numpy as np
 import pytest
 
@@ -118,7 +120,7 @@ def test_variable_cells_avoid_the_entrywise_leak_on_structured_data() -> None:
 
 
 @pytest.mark.parametrize(
-    "means,expected",
+    ("means", "expected"),
     [
         ([1.0, 0.8, 0.81, 0.6], 1),
         ([1.0, 0.99, 0.5], 0),
@@ -140,4 +142,4 @@ def test_first_minimum_prefix_target_and_exhausted_grid(means, expected):
             break
     assert model_selection._first_minimum(prefix, "prms") == expected
     if len(prefix) < len(curve):
-        assert min(curve, key=lambda row: row["mean_prms"])["k"] != expected
+        assert min(curve, key=operator.itemgetter("mean_prms"))["k"] != expected

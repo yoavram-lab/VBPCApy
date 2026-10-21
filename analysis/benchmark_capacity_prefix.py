@@ -10,6 +10,7 @@ These small Gaussian predictive checks do not calibrate downstream rank tests.
 
 from __future__ import annotations
 
+# ruff: noqa: SLF001 - count the existing fitting boundary without changing it
 import argparse
 import hashlib
 import json
@@ -23,7 +24,7 @@ import numpy as np
 
 from vbpca_py import VBPCA, CVConfig, cross_validate_components, model_selection
 
-OFF = dict.fromkeys(["angle", "rms", "cost", "early_stopping", "composite"], False)
+OFF = dict.fromkeys(["angle", "rms_plateau", "cost", "earlystop", "composite"], False)
 FIT = {
     "maxiters": 80,
     "runtime_tuning": "off",
