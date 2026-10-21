@@ -10,17 +10,22 @@ Definitions of "empty":
   - A row is empty if all entries are NaN.
   - A column is empty if all entries are NaN.
 
-* Sparse arrays:
-  - A row is empty if its sum is exactly zero.
-  - A column is empty if its sum is exactly zero.
+* Modern sparse inputs use stored observations, including numeric zeros.
+  Stored NaNs are missing. Historical sparse handling uses signed sums.
+* Explicit observation masks use their Boolean values in either mode.
 """
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import scipy.sparse as sp
+
+if TYPE_CHECKING:
+    import numpy.typing as npt
+
+    from .results import IndexArray
 
 InitType = Any
 Dense = np.ndarray
@@ -34,11 +39,13 @@ Matrix = Dense | Sparse
 def _nonempty_indices(
     x: Matrix,
     compat_mode: str,
+    *,
+    is_mask: bool = False,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Return indices of non-empty rows and columns.
 
-    For dense ``x``, emptiness means all-NaN.
-    For sparse ``x``, emptiness means zero-sum row/column.
+    Dense data use NaNs, modern sparse data use stored observations, and
+    explicit masks use nonzero values. Historical sparse data use signed sums.
 
     Returns:
         A tuple ``(ir, ic)`` where ``ir`` are the kept row indices and
@@ -46,22 +53,49 @@ def _nonempty_indices(
     """
     if sp.isspmatrix(x):
         x_csr = sp.csr_matrix(x)
-        if compat_mode == "modern":
-            abs_sums = x_csr.copy()
-            abs_sums.data = np.abs(abs_sums.data)
-            col_sums = np.asarray(abs_sums.sum(axis=0)).ravel()
-            row_sums = np.asarray(abs_sums.sum(axis=1)).ravel()
-        else:
-            col_sums = np.asarray(x_csr.sum(axis=0)).ravel()
-            row_sums = np.asarray(x_csr.sum(axis=1)).ravel()
+        if is_mask or compat_mode == "modern":
+            observed = x_csr.data != 0 if is_mask else ~np.isnan(x_csr.data)
+            return _sparse_observed_axes(x_csr, observed)
+        col_sums = np.asarray(x_csr.sum(axis=0)).ravel()
+        row_sums = np.asarray(x_csr.sum(axis=1)).ravel()
         ic = np.where(col_sums != 0)[0]
         ir = np.where(row_sums != 0)[0]
     else:
-        mask = ~np.isnan(np.asarray(x))
+        mask = np.asarray(x, dtype=bool) if is_mask else ~np.isnan(np.asarray(x))
         ic = np.where(mask.sum(axis=0) > 0)[0]
         ir = np.where(mask.sum(axis=1) > 0)[0]
 
     return ir.astype(int), ic.astype(int)
+
+
+def _sparse_observed_axes(
+    x: Sparse, observed: npt.NDArray[np.bool_]
+) -> tuple[IndexArray, IndexArray]:
+    """Return occupied axes without a full-shape mask or changing storage.
+
+    Column counting is bounded by stored entries for very wide sparse inputs.
+    The prefix sum is needed only when stored NaNs or false mask entries must
+    be excluded. Numeric zeros in data remain observed.
+
+    Returns:
+        Retained row and column indices.
+    """
+    columns: npt.NDArray[np.int32 | np.int64]
+    if observed.all():
+        ir = np.flatnonzero(np.diff(x.indptr))
+        columns = x.indices
+    else:
+        prefix = np.empty(x.nnz + 1, dtype=np.int64)
+        prefix[0] = 0
+        np.cumsum(observed, dtype=np.int64, out=prefix[1:])
+        ir = np.flatnonzero(np.diff(prefix[x.indptr]))
+        columns = x.indices[observed]
+    ic: npt.NDArray[np.int32 | np.int64]
+    if x.shape[1] > columns.size:
+        ic = np.unique(columns)
+    else:
+        ic = np.flatnonzero(np.bincount(columns, minlength=x.shape[1]))
+    return ir.astype(int, copy=False), ic.astype(int, copy=False)
 
 
 def _slice_matrix_like(
@@ -183,10 +217,11 @@ def remove_empty_entries(
         compat_mode:
             Compatibility mode for sparse empty-row/column handling.
             ``"strict_legacy"`` preserves sum-based legacy behavior;
-            ``"modern"`` uses absolute sums.
+            ``"modern"`` retains stored observations, including numeric zeros.
         mask:
             Optional boolean mask to drive emptiness detection; when provided
-            it must match the shape of ``x``.
+            it must match the shape of ``x``. False entries are unobserved,
+            independently of data values or the compatibility mode.
 
     Returns:
         A tuple ``(x_out, x_probe_out, ir, ic, init_out)`` where matrices
@@ -208,7 +243,7 @@ def remove_empty_entries(
 
     # Identify kept rows/columns
     basis = mask if mask is not None else x
-    ir, ic = _nonempty_indices(basis, mode)
+    ir, ic = _nonempty_indices(basis, mode, is_mask=mask is not None)
 
     # Fast path: nothing to remove
     if ir.size == n_rows_orig and ic.size == n_cols_orig:

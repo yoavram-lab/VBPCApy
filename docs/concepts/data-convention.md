@@ -37,7 +37,8 @@ x_recon = auto.inverse_transform(z_recon)
 
 ## Dense data with missing entries
 
-For dense `np.ndarray` input, missing entries are indicated by an explicit boolean mask:
+Dense `np.ndarray` inputs can use NaN for missing entries. An optional Boolean
+mask marks which values are observed:
 
 ```python
 x = np.array([[1.0, np.nan, 3.0],
@@ -51,7 +52,7 @@ model.fit(x, mask=mask)
 
 - `mask` must have the same shape as `x`.
 - `True` (or 1) means **observed**; `False` (or 0) means **missing**.
-- If all entries are observed, you can omit the mask entirely.
+- Without a mask, NaNs are missing and other values, including zero, are observed.
 
 ## Sparse data
 
@@ -59,12 +60,12 @@ For `scipy.sparse.csr_matrix` or `csc_matrix` input, the **stored entries**
 (including stored zeros) define the observation set:
 
 ```python
-import scipy.sparse as sp
-
-x_sparse = sp.csr_matrix([[1.0, 0.0], [0.0, 2.0]])
-# Stored entries: (0,0)=1, (0,1)=0, (1,0)=0, (1,1)=2
-# All four entries are "observed"
+--8<-- "scripts/snippets/stored_observations.py"
 ```
+
+Constructing CSR directly from a dense array would discard its zeros and store
+only two observations in this example. Explicit coordinate construction keeps
+all four. The example source above is also executed in the test suite.
 
 If you pass a mask for sparse data, it must match `spones(X)` exactly — same
 sparsity pattern with all stored values set to 1.
@@ -90,4 +91,14 @@ The `compat_mode` option controls how empty rows/columns and sparse masks are
 handled:
 
 - `"strict_legacy"` (default): matches the original MATLAB reference behaviour.
-- `"modern"`: updated semantics for edge cases in sparse empty-row/column detection.
+- `"modern"`: emptiness follows observed entries. Stored numeric zeros are
+  observations, stored NaNs are missing, and an observed constant-zero feature
+  is retained.
+
+An explicit observation mask uses Boolean values in either mode. A false mask
+entry is unobserved even when it occupies a stored sparse position.
+
+Compatibility mode also resolves automatic mean/noise update orders. It is a
+numerical policy choice, not a matrix-layout switch. Axis detection avoids a
+full-shape dense mask; subsequent SciPy slicing can still allocate indexing
+metadata proportional to an axis length.
