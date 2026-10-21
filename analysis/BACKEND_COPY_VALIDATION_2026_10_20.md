@@ -121,3 +121,52 @@ This is eligible for inclusion in a patch release after CI passes. It does
 not adopt a new algorithm or retune statistical defaults. Hardware tuning,
 diagnostic memory limits, exact noise statistics and sparse overhead remain
 separate repairs with their own qualification.
+
+## Rockfish qualification
+
+Rockfish job `32325436` completed all 45 pairs on node `sr07`, an Intel Xeon
+Gold 6448Y, using four distinct physical cores (CPU IDs 0–3). It used Python
+3.11.7, NumPy 2.2.6, SciPy 1.17.1 and the isolated public 0.4.10 native build.
+All saved numerical arrays matched exactly. Loaded source signatures were
+constant across fits; only the same three Python files differed between
+revisions. All six native binary hashes matched between revisions and the
+hardware receipt. Each child checked its requested BLAS pools.
+
+| Workload | Cores | Native / BLAS | Seconds, before → after | Median paired change | Child peak RSS MiB, before → after |
+| --- | --- | --- | --- | --- | --- |
+| dense-q8 | 1 | 1 / 1 | 1.3080 → 1.2088 | -7.6% | 257.3 → 245.3 |
+| dense-q8 | 2 | 2 / 1 | 1.1575 → 1.0082 | -12.6% | 257.4 → 245.0 |
+| dense-q8 | 4 | 4 / 1 | 0.9573 → 0.8543 | -10.8% | 257.4 → 245.4 |
+| dense-q8 | 4 | 1 / 4 | 1.3708 → 1.2268 | -9.1% | 263.2 → 250.7 |
+| dense-q8 | 4 | 4 / 4 | 1.1364 → 1.1114 | -2.2% | 263.2 → 251.0 |
+| dense-q32 | 1 | 1 / 1 | 1.6674 → 1.6587 | -0.5% | 152.7 → 150.9 |
+| dense-q32 | 2 | 2 / 1 | 1.1724 → 1.1714 | -0.1% | 154.0 → 151.1 |
+| dense-q32 | 4 | 4 / 1 | 0.7934 → 0.7843 | -0.8% | 153.0 → 153.0 |
+| dense-q32 | 4 | 1 / 4 | 1.7134 → 1.7645 | +3.6% | 159.7 → 156.9 |
+| dense-q32 | 4 | 4 / 4 | 1.5868 → 1.6085 | +1.4% | 160.1 → 157.2 |
+| rms | 1 | 1 / 1 | 0.0917 → 0.0617 | -32.9% | 299.7 → 229.4 |
+| rms | 2 | 2 / 1 | 0.0915 → 0.0602 | -32.9% | 299.9 → 229.5 |
+| rms | 4 | 4 / 1 | 0.0891 → 0.0592 | -33.6% | 299.9 → 229.5 |
+| rms | 4 | 1 / 4 | 0.0805 → 0.0506 | -37.5% | 312.0 → 241.2 |
+| rms | 4 | 4 / 4 | 0.0796 → 0.0506 | -37.0% | 311.9 → 241.4 |
+
+The rank-8 fit used about 12 MiB less peak process memory. Its median paired
+time reductions ranged from 2.2% to 12.6% across these settings. Rank-32
+changes were small and included slowdowns; no useful whole-fit speedup is
+established there. RMS traced peaks fell from 144,067,452 to 72,067,260 bytes,
+with median paired time reductions of 32.9–37.5%. Four native threads and
+one BLAS thread were fastest among the tested fit settings on this host.
+
+The job took 277 seconds on four allocated CPUs (0.3078 allocated CPU-hours;
+396.297 seconds of accounted CPU time). Slurm sampled RSS is separate from
+the fresh-child peaks in the table. Setup plus Rockfish consumed about 0.3233
+allocated CPU-hours of the three-hour ceiling; Skipjack is still queued.
+These are synthetic paired comparisons at pinned revisions, not SNP fits or
+a cross-hardware scaling claim.
+
+Compact identities and aggregates are retained in
+[`cluster/registrations/2026-10-20/rockfish-summary.json`](cluster/registrations/2026-10-20/rockfish-summary.json).
+Raw `comparison.json`, `hardware.json` and scheduler output remain under
+`/scratch4/struelo1/jcmacdon/vbpca-backend-292-aca9189/` and in the local
+qualification artifact directory. The comparison SHA256 is
+`846d00b3accd5a6b31506211d6e29deb26138245039957c97337c7489a8b01be`.
