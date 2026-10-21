@@ -13,7 +13,7 @@ policies and archived results are not migrated by changing the public API.
 | Boundary | 0.5 contract |
 |---|---|
 | Python | Keep Python 3.11 as the minimum; test 3.11–3.14 |
-| scikit-learn | Native runtime dependency, minimum 1.6; test minimum and current stable (1.9.1 at this checkpoint). Public tags and `validate_data` require the chosen floor |
+| scikit-learn | Native runtime dependency, minimum 1.8; test minimum and current stable (1.9.1 at this checkpoint). The mask/scoring dependency probe below determines the floor |
 | Public estimators and selection helpers | Samples × features, including masks, probe tables and held-out data. Never infer orientation from dimensions |
 | Low-level numerical solver | `pca_full` retains features × samples, historical result keys and its independent numerical-reference contract |
 | Migration | An explicit `vbpca_py.legacy` adapter preserves the 0.4 layout/API for callers that need it. It is documented as a compatibility API, not advertised as a native Pipeline estimator |
@@ -26,7 +26,7 @@ policies and archived results are not migrated by changing the public API.
 | Fitted validation | Use `validate_data` and `check_is_fitted`; record `n_features_in_`, check names/order at inference, reset learned state on a new fit |
 | Types | Float64 numerical arrays, Boolean masks, signed sparse-index arrays, typed category/configuration values and covariance/projection records. Shape and ownership checks remain runtime contracts |
 | New-data uncertainty | A documented `transform_posterior` result exposes means and score covariances; ordinary `transform` returns only means |
-| Default row-wise score | Mean plug-in Gaussian marginal log likelihood of observed entries under fitted loading means and noise. Document that this is not the variational objective or exact uncertainty-integrated VB predictive likelihood |
+| Default row-wise score | Mean plug-in Gaussian marginal log likelihood of observed entries under fitted loading means and noise. Accept optional one-dimensional row `sample_weight` for scoring, separately from entry masks; never reinterpret weights as a training likelihood. Document that this is not the variational objective or exact uncertainty-integrated VB predictive likelihood |
 | Cellwise capacity selection | Keep explicit entry/variable-cell CV and PRMS/Brier criteria separate from row-wise `GridSearchCV` scoring. Selection targets and folds are not interchangeable |
 
 Projection is checked against the independent conditional-normal equations.
@@ -46,6 +46,10 @@ The plug-in Gaussian score uses the marginal covariance of observed features,
 have zero log-density contribution; scoring a table with no observations
 fails. Test this against an independent Gaussian calculation. This score is a
 public estimator convenience, not a new scientific default or calibration claim.
+Scoring weights must be finite, nonnegative, have one value per row and a
+positive sum. Row scores are averaged with these weights; training remains
+unweighted. Explicitly request scoring weights when routing is enabled because
+`Pipeline.score` forwards `sample_weight`, including its default `None`.
 
 ## Missingness and Pipeline decisions
 
@@ -79,7 +83,15 @@ Explicit-mask pipelines opt into scikit-learn metadata routing and consume the
 mask before preprocessing. Test train and test mask row slicing in
 `cross_validate` and `GridSearchCV`, fit-transform forwarding, scoring and
 inference. Direct stale-mask shape errors must be informative. Entry masks are
-not sample weights. State which paths have been tested; arbitrary third-party
+not sample weights. The preimplementation probe found that scikit-learn 1.6.1
+and 1.7.2 silently omit the leading transformer's test mask with default
+`cross_validate` scoring, although they route the training mask. The same probe
+passes in 1.8.0 and 1.9.1, including row slicing and two-column expansion. This
+sets the minimum at 1.8, rather than the initially considered 1.6. Keep this
+regression in the integration suite; do not rely on a private scorer workaround.
+Custom scorers require their own explicit metadata contract and tests; support
+for default estimator scoring does not establish arbitrary scorer support.
+State which paths have been tested; arbitrary third-party
 transformers do not acquire a missingness contract automatically.
 
 ## Constructor, typing and ownership particulars
@@ -224,6 +236,6 @@ outside this release's required scope.
 - [check_estimator](https://scikit-learn.org/stable/modules/generated/sklearn.utils.estimator_checks.check_estimator.html)
 
 The installed 1.9.1 source was also inspected for sparse/transformer/small-sample
-checks. Version 1.6 is exercised explicitly rather than inferred from current
-documentation. The first implementation PR records the exact dependency/runtime
+checks. Versions 1.6.1, 1.7.2, 1.8.0 and 1.9.1 were exercised explicitly rather
+than inferring behavior from current documentation. The first implementation PR records the exact dependency/runtime
 inventory used for its tests.
