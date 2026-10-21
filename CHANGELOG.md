@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Performance
+
+- Use screened complete-minus-missing full-covariance noise statistics for
+  eligible dense, nearly complete inputs at rank 8 or above. Preserve observed
+  zeros and all covariance cross terms, and fall back to observed accumulation
+  for ineligible or poorly scaled cases. Expose explicit execution modes and
+  plan/call metadata without changing priors, residuals or variance floors.
+
 ### Fixed
 
 - Stop enabling relative cost-change and composite stopping in coarse

@@ -2464,7 +2464,9 @@ def _validate_convergence_opts(opts: dict[str, object]) -> None:
         }
 
 
-def _build_options(kwargs: Mapping[str, object]) -> dict[str, object]:
+def _build_options(  # noqa: PLR0915 - centralized option normalization
+    kwargs: Mapping[str, object],
+) -> dict[str, object]:
     """Merge user kwargs with defaults using _options (case-insensitive).
 
     Returns:
