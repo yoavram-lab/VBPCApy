@@ -686,10 +686,13 @@ def _resolve_noise_sufficient_statistics(
     opts: MutableMapping[str, object],
     runtime_report: dict[str, object],
 ) -> None:
-    mode = str(opts.get("noise_sufficient_statistics", "observed"))
+    mode = str(opts.get("noise_sufficient_statistics", "auto"))
     total = prepared.n_features * prepared.n_samples
     eligible = mode == "complement" or (
-        mode == "auto" and total >= 4096 and workload.n_components >= 8
+        mode == "auto"
+        and not workload.is_sparse
+        and total >= 4096
+        and workload.n_components >= 8
     )
     eligible = eligible and prepared.n_data == prepared.ix_obs.size
     plan = (
@@ -710,6 +713,10 @@ def _resolve_noise_sufficient_statistics(
         if plan is not None
         else 0,
         "observation_count_matches": prepared.n_data == prepared.ix_obs.size,
+        "preparation_grid_bytes": int(total) if plan is not None else 0,
+        "packing_upper_bound_bytes_per_iteration": 8
+        * workload.n_components**2
+        * (prepared.n_features + prepared.n_samples),
         "complete_iterations": 0,
         "complement_iterations": 0,
         "observed_iterations": 0,
@@ -2505,7 +2512,7 @@ def _build_options(kwargs: Mapping[str, object]) -> dict[str, object]:
         "runtime_tuning": "safe",
         "runtime_profile": None,
         "dense_sufficient_statistics": "auto",
-        "noise_sufficient_statistics": "observed",
+        "noise_sufficient_statistics": "auto",
         "masked_batch_size": 0,
         "cov_writeback_mode": None,
         "log_progress_stride": None,
@@ -2572,7 +2579,7 @@ def _build_options(kwargs: Mapping[str, object]) -> dict[str, object]:
         raise ValueError(msg)
     opts["dense_sufficient_statistics"] = dense_statistics
     opts["noise_sufficient_statistics"] = normalize_noise_statistics(
-        opts.get("noise_sufficient_statistics", "observed")
+        opts.get("noise_sufficient_statistics", "auto")
     )
 
     solver_raw = str(opts.get("explained_var_solver", "auto"))

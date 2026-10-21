@@ -9,7 +9,12 @@ import pytest
 import scipy.sparse as sp
 
 from vbpca_py import _pca_full as pf
-from vbpca_py.model_selection import CVConfig, cross_validate_components
+from vbpca_py.model_selection import (
+    CVConfig,
+    SelectionConfig,
+    cross_validate_components,
+    select_n_components,
+)
 
 if TYPE_CHECKING:
     from vbpca_py._full_update import NoiseState
@@ -179,4 +184,70 @@ def test_auto_dispatch_is_eligible_by_density_rank_and_size() -> None:
     assert (
         low_rank["RuntimeReport"]["noise_sufficient_statistics"]["planned"]
         == "observed_or_complete"
+    )
+
+
+def test_default_dispatch_and_explicit_observed_override_preserve_sparse_policy():
+    rng = np.random.default_rng(425)
+    x = rng.normal(size=(64, 64))
+    x[3, 7] = np.nan
+    default = pf.pca_full(x, 8, **_options())
+    report = default["RuntimeReport"]["noise_sufficient_statistics"]
+    assert report["requested"] == "auto"
+    assert report["complement_iterations"] == 6
+    observed = pf.pca_full(x, 8, noise_sufficient_statistics="observed", **_options())
+    assert (
+        observed["RuntimeReport"]["noise_sufficient_statistics"]["observed_iterations"]
+        == 6
+    )
+    for key in ("Xrec", "Vr", "Vpred", "V"):
+        np.testing.assert_allclose(default[key], observed[key], rtol=1e-10, atol=1e-11)
+    mask = np.isfinite(x)
+    ix, jx = np.nonzero(mask)
+    data = sp.csr_matrix((x[ix, jx], (ix, jx)), shape=x.shape)
+    sparse = pf.pca_full(data, 8, compat_mode="modern", **_options())
+    report = sparse["RuntimeReport"]["noise_sufficient_statistics"]
+    assert report["requested"] == "auto"
+    assert report["observed_iterations"] == 6
+    assert report["coordinate_bytes"] == 0
+
+
+@pytest.mark.parametrize("seed", [71, 89])
+def test_automatic_noise_path_preserves_bounded_prms_sweep(monkeypatch, seed):
+    rng = np.random.default_rng(seed)
+    x = rng.normal(size=(96, 3)) @ rng.normal(size=(3, 128))
+    x += 0.3 * rng.normal(size=x.shape)
+    x[rng.random(x.shape) < 0.01] = np.nan
+    x[0, 0] = 0.0
+    real = pf._update_noise_variance
+    calls = []
+
+    def record(*args, **kwargs):
+        result = real(*args, **kwargs)
+        calls.append(result[0].statistics_mode)
+        return result
+
+    monkeypatch.setattr(pf, "_update_noise_variance", record)
+    results = []
+    for mode in ("observed", "auto"):
+        calls.clear()
+        results.append(
+            select_n_components(
+                x,
+                components=[4, 8, 12],
+                xprobe_fraction=0.01,
+                config=SelectionConfig(
+                    compute_explained_variance=False, return_best_model=True
+                ),
+                noise_sufficient_statistics=mode,
+                **{**_options(), "maxiters": 20},
+            )
+        )
+        assert ("complement" in calls) == (mode == "auto")
+    assert results[0][0] == results[1][0]
+    for a, b in zip(results[0][2], results[1][2], strict=True):
+        for key in ("rms", "prms", "cost", "n_iter"):
+            np.testing.assert_allclose(a[key], b[key], rtol=1e-8, atol=1e-10)
+    np.testing.assert_allclose(
+        results[0][3].noise_variance_, results[1][3].noise_variance_, rtol=1e-10
     )

@@ -79,11 +79,51 @@ def _rms_child(argv: list[str]) -> None:
     args.output.write_text(json.dumps([record], indent=2) + "\n")
 
 
+def _align_latent_coordinates(expected, actual):
+    import numpy as np
+    from scipy.linalg import orthogonal_procrustes
+
+    required = {"A", "S", "Av", "Sv", "Mu", "Muv", "V", "Va", "Xrec", "Vr", "Vpred"}
+    if not required.issubset(actual.files):
+        raise ValueError("Latent alignment requires full posterior diagnostics")
+    rotation, _ = orthogonal_procrustes(
+        np.vstack((actual["A"], actual["S"].T)),
+        np.vstack((expected["A"], expected["S"].T)),
+    )
+    identity = np.eye(rotation.shape[0])
+    np.testing.assert_allclose(rotation.T @ rotation, identity, rtol=0, atol=1e-12)
+    aligned = {"A": actual["A"] @ rotation, "S": rotation.T @ actual["S"]}
+    for key in ("Av", "Sv"):
+        if actual[key].ndim == 3:
+            aligned[key] = rotation.T @ actual[key] @ rotation
+    # Mean, priors, noise, reconstruction and both variance outputs are
+    # compared directly by the caller, with the original tolerances.
+    raw_failures = [
+        key
+        for key in aligned
+        if not np.allclose(
+            actual[key], expected[key], rtol=1e-8, atol=1e-10, equal_nan=True
+        )
+    ]
+    return aligned, {
+        "method": "joint orthogonal Procrustes on loading and score means; both covariance stores transformed",
+        "rotation_distance_from_identity": float(np.linalg.norm(rotation - identity)),
+        "raw_component_gate_failures": raw_failures,
+        "orthogonality_error": float(np.linalg.norm(rotation.T @ rotation - identity)),
+    }
+
+
 def _compare_snapshots(
-    reference: Path, candidate: Path, *, tolerant: bool = False
+    reference: Path,
+    candidate: Path,
+    *,
+    tolerant: bool = False,
+    align_latent: bool = False,
 ) -> dict[str, object]:
     import numpy as np
 
+    if align_latent and not tolerant:
+        raise ValueError("Latent alignment requires explicit numerical comparison")
     receipts = []
     for name in sorted(path.name for path in reference.glob("*.npz")):
         expected_path, actual_path = reference / name, candidate / name
@@ -93,12 +133,20 @@ def _compare_snapshots(
         ):
             if set(actual.files) != set(expected.files):
                 raise ValueError("Snapshot fields differ")
+            aligned = {}
+            alignment = None
+            if align_latent:
+                aligned, alignment = _align_latent_coordinates(expected, actual)
             for key in expected.files:
                 if actual[key].dtype != expected[key].dtype:
                     raise ValueError(f"Snapshot dtype differs: {key}")
                 if tolerant and np.issubdtype(actual[key].dtype, np.inexact):
                     np.testing.assert_allclose(
-                        actual[key], expected[key], rtol=1e-8, atol=1e-10, err_msg=key
+                        aligned.get(key, actual[key]),
+                        expected[key],
+                        rtol=1e-8,
+                        atol=1e-10,
+                        err_msg=key,
                     )
                 else:
                     np.testing.assert_array_equal(
@@ -109,6 +157,7 @@ def _compare_snapshots(
                 "arrays": sorted(expected.files),
                 "baseline_sha256": _digest(expected_path),
                 "candidate_sha256": _digest(actual_path),
+                "latent_alignment": alignment,
             })
     if not receipts or sorted(path.name for path in candidate.glob("*.npz")) != [
         receipt["name"] for receipt in receipts
@@ -120,6 +169,7 @@ def _compare_snapshots(
             if tolerant
             else "array equality with equal NaNs"
         ),
+        "latent_alignment": bool(align_latent),
         "snapshots": receipts,
     }
 
@@ -323,6 +373,11 @@ def main() -> None:
                             "auto"
                             if args.suite == "masked-noise" and revision == "candidate"
                             else "observed",
+                            *(
+                                ["--record-cost"]
+                                if args.suite == "masked-noise"
+                                else []
+                            ),
                             "--snapshot-dir",
                             str(snapshot),
                             "--output",
@@ -336,6 +391,7 @@ def main() -> None:
                     snapshots["baseline"],
                     snapshots["candidate"],
                     tolerant=args.suite == "masked-noise",
+                    align_latent=args.suite == "masked-noise",
                 )
                 record = {
                     "case": label,
