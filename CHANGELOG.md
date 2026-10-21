@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Stop enabling relative cost-change and composite stopping in coarse
+  `recommend_config()` profiles, following the registered downstream audit.
+  Priors, probes, caps, angle and RMS controls remain as recommended. Explicit
+  fitter cost rules and independent cost recording remain available. This
+  scoped correction does not certify general posterior stability or migrate
+  pinned scientific policies.
+
 - Fail Octave parity checks on interpreter evaluation errors, retaining exit
   status, stdout and stderr. Interpreter absence remains an explicit local
   skip. The selected CI parity job now propagates failures.

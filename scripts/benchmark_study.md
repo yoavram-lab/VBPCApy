@@ -99,6 +99,29 @@ just ci
 ```
 
 
+## Recommendation cost-stop correction
+
+Recommendations disable relative cost-change/composite stopping. The public
+regression below compares the historical early-cost policy with the corrected
+recommendation and stable longer fits. The library's broader detector
+confirmation remains negative; this correction does not qualify a universal
+posterior-stability detector, tune priors or migrate frozen publication policies.
+
+```bash
+OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+  uv run pytest -q tests/test_recommended_stopping.py tests/test_defaults.py
+just numerical-reference
+just ci
+```
+
+The bounded rank-one regression compares the historical early-cost policy and
+the corrected recommendation on the same 400 × 400 matrix and initialization,
+then checks both against a stopping-disabled fit whose endpoint is stable
+under a larger cap. It is a numerical regression, not a new calibration study.
+All recommendation buckets and priority presets are checked for inactive
+relative-cost stopping. Existing retained-curve replay still uses its recorded
+options and immutable generating identities.
+
 ## Retained-curve policy replay
 
 The [convergence-detector analysis](../analysis/trade_study/CONVERGENCE_DETECTOR.md)

@@ -72,6 +72,15 @@ legacy ordering. Accordingly, :func:`recommend_config` requests
 ``bias_update_order="post_factor"``. The estimator default remains
 ``strict_legacy`` for backward compatibility and MATLAB parity.
 
+**Cost-stop correction:** recommendations no longer enable relative cost-change
+or composite stopping. The public rank-one regression compares the historical
+early-cost policy with the corrected recommendation and a stopping-disabled
+reference whose endpoint is stable under a larger cap. That numerical check
+is not a universal posterior-stability certificate. Angle, RMS and probe
+behavior remain as recommended; the broader library detector study did not
+qualify a universal replacement. Cost traces can still be requested
+independently with ``record_cost=True``.
+
 The returned dict is intended to be splatted into the estimator, e.g.::
 
     from vbpca_py import VBPCA, recommend_config
@@ -90,14 +99,15 @@ __all__ = ["recommend_config"]
 
 Priority = Literal["balanced", "accuracy", "speed"]
 
-# Supported criteria retain the fitted recommendations. The legacy slowing-down
-# name has no event counter in the live fitter and must not be advertised active.
-_SUPPORTED_CRITERIA: dict[str, bool] = {
+# The downstream convergence audit qualifies disabling cost/composite while
+# preserving angle, RMS and probe behavior. Explicit fitter cost rules remain
+# available. Slowing-down has no live event counter.
+_RECOMMENDED_CRITERIA: dict[str, bool] = {
     "angle": True,
     "earlystop": True,
     "rms_plateau": True,
-    "cost": True,
-    "composite": True,
+    "cost": False,
+    "composite": False,
     "slowing_down": False,
 }
 
@@ -163,12 +173,12 @@ _BUCKET_CONFIGS: dict[str, dict[str, Any]] = {
             "earlystop",
             "slowing_down",
         ],
-        "convergence_criteria": _SUPPORTED_CRITERIA,
+        "convergence_criteria": _RECOMMENDED_CRITERIA,
         "maxiters": 500,
         "patience": 3,
         "rmsstop": [50, 0.008774842663257003, 0.007353359727600819],
         "minangle": 6.967374686269853e-05,
-        "cfstop_rel": 0.0006289465573514163,
+        "cfstop_rel": None,
     },
     # Initially tuned at microbiome (n=50, p=300, p/n=6); convergence margin
     # replicated across three held-out wide regimes (#133/#166).
@@ -187,12 +197,12 @@ _BUCKET_CONFIGS: dict[str, dict[str, Any]] = {
             "composite",
             "slowing_down",
         ],
-        "convergence_criteria": _SUPPORTED_CRITERIA,
+        "convergence_criteria": _RECOMMENDED_CRITERIA,
         "maxiters": 1600,
         "patience": 2,
         "rmsstop": [200, 0.003702216843854189, 0.0001644115991233856],
         "minangle": 9.539286230740105e-05,
-        "cfstop_rel": 0.0009148652415765465,
+        "cfstop_rel": None,
     },
     # Initially tuned at ecological (n=3000, p=30, n/p=100); convergence
     # margin replicated across three tall-extreme regimes (#133/#166).
@@ -211,12 +221,12 @@ _BUCKET_CONFIGS: dict[str, dict[str, Any]] = {
             "composite",
             "slowing_down",
         ],
-        "convergence_criteria": _SUPPORTED_CRITERIA,
+        "convergence_criteria": _RECOMMENDED_CRITERIA,
         "maxiters": 800,
         "patience": 2,
         "rmsstop": [200, 0.0037467515336500863, 0.006262340557985221],
         "minangle": 6.35094015773993e-05,
-        "cfstop_rel": 4.53135567319468e-05,
+        "cfstop_rel": None,
     },
     # Initially tuned at cultural (n=1000, p=50, n/p=20); convergence margin
     # replicated across three tall-moderate regimes (#133/#166).
@@ -235,12 +245,12 @@ _BUCKET_CONFIGS: dict[str, dict[str, Any]] = {
             "composite",
             "slowing_down",
         ],
-        "convergence_criteria": _SUPPORTED_CRITERIA,
+        "convergence_criteria": _RECOMMENDED_CRITERIA,
         "maxiters": 400,
         "patience": 2,
         "rmsstop": [200, 0.003702216843854189, 0.0001644115991233856],
         "minangle": 9.539286230740105e-05,
-        "cfstop_rel": 0.0009148652415765465,
+        "cfstop_rel": None,
     },
 }
 
