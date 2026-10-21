@@ -37,7 +37,7 @@ the selection sweep; standalone `VBPCA`/`pca_full` also accept the fit option
 records the mode in its result table. Candidate traces and requested runtime
 reports retain diagnostic-mode provenance.
 
-The [paired sweep benchmark](../../scripts/benchmark_study.md#selection-cost-diagnostics)
+The [paired sweep benchmark](https://github.com/yoavram-lab/VBPCApy/blob/main/scripts/benchmark_study.md#selection-cost-diagnostics)
 compares total sweep time, endpoint metrics and cost-evaluation counts.
 
 VBPCApy provides two strategies for choosing the number of latent components $k$:
