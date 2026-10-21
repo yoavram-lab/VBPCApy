@@ -4,6 +4,12 @@ This work accompanies the backend repairs. Keep numerical changes separate
 from API migration so that their evidence and compatibility costs can be
 reviewed independently. Preserve the frozen pp-eigentest environments.
 
+The maintainer approved completing the full modernization and native estimator
+stack in one 0.5 release on 21 October 2026. The current execution order,
+Pipeline/missingness decisions, migration and release gates are in
+[V05_IMPLEMENTATION_PLAN.md](V05_IMPLEMENTATION_PLAN.md). That plan supersedes
+the earlier suggestion to ship this work through incremental 0.4 patches.
+
 ## Patterns reviewed
 
 - flepimop2 uses dtype-specific array aliases, protocols and validated
