@@ -191,5 +191,10 @@ repeated profiles. The original Rockfish and queued Skipjack comparisons
 retain their registered 0.4.10 baseline and earlier candidate source.
 
 The [integration receipt](cluster/registrations/2026-10-20/post-integration-2026-10-21.json)
-retains source signatures, the comparison digest and local validation. Merge
-remains held for Skipjack qualification and the integrated PR's CI.
+retains source signatures, the comparison digest and local validation. The
+Python-only allocation repair has functional and numerical qualification on
+the workstation and Rockfish, plus the current-main integration check. Merge
+requires green CI on the final revision. Skipjack remains an additional
+target-hardware performance check tracked with hardware profiling work in
+issue #293; its queued status does not establish any result for that host.
+No hardware or statistical defaults change in this repair.
