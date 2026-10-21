@@ -22,6 +22,7 @@ from scipy.linalg import cho_factor, cho_solve
 from ._mean import Matrix, ProbeMatrices, subtract_mu
 from ._missing import _missing_patterns
 from ._monitoring import InitResult, InitShapes, init_params, log_progress
+from ._noise_statistics import NoiseComplement, complement_covariance_sum
 from ._remove_empty import remove_empty_entries
 from ._rms import RmsConfig, compute_rms
 from ._rotate import RotateParams, rotate_to_pca
@@ -188,6 +189,8 @@ class NoiseState:
     n_data: float
     noise_var: float
     sparse_num_cpu: int = 0
+    complement: NoiseComplement | None = None
+    statistics_mode: str = "observed"
 
 
 @dataclass
@@ -2181,6 +2184,7 @@ def _update_noise_variance(
         )
         s_xv += (rms**2) * noise_state.n_data
         updated_state, _ = _finalize_noise_state(noise_state, s_xv, hp_v)
+        updated_state.statistics_mode = "complete"
         return updated_state, s_xv
 
     sv_by_col = _score_covariances_by_column(
@@ -2189,22 +2193,25 @@ def _update_noise_variance(
         n_samples,
     )
 
-    has_loading_covariances = _has_covariances(loading_covariances)
-    if has_loading_covariances and av_stack is None:
+    if _has_covariances(loading_covariances) and av_stack is None:
         av_stack = _covariances_stack_cached(loading_covariances, cov_cache, "av")
 
     sv_arr = np.stack(sv_by_col, axis=0).astype(np.float64, copy=False)
-    s_xv = float(
-        _noise_sxv_sum_ext(
-            ix=np.asarray(ix, dtype=np.int32),
-            jx=np.asarray(jx, dtype=np.int32),
-            loadings=np.asarray(loadings, dtype=np.float64),
-            scores=np.asarray(scores, dtype=np.float64),
-            sv_by_col=sv_arr,
-            loading_covariances=av_stack,
-            num_cpu=int(noise_state.sparse_num_cpu),
+    complement_sum = complement_covariance_sum(noise_state, sv_arr, av_stack)
+    if complement_sum is None:
+        s_xv = float(
+            _noise_sxv_sum_ext(
+                ix=np.asarray(ix, dtype=np.int32),
+                jx=np.asarray(jx, dtype=np.int32),
+                loadings=np.asarray(loadings, dtype=np.float64),
+                scores=np.asarray(scores, dtype=np.float64),
+                sv_by_col=sv_arr,
+                loading_covariances=av_stack,
+                num_cpu=int(noise_state.sparse_num_cpu),
+            )
         )
-    )
+    else:
+        s_xv = complement_sum
 
     if noise_state.mu_variances.size > 0:
         muv_term = float(np.sum(noise_state.mu_variances[ix, 0]).item())
@@ -2212,6 +2219,9 @@ def _update_noise_variance(
 
     s_xv += (rms**2) * noise_state.n_data
     updated_state, _ = _finalize_noise_state(noise_state, s_xv, hp_v)
+    updated_state.statistics_mode = (
+        "complement" if complement_sum is not None else "observed"
+    )
     return updated_state, s_xv
 
 
@@ -2282,6 +2292,7 @@ def _finalize_noise_state(
         n_data=noise_state.n_data,
         noise_var=v_new,
         sparse_num_cpu=noise_state.sparse_num_cpu,
+        complement=noise_state.complement,
     )
     return updated_state, float(s_xv)
 

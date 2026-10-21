@@ -70,6 +70,11 @@ from ._memory import (
     resolve_max_dense_bytes,
 )
 from ._monitoring import InitialMonitoringInputs, InitShapes, _initial_monitoring
+from ._noise_statistics import (
+    NoiseComplement,
+    normalize_noise_statistics,
+    prepare_noise_complement,
+)
 from ._options import _options
 from ._posterior_variance import marginal_variance
 from ._runtime_policy import (
@@ -674,6 +679,53 @@ def _resolve_dense_sufficient_statistics(
     }
 
 
+def _resolve_noise_sufficient_statistics(
+    *,
+    prepared: PreparedProblem,
+    workload: RuntimeWorkloadProfile,
+    opts: MutableMapping[str, object],
+    runtime_report: dict[str, object],
+) -> None:
+    mode = str(opts.get("noise_sufficient_statistics", "auto"))
+    total = prepared.n_features * prepared.n_samples
+    eligible = mode == "complement" or (
+        mode == "auto"
+        and not workload.is_sparse
+        and total >= 4096
+        and workload.n_components >= 8
+    )
+    eligible = eligible and prepared.n_data == prepared.ix_obs.size
+    plan = (
+        prepare_noise_complement(
+            (prepared.n_features, prepared.n_samples),
+            prepared.ix_obs,
+            prepared.jx_obs,
+        )
+        if eligible
+        else None
+    )
+    opts["_noise_complement"] = plan
+    runtime_report["noise_sufficient_statistics"] = {
+        "requested": mode,
+        "planned": "complement" if plan is not None else "observed_or_complete",
+        "missing_coordinates": int(plan.rows.size) if plan is not None else 0,
+        "coordinate_bytes": int(plan.rows.nbytes + plan.columns.nbytes)
+        if plan is not None
+        else 0,
+        "observation_count_matches": prepared.n_data == prepared.ix_obs.size,
+        "preparation_grid_bytes": int(total) if plan is not None else 0,
+        "packing_upper_bound_bytes_per_iteration": 8
+        * workload.n_components**2
+        * (prepared.n_features + prepared.n_samples),
+        "complete_iterations": 0,
+        "complement_iterations": 0,
+        "observed_iterations": 0,
+        "screen": (
+            "conservative roundoff heuristic; observed fallback, not a certified bound"
+        ),
+    }
+
+
 def _resolve_runtime_threads_for_training(
     *,
     prepared: PreparedProblem,
@@ -736,6 +788,9 @@ def _resolve_runtime_threads_for_training(
         workload=workload,
         opts=opts,
         runtime_report=runtime_report,
+    )
+    _resolve_noise_sufficient_statistics(
+        prepared=prepared, workload=workload, opts=opts, runtime_report=runtime_report
     )
     runtime_report["cov_writeback_mode"] = cov_writeback_mode
     runtime_report["bias_update_order"] = str(opts["bias_update_order"])
@@ -1756,6 +1811,7 @@ def _noise_phase(ctx: IterationContext, rms: float) -> tuple[float, float]:
         n_data=float(ctx.prepared.n_data),
         noise_var=float(m.noise_var),
         sparse_num_cpu=cfg.runtime_threads.noise_sxv_sum,
+        complement=cast("NoiseComplement | None", cfg.opts.get("_noise_complement")),
     )
     noise_state, s_xv = _update_noise_variance(
         noise_state,
@@ -1766,6 +1822,11 @@ def _noise_phase(ctx: IterationContext, rms: float) -> tuple[float, float]:
     )
     m.noise_var = float(noise_state.noise_var)
     ctx.training.endpoint_s_xv = float(s_xv)
+    if ctx.training.runtime_report is not None:
+        report = ctx.training.runtime_report.get("noise_sufficient_statistics")
+        if isinstance(report, dict):
+            key = noise_state.statistics_mode + "_iterations"
+            report[key] = _int_opt(report.get(key)) + 1
     ctx.bias_state.noise_var = float(m.noise_var)
     return float(s_xv), time.perf_counter() - noise_start
 
@@ -2403,7 +2464,9 @@ def _validate_convergence_opts(opts: dict[str, object]) -> None:
         }
 
 
-def _build_options(kwargs: Mapping[str, object]) -> dict[str, object]:
+def _build_options(  # noqa: PLR0915 - centralized option normalization
+    kwargs: Mapping[str, object],
+) -> dict[str, object]:
     """Merge user kwargs with defaults using _options (case-insensitive).
 
     Returns:
@@ -2451,6 +2514,7 @@ def _build_options(kwargs: Mapping[str, object]) -> dict[str, object]:
         "runtime_tuning": "safe",
         "runtime_profile": None,
         "dense_sufficient_statistics": "auto",
+        "noise_sufficient_statistics": "auto",
         "masked_batch_size": 0,
         "cov_writeback_mode": None,
         "log_progress_stride": None,
@@ -2516,6 +2580,9 @@ def _build_options(kwargs: Mapping[str, object]) -> dict[str, object]:
         )
         raise ValueError(msg)
     opts["dense_sufficient_statistics"] = dense_statistics
+    opts["noise_sufficient_statistics"] = normalize_noise_statistics(
+        opts.get("noise_sufficient_statistics", "auto")
+    )
 
     solver_raw = str(opts.get("explained_var_solver", "auto"))
     solver = solver_raw.strip().lower()

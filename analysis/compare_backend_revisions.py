@@ -79,9 +79,51 @@ def _rms_child(argv: list[str]) -> None:
     args.output.write_text(json.dumps([record], indent=2) + "\n")
 
 
-def _compare_snapshots(reference: Path, candidate: Path) -> dict[str, object]:
+def _align_latent_coordinates(expected, actual):
+    import numpy as np
+    from scipy.linalg import orthogonal_procrustes
+
+    required = {"A", "S", "Av", "Sv", "Mu", "Muv", "V", "Va", "Xrec", "Vr", "Vpred"}
+    if not required.issubset(actual.files):
+        raise ValueError("Latent alignment requires full posterior diagnostics")
+    rotation, _ = orthogonal_procrustes(
+        np.vstack((actual["A"], actual["S"].T)),
+        np.vstack((expected["A"], expected["S"].T)),
+    )
+    identity = np.eye(rotation.shape[0])
+    np.testing.assert_allclose(rotation.T @ rotation, identity, rtol=0, atol=1e-12)
+    aligned = {"A": actual["A"] @ rotation, "S": rotation.T @ actual["S"]}
+    for key in ("Av", "Sv"):
+        if actual[key].ndim == 3:
+            aligned[key] = rotation.T @ actual[key] @ rotation
+    # Mean, priors, noise, reconstruction and both variance outputs are
+    # compared directly by the caller, with the original tolerances.
+    raw_failures = [
+        key
+        for key in aligned
+        if not np.allclose(
+            actual[key], expected[key], rtol=1e-8, atol=1e-10, equal_nan=True
+        )
+    ]
+    return aligned, {
+        "method": "joint orthogonal Procrustes on loading and score means; both covariance stores transformed",
+        "rotation_distance_from_identity": float(np.linalg.norm(rotation - identity)),
+        "raw_component_gate_failures": raw_failures,
+        "orthogonality_error": float(np.linalg.norm(rotation.T @ rotation - identity)),
+    }
+
+
+def _compare_snapshots(
+    reference: Path,
+    candidate: Path,
+    *,
+    tolerant: bool = False,
+    align_latent: bool = False,
+) -> dict[str, object]:
     import numpy as np
 
+    if align_latent and not tolerant:
+        raise ValueError("Latent alignment requires explicit numerical comparison")
     receipts = []
     for name in sorted(path.name for path in reference.glob("*.npz")):
         expected_path, actual_path = reference / name, candidate / name
@@ -91,21 +133,45 @@ def _compare_snapshots(reference: Path, candidate: Path) -> dict[str, object]:
         ):
             if set(actual.files) != set(expected.files):
                 raise ValueError("Snapshot fields differ")
+            aligned = {}
+            alignment = None
+            if align_latent:
+                aligned, alignment = _align_latent_coordinates(expected, actual)
             for key in expected.files:
                 if actual[key].dtype != expected[key].dtype:
                     raise ValueError(f"Snapshot dtype differs: {key}")
-                np.testing.assert_array_equal(actual[key], expected[key], err_msg=key)
+                if tolerant and np.issubdtype(actual[key].dtype, np.inexact):
+                    np.testing.assert_allclose(
+                        aligned.get(key, actual[key]),
+                        expected[key],
+                        rtol=1e-8,
+                        atol=1e-10,
+                        err_msg=key,
+                    )
+                else:
+                    np.testing.assert_array_equal(
+                        actual[key], expected[key], err_msg=key
+                    )
             receipts.append({
                 "name": name,
                 "arrays": sorted(expected.files),
                 "baseline_sha256": _digest(expected_path),
                 "candidate_sha256": _digest(actual_path),
+                "latent_alignment": alignment,
             })
     if not receipts or sorted(path.name for path in candidate.glob("*.npz")) != [
         receipt["name"] for receipt in receipts
     ]:
         raise ValueError("Snapshot roster differs or is empty")
-    return {"comparison": "array equality with equal NaNs", "snapshots": receipts}
+    return {
+        "comparison": (
+            "float arrays rtol=1e-8 atol=1e-10; exact metadata and dtypes; equal NaNs"
+            if tolerant
+            else "array equality with equal NaNs"
+        ),
+        "latent_alignment": bool(align_latent),
+        "snapshots": receipts,
+    }
 
 
 def _child_environment(root: Path, native: int, blas: int) -> dict[str, str]:
@@ -174,6 +240,9 @@ def main() -> None:
         help="Four distinct physical-core CPU IDs from the current allocation",
     )
     parser.add_argument("--repeats", type=int, default=3)
+    parser.add_argument(
+        "--suite", choices=("allocations", "masked-noise"), default="allocations"
+    )
     args = parser.parse_args()
     if not hasattr(os, "sched_setaffinity"):
         parser.error("Linux CPU affinity control is required")
@@ -215,6 +284,41 @@ def main() -> None:
         ],
         "rms": [],
     }
+    workloads = {
+        "allocations": workloads,
+        "masked-noise": {
+            "noise-q8": [
+                "--features",
+                "1536",
+                "--samples",
+                "512",
+                "--components",
+                "8",
+                "--missing-rate",
+                "0.01",
+            ],
+            "noise-q32": [
+                "--features",
+                "512",
+                "--samples",
+                "256",
+                "--components",
+                "32",
+                "--missing-rate",
+                "0.01",
+            ],
+            "fallback-q32": [
+                "--features",
+                "512",
+                "--samples",
+                "256",
+                "--components",
+                "32",
+                "--missing-rate",
+                "0.30",
+            ],
+        },
+    }[args.suite]
     report = {
         "python": sys.version,
         "platform": platform.platform(),
@@ -222,6 +326,7 @@ def main() -> None:
         "driver_sha256": _digest(driver),
         "benchmark_sha256": _digest(benchmark),
         "roots": {key: str(root) for key, root in roots.items()},
+        "suite": args.suite,
         "pairs": [],
     }
     report_path = args.output / "comparison.json"
@@ -264,6 +369,15 @@ def main() -> None:
                             str(native),
                             "--dense-sufficient-statistics",
                             "complement",
+                            "--noise-sufficient-statistics",
+                            "auto"
+                            if args.suite == "masked-noise" and revision == "candidate"
+                            else "observed",
+                            *(
+                                ["--record-cost"]
+                                if args.suite == "masked-noise"
+                                else []
+                            ),
                             "--snapshot-dir",
                             str(snapshot),
                             "--output",
@@ -274,7 +388,10 @@ def main() -> None:
                         command, roots[revision], directory, profile
                     )
                 fidelity = _compare_snapshots(
-                    snapshots["baseline"], snapshots["candidate"]
+                    snapshots["baseline"],
+                    snapshots["candidate"],
+                    tolerant=args.suite == "masked-noise",
+                    align_latent=args.suite == "masked-noise",
                 )
                 record = {
                     "case": label,

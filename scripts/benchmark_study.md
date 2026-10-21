@@ -294,3 +294,33 @@ uncertainty and cost/RMS histories, including probes and NaN cleanup. They
 also retain explicit strict-legacy coordinate and probe behavior. Record the
 compatibility mode and software pin with sparse benchmarks. This correctness
 repair does not upgrade or rerun a frozen scientific study automatically.
+
+## Masked noise statistics
+
+The full-covariance identity replaces the observed-cell covariance sum with
+complete Gram contractions minus missing-cell terms. It preserves the mean
+residual, bias uncertainty, priors, floors and full off-diagonal cross terms.
+The implementation screens subtraction and falls back to observed accumulation.
+The real-arithmetic proof in `analysis/proof_checks/lean/` establishes finite-sum identities;
+it does not certify the floating-point screen or statistical convergence.
+
+```bash
+uv run pytest -q tests/test_noise_statistics.py tests/test_noise_trajectories.py
+uv run python scripts/check_numerical_reference.py
+uv run python analysis/compare_backend_revisions.py --help
+```
+
+The `masked-noise` comparison suite uses alternating observed/automatic fresh
+processes, records cost traces, and checks full posterior outputs at the same
+`rtol=1e-8, atol=1e-10`. Its optional joint orthogonal alignment transforms both
+factors and both covariance families; physical predictions, means, noise and
+priors are compared directly. Raw factor failures and alignment errors remain
+in the receipt. Rotation tests reject changed uncertainty and physical outputs.
+This accounts for equivalent weak latent coordinates without relaxing tolerances.
+
+On a shared x86 host, 45 paired runs covered ranks 8/32, 1% missingness, a 30%
+missing fallback, and five native/BLAS/affinity combinations. Every pair passed.
+At one native and one BLAS thread the noise phase improved about 15x/33x and
+whole fixed-iteration fits including cost traces about 1.5x/3.6x. These are
+descriptive timings for those matrices, not portable performance thresholds.
+No frozen publication run or software pin is regenerated.

@@ -64,6 +64,29 @@ latency, and include their combined memory use. Process affinity and scheduler
 variables do not necessarily express container CPU quotas; set explicit limits
 when the allocation is otherwise ambiguous.
 
+## Noise sufficient statistics
+
+`pca_opts={"noise_sufficient_statistics": "auto"}` is the estimator default.
+For dense inputs with at least 4,096 cells, rank at least 8, and at most 10%
+missing entries, it computes complete-data covariance contractions and subtracts
+the missing-cell terms. All covariance cross terms are retained. Observed zeros
+belong to the observed set; data values never determine membership. Shared
+covariance patterns are expanded consistently with sample columns.
+
+Choose `"observed"` to retain observed-cell accumulation, or `"complement"` to
+request the rearrangement for eligible dense or sparse observations. Fully
+observed inputs keep their existing complete-data path. Ineligible coordinates,
+nonfinite intermediates, or poorly scaled subtraction use observed accumulation.
+The floating-point screening rule is conservative but is not a certified error
+bound. This changes summation order, so bitwise equality is not promised.
+
+The runtime report records the requested mode, eligibility, missing-coordinate
+storage, temporary preparation grid, covariance packing estimate, and actual
+complement/fallback call counts. Preparation uses one temporary boolean grid;
+the retained plan contains only missing int32 coordinates. Covariance packing
+uses storage proportional to `(features + samples) * rank**2`, outside the
+diagnostic output budget below. Sparse automatic mode retains observed sums.
+
 ## Memory budget
 
 `max_dense_bytes` bounds the combined persistent storage of the three full-shape

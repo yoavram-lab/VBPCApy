@@ -76,9 +76,15 @@ def _parser() -> argparse.ArgumentParser:
         default="auto",
     )
     parser.add_argument("--skip-diagnostics", action="store_true")
+    parser.add_argument("--record-cost", action="store_true")
     parser.add_argument("--sparse", action="store_true")
     parser.add_argument("--skip-bias", action="store_true")
     parser.add_argument("--skip-rotation", action="store_true")
+    parser.add_argument(
+        "--noise-sufficient-statistics",
+        choices=("auto", "observed", "complement"),
+        default="observed",
+    )
     parser.add_argument("--output", type=Path)
     parser.add_argument("--snapshot-dir", type=Path)
     return parser
@@ -175,10 +181,11 @@ def _run_once(
             convergence_criteria=_CONVERGENCE_OFF,
             rotate2pca=not args.skip_rotation,
             bias=not args.skip_bias,
-            record_cost=False,
+            record_cost=args.record_cost,
             return_diagnostics=not args.skip_diagnostics,
             runtime_tuning=args.runtime_tuning,
             dense_sufficient_statistics=args.dense_sufficient_statistics,
+            noise_sufficient_statistics=args.noise_sufficient_statistics,
             runtime_report=True,
             num_cpu=args.threads,
             compat_mode="modern",
@@ -213,6 +220,8 @@ def _run_once(
             f"lc_{key}": np.asarray(result["lc"][key])
             for key in ("rms", "prms", "cost")
         })
+        arrays["returned_iteration"] = np.asarray(result["ReturnedIteration"])
+        arrays["lc_stop"] = np.asarray(result["lc"].get("_stop", []))
         np.savez(args.snapshot_dir / f"fit-{repeat}.npz", **arrays)
 
     return {
@@ -229,7 +238,9 @@ def _run_once(
         "iterations": args.iterations,
         "runtime_tuning": args.runtime_tuning,
         "dense_sufficient_statistics": args.dense_sufficient_statistics,
+        "noise_sufficient_statistics": args.noise_sufficient_statistics,
         "diagnostics": not args.skip_diagnostics,
+        "record_cost": bool(args.record_cost),
         "wall_seconds": wall_seconds,
         "max_rss_before_kib": int(rss_before),
         "max_rss_after_kib": int(rss_after),
