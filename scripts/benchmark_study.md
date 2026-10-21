@@ -384,3 +384,36 @@ compared directly. Timings include imports/startup and therefore need not favor
 more workers on these small fits. Summed process peaks stayed below the 2 GiB
 pilot-screened budget. These measurements qualify the benchmark's execution and
 provenance, not a universal outer-worker or statistical default.
+## Advisory performance CI
+
+The manual **Advisory performance comparison** workflow builds two immutable
+compatible revisions in one numerical environment. Default `ubuntu-latest`
+timings are advisory. A dedicated Linux runner label can be supplied for a
+controlled comparison; the label itself does not establish hardware stability.
+The baseline and candidate are resolved to SHAs before either is built.
+
+```bash
+uv run python scripts/run_performance_comparison.py --baseline BASE_SHA --candidate CANDIDATE_SHA --output /tmp/vbpca-perf-ci
+```
+
+The driver chooses up to four distinct allocated physical cores, records
+unavailable larger profiles, builds both portable native wheels with the same
+interpreter/compiler environment, and runs their deterministic allocation gates.
+It then alternates baseline/candidate order over at least three paired repeats
+for dense C/F layouts, ranks 8/32, missingness, sparse conversions, frozen sparse
+views, diagnostic covariance contractions and safe-tuning startup. Full fit,
+phase, packing/conversion, tuning and memory records accompany source/native
+hashes, software/BLAS identities and requested/effective pools when supported
+by the compared library. Use revisions at or after `16df5d7`.
+
+Numerical and allocation failures fail the workflow. Physical posterior outputs
+and cost traces retain required comparisons; equivalent weak latent coordinates
+use the existing orthogonal posterior qualifier with raw failures retained.
+Timing does not fail the workflow. Reports include paired speed ratios, their
+range, median and median absolute deviation. An advisory signal needs a ratio
+effect above both 5% and twice its MAD; that is a descriptive triage rule, not a
+calibrated statistical test or an adopted hard timing threshold. A controlled
+runner needs repeated baseline variability measurements before a hard gate is
+chosen. Normal CI retains numerical, output-memory and allocation contracts.
+Generated builds/reports stay outside tracked source; workflow artifacts retain
+provenance and failed-comparison snapshots for 30 days.

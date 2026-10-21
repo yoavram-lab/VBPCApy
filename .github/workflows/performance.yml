@@ -1,0 +1,55 @@
+name: Advisory performance comparison
+
+on:
+  workflow_dispatch:
+    inputs:
+      baseline:
+        description: Compatible baseline ref (resolved and recorded as an immutable SHA)
+        required: true
+        default: main
+      candidate:
+        description: Compatible candidate ref (empty uses this workflow revision)
+        default: ''
+      runner:
+        description: Linux runner label; ubuntu-latest is shared and advisory
+        default: ubuntu-latest
+
+permissions:
+  contents: read
+
+jobs:
+  compare:
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 45
+    env:
+      BASELINE_REF: ${{ inputs.baseline }}
+      CANDIDATE_REF: ${{ inputs.candidate || github.sha }}
+      OPENBLAS_NUM_THREADS: '1'
+      OMP_NUM_THREADS: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v4
+      - name: Install portable native build dependencies
+        run: sudo apt-get update && sudo apt-get install -y libeigen3-dev
+      - name: Install one numerical environment for both revisions
+        run: uv sync --python 3.12 --extra dev --extra plot
+      - name: Build, check allocations and compare immutable revisions
+        run: >-
+          uv run python scripts/run_performance_comparison.py
+          --baseline "$BASELINE_REF" --candidate "$CANDIDATE_REF"
+          --repeats 3 --output "$RUNNER_TEMP/vbpca-performance"
+      - name: Upload provenance, build logs and advisory measurements
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: performance-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/vbpca-performance/*.json
+            ${{ runner.temp }}/vbpca-performance/*.log
+            ${{ runner.temp }}/vbpca-performance/comparison/**/profile.json
+            ${{ runner.temp }}/vbpca-performance/comparison/**/process.log
+            ${{ runner.temp }}/vbpca-performance/comparison/**/snapshots/*.npz
+            ${{ runner.temp }}/vbpca-performance/comparison/comparison.json
+          retention-days: 30
