@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING, Any, SupportsIndex, SupportsInt, cast
 if TYPE_CHECKING:
     from collections.abc import MutableMapping, Sequence
 
+    from .results import LearningCurve, NumericTraceKey
+
 import time
 
 import numpy as np
@@ -95,7 +97,7 @@ class ConvergenceState:
     s_xv: float
     n_data: float
     time_start: float
-    lc: dict[str, list[float]]
+    lc: LearningCurve
     loadings_old: np.ndarray
     dsph: dict[str, object]
 
@@ -429,7 +431,7 @@ def _apply_criterion_patience(
     checks: Mapping[str, tuple[str | None, str | None]],
     order: Sequence[str],
     enabled: Mapping[str, bool],
-    lc: Mapping[str, Sequence[float]],
+    lc: LearningCurve,
     patience: int,
 ) -> tuple[str, str]:
     """Update per-criterion streaks and return the first eligible stop.
@@ -443,16 +445,13 @@ def _apply_criterion_patience(
         ``(reason_tag, message)`` for the first ordered criterion whose own
         streak reaches ``patience``, otherwise two empty strings.
     """
-    mutable_lc = cast("dict[str, Any]", lc)
-    counts_obj = mutable_lc.setdefault("_criterion_patience", {})
-    counts = cast("dict[str, float]", counts_obj)
+    counts = lc.setdefault("_criterion_patience", {})
     ordered = set(order)
 
     rms_size = len(lc.get("rms", []))
     for name, (tag, msg) in checks.items():
-        history_key = f"criterion_satisfied_{name}"
-        history_obj = mutable_lc.setdefault(history_key, [0.0] * max(0, rms_size - 1))
-        history = cast("list[float]", history_obj)
+        history_key = cast("NumericTraceKey", f"criterion_satisfied_{name}")
+        history = lc.setdefault(history_key, [0.0] * max(0, rms_size - 1))
         history.append(float(bool(msg)))
 
         eligible = name in ordered and enabled.get(name, True)
@@ -475,17 +474,16 @@ def _apply_criterion_patience(
 
 
 def _append_cost_diagnostics(
-    lc: Mapping[str, Sequence[float]],
+    lc: LearningCurve,
     checks: Mapping[str, str | None],
 ) -> None:
     """Append independent raw-satisfaction traces for each cost rule."""
-    mutable_lc = cast("dict[str, Any]", lc)
     history_size = max(0, len(lc.get("rms", [])) - 1)
     for tag, message in checks.items():
-        history_obj = mutable_lc.setdefault(
-            f"criterion_satisfied_{tag}", [0.0] * history_size
+        history_obj = lc.setdefault(
+            cast("NumericTraceKey", f"criterion_satisfied_{tag}"), [0.0] * history_size
         )
-        cast("list[float]", history_obj).append(float(bool(message)))
+        history_obj.append(float(bool(message)))
 
 
 # ---------------------------------------------------------------------------
@@ -495,7 +493,7 @@ def _append_cost_diagnostics(
 
 def convergence_check(
     opts: Mapping[str, Any],
-    lc: Mapping[str, Sequence[float]],
+    lc: LearningCurve,
     angle_a: float,
     sd_iter: int | None = None,
 ) -> str:
@@ -575,22 +573,19 @@ def convergence_check(
     # criterion during broad-prior warmup; it promotes the tag only when the
     # stop is actually accepted.
     if candidate and reason_tag:
-        lc["_candidate_convergence_reason"] = reason_tag  # type: ignore[index]
+        lc["_candidate_convergence_reason"] = reason_tag
     else:
-        lc.pop("_candidate_convergence_reason", None)  # type: ignore[attr-defined]
+        lc.pop("_candidate_convergence_reason", None)
 
     return candidate
 
 
-def _append_slowing_availability(
-    lc: Mapping[str, Sequence[float]], sd_iter: int | None
-) -> None:
+def _append_slowing_availability(lc: LearningCurve, sd_iter: int | None) -> None:
     """Keep a missing live event stream distinct from an unsatisfied criterion."""
-    mutable_lc = cast("dict[str, Any]", lc)
-    available = mutable_lc.setdefault(
+    available = lc.setdefault(
         "criterion_available_slowing_down", [0.0] * max(0, len(lc.get("rms", [])) - 1)
     )
-    cast("list[float]", available).append(float(sd_iter is not None))
+    available.append(float(sd_iter is not None))
 
 
 # ---------------------------------------------------------------------------
@@ -602,7 +597,7 @@ def _log_and_check_convergence(
     state: ConvergenceState,
     rms: float,
     prms: float,
-) -> tuple[dict[str, list[float]], float, str, np.ndarray]:
+) -> tuple[LearningCurve, float, str, np.ndarray]:
     """Update learning curves, compute cost (if requested), and check convergence.
 
     Returns:
