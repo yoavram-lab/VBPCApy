@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   scoped correction does not certify general posterior stability or migrate
   pinned scientific policies.
 
+- Fail Octave parity checks on interpreter evaluation errors, retaining exit
+  status, stdout and stderr. Interpreter absence remains an explicit local
+  skip. The selected CI parity job now propagates failures.
+
 ## [0.4.12] - 2026-10-21
 
 ### Fixed

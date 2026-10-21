@@ -27,3 +27,8 @@ Run the required Python numerical gate with `just numerical-reference`.
 With Octave and the optional Python bridge installed, run
 `uv run pytest -q -m octave`. The reference algorithm smoke tests cover VB,
 PPCA and MAP, both covariance-pattern settings and both rotation settings.
+Interpreter absence skips the local interpreter-dependent tests. Once Octave
+is installed, an evaluation failure fails the check and retains its status,
+stdout and stderr. CI installs Octave when the path filter selects this job;
+the job's failures are no longer advisory. Helper-control regressions also run
+in the standard Python suite without requiring Octave.

@@ -31,12 +31,12 @@ does not establish posterior stability.
 ## Recommended cost-stop correction
 
 `recommend_config()` no longer enables relative cost-change or composite
-stopping in its coarse shape buckets. A
-[registered downstream audit](https://github.com/yoavram-lab/pp-eigentest/blob/1668bad5d207b4e0b9a8f4ed47a237db1290edb5/analysis/eigentest_study/CONVERGENCE_AUDIT_RESULTS.md)
-completed 8,800 records. The original policy failed agreement gates in every
-audited group; disabling cost/composite passed each group, with rank agreement
-at least 99.75%, capacity agreement at least 99%, and no changed rank-zero
-classifications. Its separate variance-order confirmation retained the choice.
+stopping in its coarse shape buckets. In the public
+[rank-one regression](https://github.com/yoavram-lab/VBPCApy/blob/main/tests/test_recommended_stopping.py),
+the historical relative-cost rule stops before the reconstruction is stable.
+The corrected recommendation is compared with a stopping-disabled reference
+whose endpoint is checked under a larger iteration cap. This is a bounded
+numerical regression, not a calibration study or a general convergence proof.
 The fitter still supports explicitly requested cost criteria, and
 `record_cost=True` records cost without enabling a cost stop.
 

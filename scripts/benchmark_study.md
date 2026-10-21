@@ -101,14 +101,11 @@ just ci
 
 ## Recommendation cost-stop correction
 
-Recommendations disable relative cost-change/composite stopping following the
-[completed registered audit](https://github.com/yoavram-lab/pp-eigentest/blob/1668bad5d207b4e0b9a8f4ed47a237db1290edb5/analysis/eigentest_study/CONVERGENCE_AUDIT_RESULTS.md).
-It compared 8,800 records and qualified the scoped `production_no_cost` policy;
-the original policy failed. The separate 1,800-record variance-order
-confirmation retained that choice. Neither result qualifies a universal
-posterior-stability detector, and the library's broader detector confirmation
-remains negative. This change does not disable RMS/angle/probe rules, tune
-priors or change frozen publication software/policies.
+Recommendations disable relative cost-change/composite stopping. The public
+regression below compares the historical early-cost policy with the corrected
+recommendation and stable longer fits. The library's broader detector
+confirmation remains negative; this correction does not qualify a universal
+posterior-stability detector, tune priors or migrate frozen publication policies.
 
 ```bash
 OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 \
@@ -221,6 +218,25 @@ inside the score/loading and total-fit measurements. Add `--skip-bias` to
 exercise reuse across iterations; remove `--skip-rotation` to include rotation
 and its invalidation. The defaults of existing dense profiling commands are
 unchanged. Preserve snapshots and identities for each paired revision run.
+
+## Selection cost diagnostics
+
+```bash
+OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+  uv run --extra dev python scripts/benchmark_selection_cost.py \
+  --repeats 5 --output /tmp/vbpca-selection-cost.json
+uv run pytest -q tests/test_endpoint_cost.py
+just numerical-reference
+```
+
+This paired probe measures complete PRMS capacity sweeps with identical probes,
+seeds and fixed iterations, including a mean-only candidate. It alternates
+trace/endpoint order after warmup, compares selected capacity and endpoint
+metrics exactly, and records full sweep times, cost-call counts, versions,
+affinity and BLAS pools. Full cost traces remain the default and are required
+for cost-based selection, cost-consuming stopping and requested replay evidence.
+The endpoint mode is an explicit diagnostic option, rather than a change to
+stopping criteria, scientific defaults or frozen publication profiles.
 
 ## Source-revision memory and thread profiles
 

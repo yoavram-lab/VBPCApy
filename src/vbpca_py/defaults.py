@@ -72,15 +72,14 @@ legacy ordering. Accordingly, :func:`recommend_config` requests
 ``bias_update_order="post_factor"``. The estimator default remains
 ``strict_legacy`` for backward compatibility and MATLAB parity.
 
-**Cost-stop correction (#247):** recommendations no longer enable relative
-cost-change or composite stopping. A registered pp-eigentest audit of 8,800
-records found that the original policy failed downstream agreement gates;
-disabling cost/composite passed all audited groups. A separate 1,800-record
-variance-order confirmation retained that stopping choice. Those are scoped
-capacity/rank-agreement results, rather than a universal posterior-stability
-certificate. Angle, RMS and probe behavior remain as recommended; the broader
-library detector study (#186) did not qualify a universal replacement. Cost
-traces can still be requested independently with ``record_cost=True``.
+**Cost-stop correction:** recommendations no longer enable relative cost-change
+or composite stopping. The public rank-one regression compares the historical
+early-cost policy with the corrected recommendation and a stopping-disabled
+reference whose endpoint is stable under a larger cap. That numerical check
+is not a universal posterior-stability certificate. Angle, RMS and probe
+behavior remain as recommended; the broader library detector study did not
+qualify a universal replacement. Cost traces can still be requested
+independently with ``record_cost=True``.
 
 The returned dict is intended to be splatted into the estimator, e.g.::
 
