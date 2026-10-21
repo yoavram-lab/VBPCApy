@@ -324,3 +324,31 @@ At one native and one BLAS thread the noise phase improved about 15x/33x and
 whole fixed-iteration fits including cost traces about 1.5x/3.6x. These are
 descriptive timings for those matrices, not portable performance thresholds.
 No frozen publication run or software pin is regenerated.
+
+## Sequential capacity qualification
+
+```bash
+OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 uv run python analysis/benchmark_capacity_prefix.py --output /tmp/vbpca-capacity-prefix.json
+uv run pytest -q tests/test_variable_cell_cv.py
+```
+
+The script registers three fixed seeds and three Gaussian fixtures (null,
+strong rank one and weak rank two), entrywise folds, capacities 0–6, fixed
+80-iteration fitting and independent held-out predictions before execution.
+It compares full first minimum, sequential first minimum and full one-SE,
+records the full curves, positive/rank-zero fit counts, CPU/wall time, input
+hashes and predictive 95% interval coverage. Candidate prefixes must match
+full first-minimum selection; later-dip and exhausted-grid unit examples
+separately demonstrate why the target differs from global one-SE. The
+fixture measures capacity and predictive calibration. It explicitly does not
+estimate a downstream significance rank or qualify a rank-test calibration.
+
+The October 21 run agreed on first-minimum capacity in all nine fixtures.
+Sequential positive-rank fit counts were 3–6 versus 18 for a full sweep, with
+about 0.26–0.76 s versus 1.87–2.31 s on this shared host. Independent predictive
+95% interval coverage ranged about 0.927–0.955. These nine small fixtures do
+not establish general coverage, type-I error or signal-rank performance; the
+weak rank-two fixtures selected capacity one, and one null fixture selected
+capacity one. All one-SE capacities happened to agree in these fixtures;
+the explicit later-dip test supplies the counterexample to universal agreement.
+The default remains the full sweep, and frozen publication policies are unchanged.

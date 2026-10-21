@@ -1543,12 +1543,17 @@ def cross_validate_components(
 ) -> tuple[int, list[dict[str, object]]]:
     """K-fold cross-validated model selection for VBPCA.
 
-    Partitions observed entries into *n_splits* folds.  For each fold
-    the held-out entries become an xprobe set.  All candidate *k* values
-    are evaluated on every fold via ``select_n_components``.  The final
-    *k* is chosen by the **1-SE rule**: the smallest *k* whose mean
-    metric across folds is within one standard error of the global
-    minimum.
+    Partitions observed entries into *n_splits* folds. By default, every
+    candidate is fitted on every fold and the one-standard-error rule selects
+    the smallest capacity within one standard error of the global minimum.
+    ``CVConfig(selection_rule="first_minimum", early_stop=True)`` instead
+    evaluates candidates sequentially across all folds and stops after the
+    first successor whose improvement is no greater than that successor's
+    standard error. Its result is the preceding capacity; if no successor
+    confirms a stop, it evaluates the full grid and returns its last capacity.
+    A later dip can change the global minimum and one-SE decision. This prefix
+    rule therefore targets first minimum and does not certify global one-SE
+    equivalence, a downstream signal rank or calibrated significance tests.
 
     All tracked metrics (rms, prms, cost) and convergence diagnostics are
     recorded per fold regardless of which metric is used for selection, so

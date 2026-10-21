@@ -293,3 +293,43 @@ installed-package example in `scripts/example_raw_cell_cv.py`.
 | **Speed** | Faster — one fit per $k$ | Slower — $k \times \text{n\_splits}$ fits |
 | **Reliability** | Good with probe set | More robust variance estimate |
 | **Best for** | Quick exploration, large data | Repeated-fold comparisons and uncertainty summaries |
+
+
+## Optional sequential first minimum
+
+`CVConfig(selection_rule="first_minimum", early_stop=True)` evaluates each
+capacity on every fold before deciding whether to continue. At adjacent
+capacities `k` and `k_next`, it stops when
+`mean_next >= mean_current - se_next`, and selects `k`. A flat step or an
+improvement smaller than the successor's standard error can therefore confirm
+the stop; the name does not imply a strict mathematical local minimum. The
+returned curve includes the confirming successor. If every step improves by
+more than this threshold, the complete grid is evaluated and its last capacity
+is selected. A single-candidate grid is also a complete sweep.
+
+```python
+from vbpca_py import CVConfig, cross_validate_components
+
+k, prefix = cross_validate_components(
+    X, components=range(9),
+    config=CVConfig(n_splits=3, seed=248,
+                    selection_rule="first_minimum", early_stop=True),
+    maxiters=300, runtime_tuning="off", num_cpu=1,
+)
+print(k, [row["k"] for row in prefix])
+```
+
+For example, means `[1.0, 0.8, 0.81, 0.6]` with standard errors `0.01` give
+first minimum 1 after evaluating capacities 0–2. Full-grid minimum and one-SE
+both select 3. A prefix cannot rule out that later improvement. Requesting
+`early_stop=True` with `selection_rule="one_se"` or `"minimum"` raises
+`ValueError`. The default remains a full one-SE sweep.
+
+Capacity is the dimension fitted during prediction. A downstream significance
+procedure can return a different signal rank and requires its own calibration.
+Agreement of the first-minimum prefixes does not establish that calibration,
+and timing measurements do not establish an adoption policy. Retain full
+sweeps and fixed fitting settings when qualifying a particular application.
+The [bounded comparison procedure](https://github.com/yoavram-lab/VBPCApy/blob/main/scripts/benchmark_study.md#sequential-capacity-qualification)
+records evaluated capacities, fit count, wall/CPU cost and independent held-out
+predictive diagnostics without changing the selection default.
