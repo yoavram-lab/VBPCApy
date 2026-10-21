@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Return a valid empty eigensystem for rank-zero native rotation instead of
+  calling an unsupported Eigen decomposition and crashing the Python process.
+  Retain shape and normalizer validation and positive-rank calculations.
+
 - Stop enabling relative cost-change and composite stopping in coarse
   `recommend_config()` profiles, following the registered downstream audit.
   Priors, probes, caps, angle and RMS controls remain as recommended. Explicit
