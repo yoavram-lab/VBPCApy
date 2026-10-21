@@ -36,8 +36,10 @@ For an observed feature set O, VB score precision is
 PPCA/MAP use their supported point-estimate representation. A wholly missing
 new row has zero score mean and prior score covariance. Training on an empty
 or entirely unobserved table fails clearly. Individually unobserved training
-features require an explicit policy before projection is merged; preserve
-feature count and never invent identified loadings for them.
+features raise a clear error at the modern fit boundary; a caller must supply
+an explicit feature-selection policy. Preserve observed constant columns and
+all-missing sample rows. The legacy adapter retains its documented historical
+handling. Do not invent identified loadings for unobserved features.
 
 The plug-in Gaussian score uses the marginal covariance of observed features,
 `A_O A_O.T + V I`, with a stable solve/log determinant. Empty observed subsets
@@ -153,14 +155,14 @@ flowchart TD
 | Contract and dependency map | Current source and official API review | This document; #180, #23, #178 |
 | Typed categorical options | Contract map and accepted-value inventory | #91; ordinary-string, validation, serialization and native-boundary regressions |
 | Structured solver configuration | Typed values and parameter inventory | #92; explicit constructor discovery, no broad option-path Any, compatible low-level calls |
-| Helper types and records | Config boundaries and baseline numerical tests | Dedicated helper-modernization issue; dtype/shape/ownership, bounded refactoring, independent numerical references |
+| Helper types and records | Config boundaries and baseline numerical tests | #318; dtype/shape/ownership, bounded refactoring, independent numerical references |
 | Native estimators and legacy adapter | Orientation, config and migration decisions | #23/#36/#38; real bases, no var-keyword public constructor, no constructor mutation |
 | Projection, inverse and scorer | Fitted model representation and masks | #18; independent algebra, no mutation/refitting, q=0, missing/sparse/new-data cases |
 | Preprocessing and Pipeline masks | Native bases, canonical missingness | #178; no leakage, block expansion and CV row slicing; all exported transformers included |
 | Tags, names and containers | Actual estimator/preprocessor behavior | #37/#179; focused behavior tests and dense output wrapping |
 | Selection helpers | Modern estimator and orientation adapters | Existing CV contracts plus #39; preserve cellwise versus rowwise targets |
 | Composition gates | All runtime contracts above | #39; check_estimator, clone, Pipeline, CV, GridSearchCV and caching |
-| Examples and migration | Stable public contracts | #14/#19/#25 and executable-example issue; source-collected examples and strict docs |
+| Examples and migration | Stable public contracts | #14/#19/#25 and #319; source-collected examples and strict docs |
 | Release | All required gates and complete Unreleased notes | #180/#314; 0.5 only, proper production workflow and PyPI verification |
 
 The contract document precedes implementation. Each reviewable code change
