@@ -1,0 +1,25 @@
+{
+  "date": "2026-10-21",
+  "source_revision": "836c8d43d2e9e1aeecf2eab95e635e2662ed242b",
+  "tests": {
+    "tests": 1410,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "coverage_percent": 94.51,
+  "full_test_junit_sha256": "ec2bfdf11bfc1170d83f5e4e4842f3e8c7795515475590dbf2d7952152d5816b",
+  "required_numerical_references": 48,
+  "new_guard_and_docstring_cases": 21,
+  "baseline_early_guard_regressions": {
+    "failed_as_expected": 4,
+    "baseline_source": "aaaaa26b4fafc96cb95f275bde420bef3bc863df"
+  },
+  "ruff_format_lint": "passed",
+  "strict_source_and_consumer_typing": "passed; current development dependencies and pinned NumPy 2.4 linux/darwin/win32",
+  "strict_documentation_build": "passed",
+  "full_suite_note": "The final follow-up changed only delegated-exception prose in the public docstring for the lint rule; the 21 relevant tests/doctests were rerun and passed. Fitting implementation unchanged.",
+  "native_code_changed": false,
+  "statistical_policy_changed": false,
+  "frozen_environments_changed": false
+}
