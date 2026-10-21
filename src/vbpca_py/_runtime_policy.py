@@ -25,6 +25,7 @@ from ._runtime_profiles import (
     load_profile,
     save_profile_rule,
 )
+from .options import AccessorMode, CovarianceWriteback, RuntimeTuning
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -330,7 +331,7 @@ def normalize_runtime_tuning_mode(mode: object | None) -> str:
     if mode is None:
         return "off"
     normalized = str(mode).strip().lower()
-    if normalized in {"off", "safe", "aggressive"}:
+    if normalized in {item.value for item in RuntimeTuning}:
         return normalized
     return "off"
 
@@ -347,7 +348,7 @@ def normalize_cov_writeback_mode(mode: object | None) -> str:
     if mode is None:
         return "auto"
     normalized = str(mode).strip().lower()
-    if normalized in {"python", "bulk", "kernel", "auto"}:
+    if normalized in {item.value for item in CovarianceWriteback}:
         return normalized
     return "auto"
 
@@ -379,7 +380,7 @@ def normalize_accessor_mode(mode: object | None) -> str:
     if mode is None:
         return "auto"
     normalized = str(mode).strip().lower()
-    if normalized in {"legacy", "buffered", "auto"}:
+    if normalized in {item.value for item in AccessorMode}:
         return normalized
     return "auto"
 
