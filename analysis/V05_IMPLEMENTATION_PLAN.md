@@ -94,6 +94,10 @@ for default estimator scoring does not establish arbitrary scorer support.
 State which paths have been tested; arbitrary third-party
 transformers do not acquire a missingness contract automatically.
 
+The complete [51-option inventory](V05_OPTION_INVENTORY.md) records requested
+defaults, accepted categorical values, legacy aliases/fallbacks and the
+configuration/data/runtime split before typed configuration is implemented.
+
 ## Constructor, typing and ownership particulars
 
 - Inventory every accepted low-level option, alias and value before replacing
