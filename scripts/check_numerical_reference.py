@@ -14,6 +14,7 @@ CHECKS = (
     "tests/test_endpoint_cost.py",
     "tests/test_noise_statistics.py",
     "tests/test_noise_trajectories.py",
+    "tests/test_runtime_evidence.py",
     "tests/test_mean.py::test_subtract_mu_dense_with_masking",
     "tests/test_cost.py::test_cost_basic_dense_no_priors",
     "tests/test_rotate.py::test_rotate_python_data_space_invariance_update_bias_true",

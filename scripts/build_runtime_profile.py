@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Build or extend a VBPCA runtime profile JSON.
 
-This helper creates a schema_version=1 runtime profile with optional:
+This helper creates a schema_version=2 runtime profile with optional:
 - default thread overrides, and
 - workload-matching rules derived from either explicit thresholds or a
   reference row in a profiler CSV produced by ``scripts/profile_core_vbpca.py``.
@@ -14,7 +14,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-import pandas as pd
+from vbpca_py._runtime_profiles import atomic_write_profile, load_profile, new_profile
 
 _THREAD_KEYS = (
     "num_cpu_score_update",
@@ -37,28 +37,13 @@ def _parse_nonnegative(value: object | None) -> int | None:
 
 
 def _load_profile(path: Path | None) -> dict[str, Any]:
-    if path is None:
-        return {"schema_version": 1, "default_threads": {}, "workload_rules": []}
-
-    if not path.exists():
-        return {"schema_version": 1, "default_threads": {}, "workload_rules": []}
-
-    data = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(data, dict):
-        msg = f"Profile root must be a JSON object: {path}"
+    if path is None or not path.exists():
+        return new_profile()
+    data = load_profile(path)
+    if data is None:
+        msg = f"Profile schema/environment is stale or incompatible: {path}"
         raise ValueError(msg)
-
-    out = dict(data)
-    out.setdefault("schema_version", 1)
-    out.setdefault("default_threads", {})
-    out.setdefault("workload_rules", [])
-
-    if not isinstance(out["default_threads"], dict):
-        out["default_threads"] = {}
-    if not isinstance(out["workload_rules"], list):
-        out["workload_rules"] = []
-
-    return out
+    return data
 
 
 def _thread_map_from_args(args: argparse.Namespace, prefix: str) -> dict[str, int]:
@@ -79,6 +64,8 @@ def _derive_match_from_csv(args: argparse.Namespace) -> dict[str, object] | None
     if args.case_name == "":
         msg = "--case-name is required when --case-csv is provided."
         raise ValueError(msg)
+
+    import pandas as pd
 
     frame = pd.read_csv(args.case_csv)
     subset = frame.loc[frame["case"] == args.case_name]
@@ -207,15 +194,12 @@ def main() -> None:
         rules.append(new_rule)
         profile["workload_rules"] = rules
 
-    profile["schema_version"] = 1
-
     serialized = json.dumps(profile, indent=2, sort_keys=True)
     if args.dry_run:
         print(serialized)
         return
 
-    args.out.parent.mkdir(parents=True, exist_ok=True)
-    args.out.write_text(serialized + "\n", encoding="utf-8")
+    atomic_write_profile(args.out, profile)
     print(f"Wrote runtime profile: {args.out}")
 
 

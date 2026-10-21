@@ -352,3 +352,35 @@ weak rank-two fixtures selected capacity one, and one null fixture selected
 capacity one. All one-SE capacities happened to agree in these fixtures;
 the explicit later-dip test supplies the counterexample to universal agreement.
 The default remains the full sweep, and frozen publication policies are unchanged.
+## Representative runtime probes and allocation throughput
+
+```bash
+uv run pytest -q tests/test_runtime_evidence.py tests/test_runtime_policy.py tests/test_runtime_policy_dense.py tests/test_cov_writeback_autotune.py
+uv run python scripts/check_numerical_reference.py
+# Supply distinct physical cores from the actual process allocation.
+uv run python analysis/benchmark_allocation_throughput.py --cpus 0 2 4 5 --components 8 --output /tmp/vbpca-allocation-q8
+uv run python analysis/benchmark_allocation_throughput.py --cpus 0 2 4 5 --components 32 --output /tmp/vbpca-allocation-q32
+```
+
+The allocation experiment compares 1/2/4 workers and reverses configuration
+order between repeats, with equal total fits, data and initializations. Kernel
+statistics, priors, stopping rules and target rank remain fixed; generated
+profiles/snapshots stay outside tracked source. BLAS uses one thread per worker.
+The pilot screens a 2 GiB combined-worker budget by default; each result records
+summed per-process peak RSS, fit CPU time, startup-inclusive wall time, full
+posterior numerical receipts and source/native/BLAS/allocation provenance.
+This is an advisory shared-host measurement. Rebenchmark on the intended compute
+node and allocation rather than inferring universal thread or worker defaults.
+Portable package build flags and frozen publication pins remain unchanged.
+
+
+The October 21 shared-host allocation run used four allocated physical cores,
+three alternating-order repeats per configuration and four completed fits per
+batch (512 features, 256 samples, four fixed iterations). All posterior
+comparisons passed at ranks 8 and 32. Weak latent coordinates are jointly
+orthogonally aligned with both covariance families, retaining raw failures in
+the receipt; means, priors, noise and full prediction/variance outputs are
+compared directly. Timings include imports/startup and therefore need not favor
+more workers on these small fits. Summed process peaks stayed below the 2 GiB
+pilot-screened budget. These measurements qualify the benchmark's execution and
+provenance, not a universal outer-worker or statistical default.

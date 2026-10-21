@@ -140,6 +140,8 @@ static py::dict errpca_pt(
 }
 
 PYBIND11_MODULE(errpca_pt, m) {
+    m.def("effective_thread_count", [](int requested, int n_items) { return resolve_num_threads(requested, n_items); });
+
     m.doc() = "errpca_pt: CSR-structured sparse reconstruction errors (X - A*S) "
               "preserving the sparsity pattern of X (MATLAB-compatible).";
 

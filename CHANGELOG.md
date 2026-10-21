@@ -27,6 +27,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fail Octave parity checks on interpreter evaluation errors, retaining exit
   status, stdout and stderr. Interpreter absence remains an explicit local
   skip. The selected CI parity job now propagates failures.
+### Runtime
+
+- Measure actual covariance/layout/statistics workloads with bounded cold/warm
+  probes and retain chosen counts through subsequent tuning stages. Deduplicate
+  covariance-writeback aliases and skip unrelated shared-pattern probes.
+- Version opt-in execution profiles with machine/allocation/build/BLAS and
+  workload fingerprints, atomic replacement, bounded concurrent merge locks
+  and rule deduplication. Reject incompatible profiles without overwriting them.
+- Report requested/effective native pools independently of loaded BLAS pools;
+  include discoverable cgroup quotas in allocation caps.
 
 ## [0.4.12] - 2026-10-21
 

@@ -31,7 +31,7 @@ model = VBPCA(n_components=5, num_cpu=8)
 
 Automatic tuning is capped by the CPUs available to the process. On Linux,
 VBPCApy respects process affinity; it also recognizes `SLURM_CPUS_PER_TASK`,
-`PBS_NP`, and `NSLOTS`. Set `VBPCA_NUM_THREADS=$SLURM_CPUS_PER_TASK` in Slurm
+`PBS_NP`, and `NSLOTS`, plus discoverable Linux cgroup v1/v2 CPU quotas. Set `VBPCA_NUM_THREADS=$SLURM_CPUS_PER_TASK` in Slurm
 launchers as an explicit native-kernel safeguard.
 
 Or use environment variables for per-kernel control:
@@ -60,9 +60,9 @@ OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 OMP_NUM_THREADS=1 \
 This is a starting configuration, not a recommendation for every matrix.
 Compare native and BLAS thread counts separately. When running several fits
 concurrently, measure completed fits per allocation as well as single-fit
-latency, and include their combined memory use. Process affinity and scheduler
-variables do not necessarily express container CPU quotas; set explicit limits
-when the allocation is otherwise ambiguous.
+latency, and include their combined memory use. Fractional cgroup quotas are
+rounded down to whole workers, with at least one worker. Unreadable quota files
+add no cap; explicitly limit threads when allocation metadata is unavailable.
 
 ## Noise sufficient statistics
 
@@ -150,18 +150,54 @@ power-of-two rank ranges by default. This reduces repeated tuning during
 independently tuned comparison. Each trace entry records whether its settings
 were measured or reused and the time spent tuning.
 
-Treat the report as evidence about the probe, not a guarantee of optimal
-execution. The current dense thread probe uses C-order arrays without
-posterior covariance output and does not benchmark the complement path.
-Compare complete fixed-iteration fits when the actual workload differs.
-Native kernels can clamp requested counts to the available allocation even
-when the report retains the requested count. The tuning time budget is checked
-between calls and cannot interrupt a slow individual kernel call.
+Thread probes use the initial fit's covariance inputs and output flags, retain
+array layouts, and measure the resolved observed/complement path. One cold call
+and one (safe) or two (aggressive) warm calls are recorded per candidate; warm
+medians select counts. Preparation/packing time is recorded separately. Shared
+patterns use their bounded pattern/accessor probe rather than unrelated native
+no-pattern kernels. Rank above 128, covariance packing above 64 MiB, or estimated
+`observed_count * rank**2` work above 200 million skips optional probes and
+retains allocation-aware heuristics. The time budget is soft: it is checked
+between cold/warm pairs and cannot interrupt a native call. These isolated
+initial-state probes omit intervening rotation and do not establish a universal
+optimum. Compare complete fits and allocation throughput before adopting a policy.
 
-Persistent profiles are opt-in through `runtime_profile`. Until profiles
-include hardware and build fingerprints, use separate paths for different
-machines, allocations and software builds. Avoid concurrent writers to one
-profile file. Rebenchmark after a BLAS, native build or workload change.
+Pool discovery is collected only when `runtime_report=True` is requested.
+The first loaded-BLAS discovery adds startup work (several milliseconds in the
+small shared-host fixtures); the phase and whole-fit measurements include it.
+
+`execution_pools` distinguishes requested settings from effective native worker
+counts, resolved by the compiled kernels' own allocation and workload rules.
+Zero denotes an unused native pool. Complete-data matrix products and Python
+pattern paths may still use the independent NumPy/SciPy BLAS pools listed in
+the report. Conditional complement and observed noise branches can use different
+worker counts. These counts describe resolved pools, not measured CPU utilization.
+
+Persistent profiles are opt-in through `runtime_profile`. Schema 2 binds them
+to CPU/platform, affinity, scheduler/cgroup allocation, package/Python/native
+and source hashes, NumPy/SciPy versions, loaded BLAS identities and independent
+thread limits. Measured rules additionally match covariance presence, layouts,
+shared patterns and statistics modes. Old schemas, malformed profiles and
+changed environments are ignored. An incompatible explicit file is preserved.
+`runtime_profile="auto"` uses a distinct fingerprinted cache filename, allowing
+jobs on different nodes/builds to share a home directory safely.
+
+Writers serialize each read/merge/update with a bounded process lock (0.5 s),
+deduplicate equivalent workload/semantics rules and replace JSON atomically.
+Contention or a failed save leaves fitting usable; the report only claims a
+save when it succeeded. Build manual profiles with
+[`build_runtime_profile.py`](https://github.com/yoavram-lab/VBPCApy/blob/main/scripts/build_runtime_profile.py)
+on the actual compute allocation. A login-node profile will not match a compute
+node. The explicit CLI output is a complete atomic replacement; concurrent
+inference writers merge measured rules under their lock.
+
+The allocation benchmark compares outer-worker counts while fixing data,
+initializations, priors, stopping, rank and total fit count. It partitions an
+explicit CPU set, fixes one BLAS thread per worker, screens memory with a pilot,
+and reports wall time including process startup, fit CPU time and summed process
+RSS high-water marks. Those sums conservatively bound concurrent worker memory;
+they are not a simultaneous-RSS sample or an out-of-memory prevention guarantee.
+See the [reproduction procedure](https://github.com/yoavram-lab/VBPCApy/blob/main/scripts/benchmark_study.md#representative-runtime-probes-and-allocation-throughput).
 
 ## Covariance writeback modes
 
@@ -176,7 +212,8 @@ after each update:
 
 When `runtime_tuning` is `"safe"` or `"aggressive"`, the writeback mode is
 benchmarked and selected automatically. The current aliases do not imply
-different implementations or a universal speed ordering.
+different implementations or a universal speed ordering. The tuner benchmarks
+`bulk` once for both stacked-output aliases.
 
 ## Dense sufficient statistics
 

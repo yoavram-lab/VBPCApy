@@ -261,6 +261,8 @@ py::array_t<double> subtract_mu_from_sparse(
 // -----------------------------------------------------------------------------
 
 PYBIND11_MODULE(subtract_mu_from_sparse, m) {
+    m.def("effective_thread_count", [](int n_items, int nnz) { return resolve_num_threads_auto(n_items, nnz); });
+
     m.doc() = "Subtract Mu from sparse matrix X using C++ and pybind11.";
 
     m.def(

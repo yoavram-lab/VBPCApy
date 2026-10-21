@@ -611,6 +611,8 @@ py::dict loadings_update_dense_masked_nopattern(
 }  // namespace
 
 PYBIND11_MODULE(dense_update_kernels, m) {
+    m.def("effective_thread_count", [](int requested, int n_items) { return vbpca_threads::resolve_thread_count(requested, n_items); });
+
     m.doc() = "Dense fast-path update kernels for fully observed VB-PCA updates.";
 
     m.def(

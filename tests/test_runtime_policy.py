@@ -37,6 +37,7 @@ from vbpca_py._runtime_policy import (
     resolve_runtime_thread_config,
     resolve_runtime_thread_config_with_report,
 )
+from vbpca_py._runtime_profiles import new_profile
 
 
 def test_apply_runtime_policy_defaults_normalizes_fields() -> None:
@@ -350,6 +351,7 @@ def _build_autotune_ctx_for_masked() -> _AutotuneContext:
 
 def test_dense_autotune_numerical_failure_falls_back(monkeypatch) -> None:
     ctx = _build_autotune_ctx_for_masked()
+    ctx.prepared.pattern_index = None
     original_threads = ctx.runtime_threads
 
     def _raise_numerical_failure(*_: object, **__: object) -> object:
@@ -442,10 +444,11 @@ def test_autotune_masked_batch_skips_when_user_forces_values(monkeypatch) -> Non
 
 
 def test_runtime_profile_default_threads_override_env(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("VBPCA_NUM_THREADS", "7")
     profile_path = tmp_path / "runtime_profile.json"
     profile_path.write_text(
         json.dumps({
-            "schema_version": 1,
+            **new_profile(),
             "default_threads": {
                 "num_cpu_score_update": 3,
                 "num_cpu_loadings_update": 4,
@@ -488,7 +491,7 @@ def test_runtime_profile_rule_overrides_default_for_matching_workload(tmp_path) 
     profile_path = tmp_path / "runtime_profile.json"
     profile_path.write_text(
         json.dumps({
-            "schema_version": 1,
+            **new_profile(),
             "default_threads": {
                 "num_cpu_rms": 2,
             },
@@ -534,7 +537,7 @@ def test_runtime_profile_respects_explicit_global_num_cpu(tmp_path) -> None:
     profile_path = tmp_path / "runtime_profile.json"
     profile_path.write_text(
         json.dumps({
-            "schema_version": 1,
+            **new_profile(),
             "default_threads": {
                 "num_cpu_score_update": 2,
                 "num_cpu_loadings_update": 2,
@@ -666,7 +669,7 @@ def test_match_profile_rule_rejects_out_of_bounds() -> None:
 def test_resolve_profile_thread_overrides_rejects_invalid_schema() -> None:
     out = _resolve_profile_thread_overrides(
         profile_data={
-            "schema_version": 2,
+            "schema_version": 1,
             "default_threads": {"num_cpu_rms": 4},
         },
         workload=None,
@@ -678,7 +681,7 @@ def test_resolve_profile_thread_overrides_handles_malformed_rules_and_negatives(
     None
 ):
     profile_data = {
-        "schema_version": 1,
+        **new_profile(),
         "default_threads": {
             "num_cpu_rms": -1,
             "num_cpu_score_update": "3",

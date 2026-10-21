@@ -56,9 +56,10 @@ observation set through noise updates, probe exclusion and NaN cleanup. See the
 - Dense or sparse data with explicit missing-entry masks
 - Optional bias estimation and rotation to PCA-aligned solution
 - Posterior covariances for scores and loadings; held-out probe RMS
-- C++ extensions with runtime autotune for threading and memory
 - Dense, nearly complete observations use complete-minus-missing noise statistics
   with full posterior covariances and screened fallback to observed-cell sums.
+- C++ extensions with covariance-aware runtime probes, reproducible hardware
+  profiles and separate native/BLAS allocation reports
 - Missing-aware preprocessing: one-hot, standard/minmax scaling, log, power, winsorize, auto-routing (`AutoEncoder`)
 - Preflight data diagnostics via `check_data()` / `DataReport`
 - scikit-learn-compatible estimator (`fit`/`transform`/`inverse_transform`, `get_params`/`set_params`, cloning) — scikit-learn is an optional dependency

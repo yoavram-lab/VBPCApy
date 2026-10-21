@@ -1,24 +1,30 @@
 """Runtime policy helpers for execution-path and threading controls.
 
-Phase 1 scope is intentionally minimal and behavior-preserving:
-- centralize parsing/normalization of runtime-related options,
-- define common environment override keys,
-- prepare structured hooks for future hardware/data-aware autotuning.
+Execution settings are allocation-aware and workload-matched. Optional probes
+and persistent profiles affect execution only; statistical settings are supplied
+by the caller and remain outside this module's policy.
 """
 
 from __future__ import annotations
 
-import json
 import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from statistics import median
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
 from . import dense_update_kernels as duk
 from . import sparse_update_kernels as suk
+from ._cpu_limits import available_cpu_count
+from ._runtime_profiles import (
+    PROFILE_SCHEMA_VERSION,
+    automatic_profile_path,
+    load_profile,
+    save_profile_rule,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -65,6 +71,7 @@ class RuntimeWorkloadProfile:
     n_components: int
     n_observed: int
     is_sparse: bool
+    execution: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -77,6 +84,12 @@ class DenseMaskedAutotuneInputs:
     scores: np.ndarray
     noise_var: float
     prior_prec: np.ndarray
+    loading_covariances: np.ndarray | None = None
+    score_covariances: np.ndarray | None = None
+    return_score_covariances: bool = True
+    return_loading_covariances: bool = True
+    score_use_complement: bool = False
+    loading_use_complement: bool = False
 
 
 @dataclass(frozen=True)
@@ -95,6 +108,10 @@ class SparseAutotuneInputs:
     scores: np.ndarray
     noise_var: float
     prior_prec: np.ndarray
+    loading_covariances: np.ndarray | None = None
+    score_covariances: np.ndarray | None = None
+    return_score_covariances: bool = True
+    return_loading_covariances: bool = True
 
 
 @dataclass(frozen=True)
@@ -139,7 +156,7 @@ _PROFILE_THREAD_KEYS = (
 
 
 def _default_profile_path() -> Path:
-    return Path.home() / ".cache" / "vbpca_py" / "runtime_profile.json"
+    return automatic_profile_path()
 
 
 def _normalize_profile_option(value: object | None) -> Path | None:
@@ -149,7 +166,10 @@ def _normalize_profile_option(value: object | None) -> Path | None:
     if not raw:
         return None
     if raw.lower() == "auto":
-        return _default_profile_path()
+        try:
+            return _default_profile_path()
+        except OSError:
+            return None
     return Path(raw).expanduser()
 
 
@@ -168,19 +188,7 @@ def _load_runtime_profile_data(
     profile_path = _normalize_profile_option(profile_option)
     if profile_path is None or not profile_path.exists():
         return None
-    try:
-        data = json.loads(profile_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-    return data if isinstance(data, dict) else None
-
-
-def _persist_runtime_profile(
-    profile_path: Path,
-    data: dict[str, object],
-) -> None:
-    profile_path.parent.mkdir(parents=True, exist_ok=True)
-    profile_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    return load_profile(profile_path)
 
 
 def save_autotune_profile_rule(
@@ -190,24 +198,17 @@ def save_autotune_profile_rule(
     score_threads: int,
     loadings_threads: int,
     source: str = "autotune_dense_masked",
-) -> None:
+) -> bool:
     """Persist a workload-specific thread rule into the runtime profile.
 
     The rule matches the exact observed workload bounds; callers should pass
     an appropriate profile path (use ``resolve_profile_path`` to honor "auto").
+
+    Returns:
+        Whether a compatible profile was atomically updated under its lock.
     """
     if profile_path is None:
-        return
-
-    data = _load_runtime_profile_data(profile_path) or {
-        "schema_version": 1,
-        "default_threads": {},
-        "workload_rules": [],
-    }
-
-    rules = data.get("workload_rules")
-    if not isinstance(rules, list):
-        rules = []
+        return False
 
     rule = {
         "match": {
@@ -227,11 +228,9 @@ def save_autotune_profile_rule(
         },
         "source": source,
         "updated_at": time.time(),
+        "execution": dict(workload.execution),
     }
-
-    rules.append(rule)
-    data["workload_rules"] = rules
-    _persist_runtime_profile(profile_path, data)
+    return save_profile_rule(profile_path, rule)
 
 
 def _coerce_profile_thread_map(raw: object) -> dict[str, int]:
@@ -287,7 +286,7 @@ def _resolve_profile_thread_overrides(
         return {}
 
     schema_version = _parse_int_or_none(profile_data.get("schema_version"))
-    if schema_version is not None and schema_version != 1:
+    if schema_version != PROFILE_SCHEMA_VERSION:
         return {}
 
     resolved = _coerce_profile_thread_map(profile_data.get("default_threads", {}))
@@ -301,6 +300,8 @@ def _resolve_profile_thread_overrides(
             continue
         match_obj = rule_obj.get("match", {})
         if not isinstance(match_obj, dict):
+            continue
+        if workload.execution and rule_obj.get("execution") != dict(workload.execution):
             continue
         if not _match_profile_rule(match_obj, workload):
             continue
@@ -405,29 +406,7 @@ def _available_cpu_count() -> int:
     Returns:
         Positive effective CPU count.
     """
-    candidates = [int(os.cpu_count() or 1)]
-
-    process_cpu_count = getattr(os, "process_cpu_count", None)
-    if callable(process_cpu_count):
-        process_count = process_cpu_count()
-        if process_count is not None and process_count > 0:
-            candidates.append(int(process_count))
-
-    get_affinity = getattr(os, "sched_getaffinity", None)
-    if callable(get_affinity):
-        try:
-            affinity_count = len(get_affinity(0))
-        except OSError:
-            affinity_count = 0
-        if affinity_count > 0:
-            candidates.append(int(affinity_count))
-
-    for env_key in ("SLURM_CPUS_PER_TASK", "PBS_NP", "NSLOTS"):
-        allocated = _parse_int_or_none(os.getenv(env_key))
-        if allocated is not None and allocated > 0:
-            candidates.append(int(allocated))
-
-    return max(1, min(candidates))
+    return available_cpu_count()
 
 
 def normalize_num_cpu(num_cpu_value: object | None, *, default: int = 1) -> int:
@@ -591,7 +570,7 @@ def _normalize_candidate_list(
             return min(hw_threads, axis_limit)
         return max(1, min(int(val), hw_threads, axis_limit))
 
-    return [_norm(c) for c in candidates]
+    return list(dict.fromkeys(_norm(c) for c in candidates))
 
 
 def _benchmark_pair_candidates(
@@ -609,27 +588,48 @@ def _benchmark_pair_candidates(
     score_timings: dict[int, float] = {}
     load_timings: dict[int, float] = {}
 
-    for s_threads, l_threads in zip(cand_score, cand_load, strict=False):
+    for index in range(max(len(cand_score), len(cand_load))):
         if time.perf_counter() - start > max_total_time:
             break
-
-        score_t = bench_score(s_threads)
-        load_t = bench_load(l_threads)
-        score_timings[s_threads] = score_t
-        load_timings[l_threads] = load_t
-
-        if score_t < best_score_time:
-            best_score_time = score_t
-            best_score = s_threads
-        if load_t < best_load_time:
-            best_load_time = load_t
-            best_load = l_threads
+        if index < len(cand_score):
+            threads = cand_score[index]
+            elapsed = bench_score(threads)
+            score_timings[threads] = elapsed
+            if elapsed < best_score_time:
+                best_score_time, best_score = elapsed, threads
+        if index < len(cand_load):
+            threads = cand_load[index]
+            elapsed = bench_load(threads)
+            load_timings[threads] = elapsed
+            if elapsed < best_load_time:
+                best_load_time, best_load = elapsed, threads
 
     elapsed = time.perf_counter() - start
     return best_score, best_load, score_timings, load_timings, elapsed
 
 
-def autotune_dense_masked_threads(
+def _measure_probe(
+    call: Callable[[], object], reps: int
+) -> tuple[float, dict[str, object]]:
+    started = time.perf_counter()
+    call()
+    cold = time.perf_counter() - started
+    warm = []
+    for _ in range(max(1, reps)):
+        started = time.perf_counter()
+        call()
+        warm.append(time.perf_counter() - started)
+    return median(warm), {"cold_seconds": cold, "warm_seconds": warm}
+
+
+def _writeback_candidates(modes: Sequence[str]) -> list[str]:
+    normalized = (normalize_cov_writeback_mode(mode) for mode in modes)
+    return list(
+        dict.fromkeys("bulk" if mode == "kernel" else mode for mode in normalized)
+    )
+
+
+def autotune_dense_masked_threads(  # noqa: PLR0914 - bounded probe provenance
     inputs: DenseMaskedAutotuneInputs,
     *,
     candidates: Sequence[int],
@@ -642,6 +642,7 @@ def autotune_dense_masked_threads(
     Returns:
         Tuple of (score_threads, loadings_threads, benchmark report).
     """
+    setup_started = time.perf_counter()
     hw_threads = _available_cpu_count()
     score_axis = int(inputs.x_data.shape[1])
     load_axis = int(inputs.x_data.shape[0])
@@ -650,41 +651,50 @@ def autotune_dense_masked_threads(
     cand_load = _normalize_candidate_list(candidates, load_axis, hw_threads)
 
     arrays = _DenseBenchmarkArrays(
-        x=np.asarray(inputs.x_data, dtype=np.float64, order="C"),
-        mask=np.asarray(inputs.mask, dtype=np.bool_, order="C"),
-        loadings=np.asarray(inputs.loadings, dtype=np.float64, order="C"),
-        scores=np.asarray(inputs.scores, dtype=np.float64, order="C"),
-        prior_prec=np.asarray(inputs.prior_prec, dtype=np.float64, order="C"),
+        x=np.asarray(inputs.x_data, dtype=np.float64),
+        mask=np.asarray(inputs.mask, dtype=np.bool_),
+        loadings=np.asarray(inputs.loadings, dtype=np.float64),
+        scores=np.asarray(inputs.scores, dtype=np.float64),
+        prior_prec=np.asarray(inputs.prior_prec, dtype=np.float64),
     )
+    setup_seconds = time.perf_counter() - setup_started
+    score_samples: dict[str, object] = {}
+    load_samples: dict[str, object] = {}
 
     def _bench_score(num_cpu: int) -> float:
-        t0 = time.perf_counter()
-        for _ in range(reps):
-            duk.score_update_dense_masked_nopattern(
+        elapsed, samples = _measure_probe(
+            lambda: duk.score_update_dense_masked_nopattern(
                 x_data=arrays.x,
                 mask=arrays.mask,
                 loadings=arrays.loadings,
-                loading_covariances=None,
+                loading_covariances=inputs.loading_covariances,
                 noise_var=float(inputs.noise_var),
-                return_covariances=False,
+                return_covariances=inputs.return_score_covariances,
+                use_complement=inputs.score_use_complement,
                 num_cpu=num_cpu,
-            )
-        return (time.perf_counter() - t0) / float(max(1, reps))
+            ),
+            reps,
+        )
+        score_samples[str(num_cpu)] = samples
+        return elapsed
 
     def _bench_load(num_cpu: int) -> float:
-        t0 = time.perf_counter()
-        for _ in range(reps):
-            duk.loadings_update_dense_masked_nopattern(
+        elapsed, samples = _measure_probe(
+            lambda: duk.loadings_update_dense_masked_nopattern(
                 x_data=arrays.x,
                 mask=arrays.mask,
                 scores=arrays.scores,
-                score_covariances=None,
+                score_covariances=inputs.score_covariances,
                 prior_prec=arrays.prior_prec,
                 noise_var=float(inputs.noise_var),
-                return_covariances=False,
+                return_covariances=inputs.return_loading_covariances,
+                use_complement=inputs.loading_use_complement,
                 num_cpu=num_cpu,
-            )
-        return (time.perf_counter() - t0) / float(max(1, reps))
+            ),
+            reps,
+        )
+        load_samples[str(num_cpu)] = samples
+        return elapsed
 
     best_score, best_load, score_timings, load_timings, elapsed = (
         _benchmark_pair_candidates(
@@ -692,7 +702,7 @@ def autotune_dense_masked_threads(
             cand_load,
             _bench_score,
             _bench_load,
-            max_total_time,
+            max(0.0, max_total_time - setup_seconds),
         )
     )
 
@@ -701,9 +711,30 @@ def autotune_dense_masked_threads(
         "candidates": sorted(set(candidates)),
         "score": {str(k): v for k, v in score_timings.items()},
         "loadings": {str(k): v for k, v in load_timings.items()},
-        "elapsed_sec": float(elapsed),
+        "elapsed_sec": float(elapsed + setup_seconds),
+        "setup_sec": setup_seconds,
         "max_total_time_sec": float(max_total_time),
         "reps": int(reps),
+        "cold_warm_samples": {"score": score_samples, "loadings": load_samples},
+        "workload": {
+            "loading_covariances": inputs.loading_covariances is not None,
+            "score_covariances": inputs.score_covariances is not None,
+            "return_score_covariances": inputs.return_score_covariances,
+            "return_loading_covariances": inputs.return_loading_covariances,
+            "score_statistics": "complement"
+            if inputs.score_use_complement
+            else "observed",
+            "loading_statistics": "complement"
+            if inputs.loading_use_complement
+            else "observed",
+            "x_strides": list(arrays.x.strides),
+            "loading_strides": list(arrays.loadings.strides),
+            "score_strides": list(arrays.scores.strides),
+        },
+        "probe_limitations": (
+            "Initial state, isolated kernels, no intervening rotation. "
+            "Budget checked between bounded cold/warm pairs, not inside a native call."
+        ),
     }
 
     return int(best_score), int(best_load), report
@@ -723,13 +754,13 @@ def autotune_cov_writeback_mode_dense(  # noqa: PLR0913
     Returns:
         Best mode, per-mode timings, total elapsed seconds.
     """
-    modes_unique = list(dict.fromkeys(normalize_cov_writeback_mode(m) for m in modes))
+    modes_unique = _writeback_candidates(modes)
     arrays = _DenseBenchmarkArrays(
-        x=np.asarray(inputs.x_data, dtype=np.float64, order="C"),
-        mask=np.asarray(inputs.mask, dtype=np.bool_, order="C"),
-        loadings=np.asarray(inputs.loadings, dtype=np.float64, order="C"),
-        scores=np.asarray(inputs.scores, dtype=np.float64, order="C"),
-        prior_prec=np.asarray(inputs.prior_prec, dtype=np.float64, order="C"),
+        x=np.asarray(inputs.x_data, dtype=np.float64),
+        mask=np.asarray(inputs.mask, dtype=np.bool_),
+        loadings=np.asarray(inputs.loadings, dtype=np.float64),
+        scores=np.asarray(inputs.scores, dtype=np.float64),
+        prior_prec=np.asarray(inputs.prior_prec, dtype=np.float64),
     )
 
     timings: dict[str, float] = {}
@@ -747,32 +778,40 @@ def autotune_cov_writeback_mode_dense(  # noqa: PLR0913
                 x_data=arrays.x,
                 mask=arrays.mask,
                 loadings=arrays.loadings,
-                loading_covariances=None,
+                loading_covariances=inputs.loading_covariances,
                 noise_var=float(inputs.noise_var),
-                return_covariances=True,
+                return_covariances=inputs.return_score_covariances,
+                use_complement=inputs.score_use_complement,
                 num_cpu=num_cpu_score,
             )
-            sv = np.asarray(score_res["score_covariances"], dtype=np.float64, order="C")
+            sv = (
+                np.asarray(score_res["score_covariances"], dtype=np.float64, order="C")
+                if "score_covariances" in score_res
+                else None
+            )
             sv_kernel_arg = (
                 sv
-                if mode != "python"
+                if mode != "python" or sv is None
                 else np.stack([sv[j, :, :] for j in range(sv.shape[0])])
             )
 
             load_res = duk.loadings_update_dense_masked_nopattern(
                 x_data=arrays.x,
                 mask=arrays.mask,
-                scores=arrays.scores,
+                scores=np.asarray(score_res["scores"], dtype=np.float64),
                 score_covariances=sv_kernel_arg,
                 prior_prec=arrays.prior_prec,
                 noise_var=float(inputs.noise_var),
-                return_covariances=True,
+                return_covariances=inputs.return_loading_covariances,
+                use_complement=inputs.loading_use_complement,
                 num_cpu=num_cpu_load,
             )
-            av = np.asarray(
-                load_res["loading_covariances"], dtype=np.float64, order="C"
+            av = (
+                np.asarray(load_res["loading_covariances"], dtype=np.float64, order="C")
+                if "loading_covariances" in load_res
+                else None
             )
-            if mode == "python":
+            if mode == "python" and av is not None:
                 _ = [av[i, :, :] for i in range(av.shape[0])]
 
         elapsed = (time.perf_counter() - t0) / float(reps_eff)
@@ -797,53 +836,61 @@ def autotune_sparse_nopattern_threads(
     Returns:
         Tuple of (score_threads, loadings_threads, benchmark report).
     """
+    setup_started = time.perf_counter()
     hw_threads = _available_cpu_count()
 
     cand_score = _normalize_candidate_list(candidates, inputs.n_samples, hw_threads)
     cand_load = _normalize_candidate_list(candidates, inputs.n_features, hw_threads)
 
     arrays = _SparseBenchmarkArrays(
-        x_csc_data=np.asarray(inputs.x_csc_data, dtype=np.float64, order="C"),
-        x_csc_indices=np.asarray(inputs.x_csc_indices, dtype=np.int32, order="C"),
-        x_csc_indptr=np.asarray(inputs.x_csc_indptr, dtype=np.int32, order="C"),
-        x_csr_data=np.asarray(inputs.x_csr_data, dtype=np.float64, order="C"),
-        x_csr_indices=np.asarray(inputs.x_csr_indices, dtype=np.int32, order="C"),
-        x_csr_indptr=np.asarray(inputs.x_csr_indptr, dtype=np.int32, order="C"),
-        loadings=np.asarray(inputs.loadings, dtype=np.float64, order="C"),
-        scores=np.asarray(inputs.scores, dtype=np.float64, order="C"),
-        prior_prec=np.asarray(inputs.prior_prec, dtype=np.float64, order="C"),
+        x_csc_data=np.asarray(inputs.x_csc_data, dtype=np.float64, order="K"),
+        x_csc_indices=np.asarray(inputs.x_csc_indices, dtype=np.int32, order="K"),
+        x_csc_indptr=np.asarray(inputs.x_csc_indptr, dtype=np.int32, order="K"),
+        x_csr_data=np.asarray(inputs.x_csr_data, dtype=np.float64, order="K"),
+        x_csr_indices=np.asarray(inputs.x_csr_indices, dtype=np.int32, order="K"),
+        x_csr_indptr=np.asarray(inputs.x_csr_indptr, dtype=np.int32, order="K"),
+        loadings=np.asarray(inputs.loadings, dtype=np.float64, order="K"),
+        scores=np.asarray(inputs.scores, dtype=np.float64, order="K"),
+        prior_prec=np.asarray(inputs.prior_prec, dtype=np.float64, order="K"),
     )
 
+    setup_seconds = time.perf_counter() - setup_started
+    samples: dict[str, object] = {"score": {}, "loadings": {}}
+
     def _bench_score(num_cpu: int) -> float:
-        t0 = time.perf_counter()
-        for _ in range(reps):
-            suk.score_update_sparse_nopattern(
+        elapsed, record = _measure_probe(
+            lambda: suk.score_update_sparse_nopattern(
                 x_data=arrays.x_csc_data,
                 x_indices=arrays.x_csc_indices,
                 x_indptr=arrays.x_csc_indptr,
                 loadings=arrays.loadings,
-                loading_covariances=None,
+                loading_covariances=inputs.loading_covariances,
                 noise_var=float(inputs.noise_var),
-                return_covariances=False,
+                return_covariances=inputs.return_score_covariances,
                 num_cpu=num_cpu,
-            )
-        return (time.perf_counter() - t0) / float(max(1, reps))
+            ),
+            reps,
+        )
+        cast("dict[str, object]", samples["score"])[str(num_cpu)] = record
+        return elapsed
 
     def _bench_load(num_cpu: int) -> float:
-        t0 = time.perf_counter()
-        for _ in range(reps):
-            suk.loadings_update_sparse_nopattern(
+        elapsed, record = _measure_probe(
+            lambda: suk.loadings_update_sparse_nopattern(
                 x_data=arrays.x_csr_data,
                 x_indices=arrays.x_csr_indices,
                 x_indptr=arrays.x_csr_indptr,
                 scores=arrays.scores,
-                score_covariances=None,
+                score_covariances=inputs.score_covariances,
                 prior_prec=arrays.prior_prec,
                 noise_var=float(inputs.noise_var),
-                return_covariances=False,
+                return_covariances=inputs.return_loading_covariances,
                 num_cpu=num_cpu,
-            )
-        return (time.perf_counter() - t0) / float(max(1, reps))
+            ),
+            reps,
+        )
+        cast("dict[str, object]", samples["loadings"])[str(num_cpu)] = record
+        return elapsed
 
     best_score, best_load, score_timings, load_timings, elapsed = (
         _benchmark_pair_candidates(
@@ -851,7 +898,7 @@ def autotune_sparse_nopattern_threads(
             cand_load,
             _bench_score,
             _bench_load,
-            max_total_time,
+            max(0.0, max_total_time - setup_seconds),
         )
     )
 
@@ -860,7 +907,21 @@ def autotune_sparse_nopattern_threads(
         "candidates": sorted(set(candidates)),
         "score": {str(k): v for k, v in score_timings.items()},
         "loadings": {str(k): v for k, v in load_timings.items()},
-        "elapsed_sec": float(elapsed),
+        "elapsed_sec": float(elapsed + setup_seconds),
+        "setup_sec": setup_seconds,
+        "cold_warm_samples": samples,
+        "probe_limitations": (
+            "Initial state, isolated kernels, no intervening rotation. "
+            "Budget checked between cold/warm pairs, not inside native calls."
+        ),
+        "workload": {
+            "loading_covariances": inputs.loading_covariances is not None,
+            "score_covariances": inputs.score_covariances is not None,
+            "return_score_covariances": inputs.return_score_covariances,
+            "return_loading_covariances": inputs.return_loading_covariances,
+            "loading_strides": list(arrays.loadings.strides),
+            "score_strides": list(arrays.scores.strides),
+        },
         "max_total_time_sec": float(max_total_time),
         "reps": int(reps),
     }
@@ -882,18 +943,18 @@ def autotune_cov_writeback_mode_sparse(  # noqa: PLR0913
     Returns:
         Best mode, per-mode timings, total elapsed seconds.
     """
-    modes_unique = list(dict.fromkeys(normalize_cov_writeback_mode(m) for m in modes))
+    modes_unique = _writeback_candidates(modes)
 
     arrays = _SparseBenchmarkArrays(
-        x_csc_data=np.asarray(inputs.x_csc_data, dtype=np.float64, order="C"),
-        x_csc_indices=np.asarray(inputs.x_csc_indices, dtype=np.int32, order="C"),
-        x_csc_indptr=np.asarray(inputs.x_csc_indptr, dtype=np.int32, order="C"),
-        x_csr_data=np.asarray(inputs.x_csr_data, dtype=np.float64, order="C"),
-        x_csr_indices=np.asarray(inputs.x_csr_indices, dtype=np.int32, order="C"),
-        x_csr_indptr=np.asarray(inputs.x_csr_indptr, dtype=np.int32, order="C"),
-        loadings=np.asarray(inputs.loadings, dtype=np.float64, order="C"),
-        scores=np.asarray(inputs.scores, dtype=np.float64, order="C"),
-        prior_prec=np.asarray(inputs.prior_prec, dtype=np.float64, order="C"),
+        x_csc_data=np.asarray(inputs.x_csc_data, dtype=np.float64, order="K"),
+        x_csc_indices=np.asarray(inputs.x_csc_indices, dtype=np.int32, order="K"),
+        x_csc_indptr=np.asarray(inputs.x_csc_indptr, dtype=np.int32, order="K"),
+        x_csr_data=np.asarray(inputs.x_csr_data, dtype=np.float64, order="K"),
+        x_csr_indices=np.asarray(inputs.x_csr_indices, dtype=np.int32, order="K"),
+        x_csr_indptr=np.asarray(inputs.x_csr_indptr, dtype=np.int32, order="K"),
+        loadings=np.asarray(inputs.loadings, dtype=np.float64, order="K"),
+        scores=np.asarray(inputs.scores, dtype=np.float64, order="K"),
+        prior_prec=np.asarray(inputs.prior_prec, dtype=np.float64, order="K"),
     )
 
     timings: dict[str, float] = {}
@@ -912,15 +973,19 @@ def autotune_cov_writeback_mode_sparse(  # noqa: PLR0913
                 x_indices=arrays.x_csc_indices,
                 x_indptr=arrays.x_csc_indptr,
                 loadings=arrays.loadings,
-                loading_covariances=None,
+                loading_covariances=inputs.loading_covariances,
                 noise_var=float(inputs.noise_var),
-                return_covariances=True,
+                return_covariances=inputs.return_score_covariances,
                 num_cpu=num_cpu_score,
             )
-            sv = np.asarray(score_res["score_covariances"], dtype=np.float64, order="C")
+            sv = (
+                np.asarray(score_res["score_covariances"], dtype=np.float64)
+                if "score_covariances" in score_res
+                else None
+            )
             sv_kernel_arg = (
                 sv
-                if mode != "python"
+                if mode != "python" or sv is None
                 else np.stack([sv[j, :, :] for j in range(sv.shape[0])])
             )
 
@@ -928,17 +993,19 @@ def autotune_cov_writeback_mode_sparse(  # noqa: PLR0913
                 x_data=arrays.x_csr_data,
                 x_indices=arrays.x_csr_indices,
                 x_indptr=arrays.x_csr_indptr,
-                scores=arrays.scores,
+                scores=np.asarray(score_res["scores"], dtype=np.float64),
                 score_covariances=sv_kernel_arg,
                 prior_prec=arrays.prior_prec,
                 noise_var=float(inputs.noise_var),
-                return_covariances=True,
+                return_covariances=inputs.return_loading_covariances,
                 num_cpu=num_cpu_load,
             )
-            av = np.asarray(
-                load_res["loading_covariances"], dtype=np.float64, order="C"
+            av = (
+                np.asarray(load_res["loading_covariances"], dtype=np.float64)
+                if "loading_covariances" in load_res
+                else None
             )
-            if mode == "python":
+            if mode == "python" and av is not None:
                 _ = [av[i, :, :] for i in range(av.shape[0])]
 
         elapsed = (time.perf_counter() - t0) / float(reps_eff)
