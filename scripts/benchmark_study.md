@@ -93,3 +93,31 @@ complete consistent shard set, reports unavailable policies and unstable
 endpoints separately, and writes a new provenance-bearing report. No fits,
 frozen policies or publication pins change. The completed held-out confirmation
 remains negative; replay results alone cannot qualify a replacement default.
+
+## Backend review probes
+
+The [backend review](../analysis/BACKEND_REVIEW_2026_10_20.md) separates
+measured implementation costs from proposed statistical changes. Its
+prototypes retain full covariance terms and are not installed solver paths.
+Run from a clean source checkout with the package installed:
+
+```bash
+uv sync --extra dev --extra plot
+OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 VBPCA_NUM_THREADS=1 \
+  uv run python analysis/review_backend_costs.py --output /tmp/vbpca-backend-review.json
+uv run pytest -q tests/test_backend_rearrangements.py
+just numerical-reference
+```
+
+The probe writes source/native hashes, numerical versions, platform, process
+affinity, thread environment and NumPy build details alongside timings and
+allocation/conversion counters. It uses 512 features, 256 samples, ranks 8 and
+32, four fixed iterations and 1% missingness. It alternates reference/prototype
+timing order after warmup and includes covariance packing. Keep generated JSON
+and benchmark outputs outside tracked source. Record actual BLAS pools and
+scheduler/node information separately for cluster qualification.
+
+The [algebra-check instructions](../analysis/proof_checks/README.md) pin Lean,
+mathlib and SymPy and state the proof boundaries. Follow numerical comparisons
+with representative fixed-policy full fits before adopting a rewrite; the
+local phase ratios do not establish whole-fit or cross-machine speedups.
