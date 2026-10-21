@@ -25,6 +25,8 @@ if TYPE_CHECKING:
     from collections.abc import Mapping, MutableMapping
     from pathlib import Path
 
+    from .results import LearningCurve, NumericTraceKey, PhaseTimingKey
+
 from ._converge import (
     _VALID_CRITERION_NAMES,
     ConvergenceState,
@@ -81,6 +83,7 @@ from ._runtime_policy import (
     resolve_runtime_thread_config_with_report,
     save_autotune_profile_rule,
 )
+from .results import PCAResult  # noqa: TC001  # Public runtime type-hint resolution.
 
 logger = logging.getLogger(__name__)
 
@@ -88,7 +91,7 @@ Array = np.ndarray
 Sparse = sp.csr_matrix
 Matrix = Array | Sparse
 _ALLOWED_COMPAT_MODES = {"strict_legacy", "modern"}
-_PHASE_TIMING_KEYS = (
+_PHASE_TIMING_KEYS: tuple[PhaseTimingKey, ...] = (
     "phase_scores_sec",
     "phase_loadings_sec",
     "phase_rms_sec",
@@ -148,24 +151,42 @@ def pca_full(
     *,
     mask: Matrix | None = None,
     **kwargs: object,
-) -> dict[str, object]:
+) -> PCAResult:
     """Run VBPCA with full posterior covariances.
 
-    Parameters
-    ----------
-    x
-        Data matrix of shape (n_features, n_samples). Dense arrays may contain
-        NaNs to denote missing values. Sparse matrices store only observed
-        entries.
-    n_components
-        Number of latent components.
-    **kwargs
-        Options; see :func:`_build_options`.
+    Args:
+        x: Data matrix of shape (n_features, n_samples). Dense arrays may
+            contain NaNs to denote missing values. Sparse matrices store
+            observed entries, including explicitly stored zeros.
+        n_components: Number of latent components.
+        mask: Optional observation mask matching ``x``. True entries are
+            observed, including numerical zeros. Explicit probe coordinates
+            are excluded from training even when selected by this mask.
+            For sparse ``x``, the mask must match its stored structure.
+        **kwargs: Options; see :func:`_build_options`.
 
     Returns:
-    -------
-    dict
-        Result dictionary matching the historical PCA_FULL API.
+        Ordinary dictionary matching the historical PCA_FULL API, with typed
+        fields described in :mod:`vbpca_py.results`. Large diagnostic arrays
+        are ``None`` when ``return_diagnostics=False``.
+
+    Examples:
+        Fit two feature rows with one latent component. This short example uses
+        two iterations to demonstrate the API; it does not establish convergence.
+
+        >>> data = np.array([[1.0, 2.0, 3.0], [3.0, 1.0, 2.0]])
+        >>> result = pca_full(
+        ...     data,
+        ...     1,
+        ...     maxiters=2,
+        ...     niter_broadprior=0,
+        ...     return_diagnostics=False,
+        ...     random_state=4,
+        ... )
+        >>> result["A"].shape, result["S"].shape
+        ((2, 1), (1, 3))
+        >>> result["Xrec"] is None
+        True
     """
     opts: MutableMapping[str, object] = _build_options(kwargs)
     use_prior, use_postvar = _select_algorithm(opts)
@@ -255,7 +276,7 @@ class TrainingState:
     """Mutable training state that evolves over iterations."""
 
     model: ModelState
-    lc: dict[str, list[float]]
+    lc: LearningCurve
     dsph: dict[str, object]
     err_mx: np.ndarray | sp.spmatrix | None
     a_old: np.ndarray
@@ -287,7 +308,7 @@ class FinalState:
     muv: np.ndarray
     va: np.ndarray
     vmu: float
-    lc: dict[str, list[float]]
+    lc: LearningCurve
     runtime_report: dict[str, object] | None
 
 
@@ -1349,7 +1370,7 @@ def _run_training_loop(
     # eligible criterion stopped the loop, it exhausted maxiters.
     training.lc.pop("_candidate_convergence_reason", None)
     reason: str = str(training.lc.pop("_convergence_reason", "maxiters"))
-    training.lc["convergence_reason"] = reason  # type: ignore[assignment]
+    training.lc["convergence_reason"] = reason
 
     _finalize_probe_best(training, probe_best, reason)
 
@@ -1428,14 +1449,14 @@ def _finalize_probe_best(
         training.model = best.model
         returned = best.iteration
 
-    training.lc["terminal_iteration"] = terminal  # type: ignore[assignment]
-    training.lc["returned_iteration"] = returned  # type: ignore[assignment]
+    training.lc["terminal_iteration"] = terminal
+    training.lc["returned_iteration"] = returned
     if np.isfinite(best.rms):
-        training.lc["best_probe_iteration"] = best.iteration  # type: ignore[assignment]
-        training.lc["best_probe_rms"] = best.rms  # type: ignore[assignment]
+        training.lc["best_probe_iteration"] = best.iteration
+        training.lc["best_probe_rms"] = best.rms
 
 
-def _ensure_phase_timing_keys(lc: dict[str, list[float]]) -> None:
+def _ensure_phase_timing_keys(lc: LearningCurve) -> None:
     n_points = max(1, len(lc.get("rms", [])))
     for key in _PHASE_TIMING_KEYS:
         values = lc.get(key)
@@ -1796,7 +1817,7 @@ def _accept_convergence_stop(ctx: IterationContext, convmsg: str | None) -> bool
         # Warmup criteria are diagnostic only. They must not leak a reason or
         # patience credit into the first eligible post-warmup iteration.
         ctx.training.lc.pop("_candidate_convergence_reason", None)
-        ctx.training.lc["_criterion_patience"] = {}  # type: ignore[assignment]
+        ctx.training.lc["_criterion_patience"] = {}
         return False
     if not convmsg:
         return False
@@ -1810,8 +1831,8 @@ def _accept_convergence_stop(ctx: IterationContext, convmsg: str | None) -> bool
 
 
 def _append_phase_timings(
-    lc: dict[str, list[float]],
-    timings: dict[str, float],
+    lc: LearningCurve,
+    timings: Mapping[PhaseTimingKey, float],
 ) -> None:
     for key, value in timings.items():
         lc.setdefault(key, [0.0])
@@ -2161,7 +2182,7 @@ def _explained_variance_tall(
     return (singular_values**2) / float(n_samples - 1)
 
 
-def _last_metric(lc: dict[str, list[float]], key: str) -> float:
+def _last_metric(lc: LearningCurve, key: NumericTraceKey) -> float:
     values = lc.get(key, [])
     if not values:
         return float("nan")
@@ -2171,7 +2192,7 @@ def _last_metric(lc: dict[str, list[float]], key: str) -> float:
         return float("nan")
 
 
-def _returned_metric(lc: dict[str, list[float]], key: str) -> float:
+def _returned_metric(lc: LearningCurve, key: NumericTraceKey) -> float:
     """Return a metric aligned with the model state returned to the caller."""
     values = lc.get(key, [])
     returned = lc.get("returned_iteration")
@@ -2190,7 +2211,7 @@ def _pack_result(
     explained_var_solver: str = "auto",
     explained_var_gram_ratio: float = 4.0,
     runtime_report: dict[str, object] | None = None,
-) -> dict[str, object]:
+) -> PCAResult:
     """Pack final values into the historical PCA_FULL result dictionary.
 
     Returns:

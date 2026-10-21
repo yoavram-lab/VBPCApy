@@ -21,6 +21,8 @@ from vbpca_py.model_selection import SelectionConfig, select_n_components
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
+    from vbpca_py.results import LearningCurve
+
 __all__ = ["VBPCA"]
 
 _TOL_DEPRECATION_MESSAGE = (
@@ -135,7 +137,7 @@ class VBPCA(BaseEstimator):
         self.best_probe_iteration_: int | None = None
         self.best_probe_rms_: float | None = None
         self.returned_iteration_: int | None = None
-        self.learning_curve_: dict[str, list[float]] | None = None
+        self.learning_curve_: LearningCurve | None = None
         self.runtime_report_: dict[str, object] | None = None
         self.reconstruction_: np.ndarray | None = None
         # Posterior variance of the denoised reconstruction E[AS + mu]:
@@ -407,9 +409,7 @@ class VBPCA(BaseEstimator):
 
         runtime_report = result.get("RuntimeReport")
         self.runtime_report_ = (
-            cast("dict[str, object]", runtime_report)
-            if isinstance(runtime_report, dict)
-            else None
+            runtime_report if isinstance(runtime_report, dict) else None
         )
 
         self.reconstruction_ = None

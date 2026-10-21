@@ -14,6 +14,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Remove a duplicate preparation copy while retaining C layout, caller input
   ownership, numeric-mask behavior and probe isolation.
 
+## [0.4.11] - 2026-10-21
+
+### Added
+
+- Typed result and learning-curve mappings, float64/index array aliases and
+  executable docstring examples. Existing result keys and array ownership are
+  retained; learning-curve annotations now distinguish histories from metadata.
+
+### Fixed
+
+- Normalize dense and sparse observation index types independently for NumPy
+  2.4 static checking, with a pinned cross-platform typing regression check.
+- Retain explicitly stored observed zeros in modern sparse noise-update
+  coordinates, probe exclusion and NaN cleanup. Dense and sparse observations
+  now use the same mask-defined set; strict-legacy handling is retained.
+- Group sparse covariance patterns by sample column. Shared-pattern fits now
+  update each sample in its assigned group and pass complete column groups
+  to rotation, preserving sparse storage and observed zeros.
+
 ### Documentation
 
 - Correct the scope of `max_dense_bytes`, describe dense diagnostic outputs,

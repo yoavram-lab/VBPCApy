@@ -48,6 +48,11 @@ More examples: [quickstart](https://yoavram-lab.github.io/VBPCApy/getting-starte
 
 ## Features
 
+For sparse observations whose values include zero, use `compat_mode="modern"`
+and retain those zeros explicitly in storage. Modern fits use the mask-defined
+observation set through noise updates, probe exclusion and NaN cleanup. See the
+[sparse tutorial](docs/tutorials/sparse-data.md) for storage and mode choices.
+
 - Dense or sparse data with explicit missing-entry masks
 - Optional bias estimation and rotation to PCA-aligned solution
 - Posterior covariances for scores and loadings; held-out probe RMS
@@ -61,6 +66,26 @@ More examples: [quickstart](https://yoavram-lab.github.io/VBPCApy/getting-starte
 - `recommend_config(n, p, priority)` — regime-aware default hyperparameters from a surrogate trade study
 
 See the [concept guides](https://yoavram-lab.github.io/VBPCApy/concepts/algorithm/) and [API reference](https://yoavram-lab.github.io/VBPCApy/api/vbpca/) for full details.
+
+## Typed fit results
+
+`PCAResult` and `LearningCurve` are exported from `vbpca_py`. They describe
+ordinary result dictionaries, retaining existing keys and array ownership.
+Learning curves contain numeric histories and metadata with different types:
+
+```python
+from vbpca_py import LearningCurve
+
+curve: LearningCurve | None = model.learning_curve_
+if curve is not None:
+    print(curve.get("convergence_reason"))
+    print(curve.get("returned_iteration"))
+```
+
+The low-level `pca_full()` return annotation is `PCAResult`. See the
+[result reference](docs/api/results.md) for array shapes, optional diagnostic
+outputs and shared covariance blocks. Type annotations specify dtypes; they
+do not validate array shapes or make arrays immutable.
 
 ## Categorical component selection
 
@@ -216,7 +241,7 @@ If you use this package in your research, please cite:
   title = {{VBPCApy}: Variational Bayesian PCA with Missing Data Support},
   year = {2026},
   url = {https://github.com/yoavram-lab/VBPCApy},
-  version = {0.4.7},
+  version = {0.4.11},
 }
 ```
 

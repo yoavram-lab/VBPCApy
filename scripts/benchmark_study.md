@@ -1,5 +1,20 @@
 # Encoding-aware selection validation
 
+Result-contract checks run with the regular test suite and strict consumer
+typing:
+
+```bash
+just typecheck
+uv run pytest -q tests/test_result_contracts.py tests/test_sparse_pattern_groups.py
+```
+
+These checks cover the existing dictionary keys and heterogeneous learning
+curves, plus sparse covariance groups that partition sample columns. The
+sparse repair preserves observed zeros and compares shared/unshared fits,
+cost histories and uncertainty after consistent component-sign alignment.
+It changes a previously failing sparse-sharing path; adopting it in a study
+requires recording the new software pin. No frozen benchmark is regenerated.
+
 Encoding-aware selection affects categorical scoring and the selected capacity for
 mixed encodings. It adds a fitted schema for dense encoders, preserves fitted
 centering on later transforms, and decodes nominal categorical predictions
@@ -168,3 +183,13 @@ records NumPy-visible traced allocation peaks and median timings after warmup.
 Use repeated paired results and variability, not a single peak or timing, when
 deciding whether a patch improves performance. Record CPU model/topology,
 software builds, BLAS pools and other competing work for each machine.
+
+## Sparse observed-zero validation
+
+Run `uv run pytest -q tests/test_sparse_observed_zero_indices.py` to compare
+modern dense and sparse representations with explicitly stored zeros. The
+checks cover fixed-iteration factors, noise, covariance, reconstruction,
+uncertainty and cost/RMS histories, including probes and NaN cleanup. They
+also retain explicit strict-legacy coordinate and probe behavior. Record the
+compatibility mode and software pin with sparse benchmarks. This correctness
+repair does not upgrade or rerun a frozen scientific study automatically.

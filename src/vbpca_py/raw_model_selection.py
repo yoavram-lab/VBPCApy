@@ -85,7 +85,7 @@ class PreprocessedFold:
             else:
                 truth = np.asarray(self.raw[cells, j], dtype=float)
             decoded = variable.decode_numeric(
-                prediction[np.ix_(variable.columns, cells)]
+                prediction[np.ix_(np.asarray(variable.columns, dtype=np.intp), cells)]
             )
             if cells.size and not np.all(np.isfinite(decoded)):
                 msg = "held-out numeric predictions must be finite"

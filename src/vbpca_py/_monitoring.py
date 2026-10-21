@@ -17,13 +17,16 @@ from __future__ import annotations
 import logging
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, SupportsIndex, SupportsInt
+from typing import TYPE_CHECKING, Any, SupportsIndex, SupportsInt
 
 import numpy as np
 from scipy.io import loadmat
 from scipy.linalg import orth
 
 from ._rms import RmsConfig, compute_rms
+
+if TYPE_CHECKING:
+    from .results import LearningCurve
 
 logger = logging.getLogger(__name__)
 
@@ -455,7 +458,7 @@ def log_first_step(
 
 def log_step(
     verbose: int,
-    lc: Mapping[str, Sequence[float]],
+    lc: LearningCurve,
     angle_a: float | None,
 ) -> None:
     """Log metrics for the current iteration."""
@@ -499,7 +502,7 @@ def log_progress(
 # ---------------------------------------------------------------------
 
 
-def display_init(display: int, lc: Mapping[str, Sequence[float]]) -> dict[str, Any]:
+def display_init(display: int, lc: LearningCurve) -> dict[str, Any]:
     """Initialize matplotlib plots for RMS training/test errors.
 
     Parameters
@@ -557,9 +560,7 @@ def display_init(display: int, lc: Mapping[str, Sequence[float]]) -> dict[str, A
     return dsph
 
 
-def display_progress(
-    dsph: Mapping[str, Any], lc: Mapping[str, Sequence[float]]
-) -> None:
+def display_progress(dsph: Mapping[str, Any], lc: LearningCurve) -> None:
     """Update RMS training/test plots if display is enabled."""
     if not dsph.get("display", False):
         return
@@ -612,7 +613,7 @@ class InitialMonitoringInputs:
 
 def _initial_monitoring(
     inputs: InitialMonitoringInputs,
-) -> tuple[float, Any, float, dict[str, list[float]], dict[str, Any]]:
+) -> tuple[float, Any, float, LearningCurve, dict[str, Any]]:
     """Compute initial RMS / probe RMS and set up logging / display.
 
     Returns:
@@ -649,7 +650,7 @@ def _initial_monitoring(
     else:
         prms = float("nan")
 
-    lc: dict[str, list[float]] = {
+    lc: LearningCurve = {
         "rms": [float(rms)],
         "prms": [float(prms)],
         "time": [0.0],
