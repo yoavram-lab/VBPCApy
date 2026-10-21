@@ -14,8 +14,6 @@ import json
 from pathlib import Path
 from typing import Any
 
-import pandas as pd
-
 from vbpca_py._runtime_profiles import atomic_write_profile, load_profile, new_profile
 
 _THREAD_KEYS = (
@@ -66,6 +64,8 @@ def _derive_match_from_csv(args: argparse.Namespace) -> dict[str, object] | None
     if args.case_name == "":
         msg = "--case-name is required when --case-csv is provided."
         raise ValueError(msg)
+
+    import pandas as pd
 
     frame = pd.read_csv(args.case_csv)
     subset = frame.loc[frame["case"] == args.case_name]

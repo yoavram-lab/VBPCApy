@@ -363,3 +363,39 @@ def test_selection_cache_distinguishes_eligible_statistics_crossovers():
     assert _runtime_policy_key(
         k=4, x=x, mask=None, opts=observed
     ) == _runtime_policy_key(k=5, x=x, mask=None, opts=observed)
+
+
+def test_manual_profile_builder_does_not_require_optional_dataframe_library(
+    tmp_path, monkeypatch
+):
+    import builtins
+    import runpy
+
+    original = builtins.__import__
+
+    def guarded_import(name, *args, **kwargs):
+        if name == "pandas":
+            raise ImportError("pandas is deliberately unavailable")
+        return original(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", guarded_import)
+    output = tmp_path / "manual-profile.json"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "build_runtime_profile.py",
+            "--out",
+            str(output),
+            "--default-num-cpu-rms",
+            "1",
+        ],
+    )
+    runpy.run_path(
+        str(Path(__file__).resolve().parents[1] / "scripts/build_runtime_profile.py"),
+        run_name="__main__",
+    )
+    data = profiles.load_profile(output)
+    assert data is not None
+    assert data["schema_version"] == 2
+    assert data["default_threads"] == {"num_cpu_rms": 1}
