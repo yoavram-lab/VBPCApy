@@ -15,6 +15,8 @@ import contextlib
 import logging
 import time
 import warnings
+from collections.abc import Mapping
+from copy import deepcopy
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, SupportsFloat, SupportsIndex, SupportsInt, cast
 
@@ -22,7 +24,7 @@ import numpy as np
 import scipy.sparse as sp
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, MutableMapping
+    from collections.abc import MutableMapping
     from pathlib import Path
 
     from .results import LearningCurve, NumericTraceKey, PhaseTimingKey
@@ -196,6 +198,9 @@ def pca_full(
             iteration's cost, provided ``record_cost=False`` and no enabled
             stopping event consumes a cost trace. The default ``"trace"``
             preserves per-iteration recording when requested or required.
+            Mutable initialization payloads are copied before preparation and
+            numerical updates, including nested covariance arrays. Constructors
+            and caller-owned warm starts are not modified by fitting.
 
     Returns:
         Ordinary dictionary matching the historical PCA_FULL API, with typed
@@ -237,6 +242,12 @@ def pca_full(
     use_prior, use_postvar = _select_algorithm(opts)
     _warn_if_no_post_warmup_window(opts, use_prior=use_prior)
 
+    initialization = opts["init"]
+    # Convert generic mappings before deepcopy (mappingproxy is not picklable).
+    # Keep MAT filenames and supported struct objects on their existing path.
+    opts["init"] = deepcopy(
+        dict(initialization) if isinstance(initialization, Mapping) else initialization
+    )
     prepared = _prepare_problem(x, opts, mask_override=mask)
     training = _initialize_model(
         prepared=prepared,

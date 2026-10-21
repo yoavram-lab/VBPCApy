@@ -24,6 +24,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Copy initialization payloads before preparation and numerical updates.
+  Fitting now accepts read-only warm-start arrays, retains caller-owned
+  mappings and nested covariance arrays, and starts repeated fits from the
+  values the caller supplied.
+
 - Return a valid empty eigensystem for rank-zero native rotation instead of
   calling an unsupported Eigen decomposition and crashing the Python process.
   Retain shape and normalizer validation and positive-rank calculations.
