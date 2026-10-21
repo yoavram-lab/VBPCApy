@@ -758,10 +758,12 @@ def _observed_indices_with_mode(
     if mode == "modern":
         if sp.issparse(mask):
             rows, columns = mask.nonzero()
-        else:
-            mask_arr = np.asarray(mask, dtype=bool)
-            rows, columns = np.nonzero(mask_arr)
-        return np.asarray(rows, dtype=np.intp), np.asarray(columns, dtype=np.intp)
+            return np.asarray(rows, dtype=np.intp), np.asarray(columns, dtype=np.intp)
+        mask_arr = np.asarray(mask, dtype=bool)
+        dense_rows, dense_columns = np.nonzero(mask_arr)
+        return np.asarray(dense_rows, dtype=np.intp), np.asarray(
+            dense_columns, dtype=np.intp
+        )
     return _observed_indices(x_data)
 
 

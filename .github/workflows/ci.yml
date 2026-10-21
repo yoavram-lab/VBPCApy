@@ -63,6 +63,27 @@ jobs:
           uv build --sdist --out-dir dist-source-check
           uv run python scripts/check_sdist_tests.py dist-source-check
 
+  numpy24-typing:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+          cache-dependency-glob: "**/pyproject.toml"
+      - name: Install Eigen
+        run: sudo apt-get install -y libeigen3-dev
+      - name: Sync typing environment
+        run: uv sync --extra dev --extra plot --python 3.12
+      - name: Match the NumPy 2.4 wheel typing environment
+        run: uv pip install 'numpy==2.4.6' 'scipy==1.17.1' 'scipy-stubs==1.17.1.5' 'mypy==2.4.0'
+      - name: Check source and consumers for supported platforms
+        run: |
+          for platform in linux darwin win32; do
+            .venv/bin/python -m mypy --strict --platform "$platform" \
+              --cache-dir ".mypy_cache/numpy24-$platform" src tests/typing_results.py
+          done
+
   replay-windows:
     runs-on: windows-latest
     steps:
