@@ -1,0 +1,192 @@
+{
+  "archives_sha256": {
+    "baseline.tar": "dc5fa731a0930d76294049140f672e6cee421e09b8a5cf043af2a4054569e596",
+    "candidate.tar": "34efe2d378ea5b536a253ae58316dbce6ff270730c6d0c45293e03804cb88722"
+  },
+  "comparison": {
+    "fidelity": "exact array equality with equal NaNs; matching dtype and field roster",
+    "native_blas_core_settings": [
+      [
+        1,
+        1,
+        1
+      ],
+      [
+        2,
+        2,
+        1
+      ],
+      [
+        4,
+        4,
+        1
+      ],
+      [
+        1,
+        4,
+        4
+      ],
+      [
+        4,
+        4,
+        4
+      ]
+    ],
+    "pairs_per_host": 45,
+    "repeats": 3,
+    "scientific_claims_eligible": false,
+    "statistical_defaults_changed": false,
+    "workloads": [
+      "dense-q8",
+      "dense-q32",
+      "rms"
+    ]
+  },
+  "environment": {
+    "numpy": "2.2.6",
+    "python": "3.11.x",
+    "scipy": "1.17.1",
+    "threadpoolctl": "3.7.0",
+    "vbpca_py": "0.4.10"
+  },
+  "registered_date": "2026-10-20",
+  "resource_ceiling": {
+    "automatic_retries": false,
+    "hosts": {
+      "rockfish": {
+        "profile": {
+          "cpus": 4,
+          "memory_gib": 4,
+          "minutes": 20
+        },
+        "python": "/scratch4/struelo1/jcmacdon/genetics-native-v1-20261020-5a536de/venv/bin/python",
+        "root": "/scratch4/struelo1/jcmacdon/vbpca-backend-292-aca9189"
+      },
+      "skipjack": {
+        "environment_preparation": {
+          "cpus": 1,
+          "memory_gib": 2,
+          "minutes": 10
+        },
+        "profile": {
+          "cpus": 4,
+          "memory_gib": 4,
+          "minutes": 20
+        },
+        "python": "/home/jhu/jmacdo16/scratch_struelo1/vbpca-backend-292-aca9189/venv/bin/python",
+        "root": "/home/jhu/jmacdo16/scratch_struelo1/vbpca-backend-292-aca9189"
+      }
+    },
+    "total_allocated_cpu_hours": 3
+  },
+  "sources": {
+    "baseline": {
+      "files": {
+        "pyproject.toml": "ee59ef7af122edc9ca886780369a0fba8da5153b563d35dbd2ba20e958b7aa10",
+        "src/vbpca_py/__init__.py": "13082a6fdd79053e905734d847a13b53fcd4520882e20507d09975b2b67eeb5d",
+        "src/vbpca_py/_categorical_scores.py": "df0ebed86ddd0047feac848bd72e5d7f07a9bfef81133460b6d0ded55c3dccfb",
+        "src/vbpca_py/_converge.py": "32befa991d8f63d422fc7e139d57c0a6d889e8df42182ae225795121bd96e1d0",
+        "src/vbpca_py/_cost.py": "f38122a82303debf84af5363025ca1d308eb0c958d5e3ad8a42d092355429779",
+        "src/vbpca_py/_encoding_checks.py": "4005017ab221355d8d15d548e997c85c52aaa83d0888126c87658c2154def3d1",
+        "src/vbpca_py/_expand.py": "1b1cd7f5232cacb98b475d63d9a8779de7b8e0671a772955ef4423f1f1f5b543",
+        "src/vbpca_py/_full_update.py": "0f0431937f643b4de43a9eda0fa3ba450aee768b3c820a388b2ce3e1930081b6",
+        "src/vbpca_py/_mean.py": "35e899209f0540787472bcff02582026546924ebe6922fdc4c63949bbc093cbc",
+        "src/vbpca_py/_memory.py": "d8ce3e85f0398299c50ac00adb069bd5be55c6eea9277beddbf17b463db79f3a",
+        "src/vbpca_py/_missing.py": "7273d022562cae2b8e42af1cd8c1970fecb4da6767a915ea6c9b3f60143c8400",
+        "src/vbpca_py/_missingness_checks.py": "b555d3bea25501cbcc1261831c3c2cc9fb1620709fafd3b9e02a429516b811a1",
+        "src/vbpca_py/_monitoring.py": "fece30a1ad6cad1b0376be05667effcc17c023802ada5a34685de7f4ce8acf90",
+        "src/vbpca_py/_options.py": "345ebf993c23fdea8e83123325e4ab796e85a573c31c0bc7be5026c7cfaf2c34",
+        "src/vbpca_py/_pca_full.py": "6e83786588b0002d185334c3caafca36a2784b108840e0b2ff1177f54b1be187",
+        "src/vbpca_py/_remove_empty.py": "2d9957dd8888d03220657571fa463513db42b5fa53160a2630131a77321d3d15",
+        "src/vbpca_py/_rms.py": "f156ee8c3d0f0bdc25035daa94a30881f99a24c0d00508d74186c2169cb38261",
+        "src/vbpca_py/_rotate.py": "c9002722b13a4c931f44c9dd68e880b9dc4e040bab30841122fdc1ce56b46c78",
+        "src/vbpca_py/_runtime_policy.py": "6b89142fe773f2b172e91a612da3197f66d12c6f2beeadf1816e7343276f0523",
+        "src/vbpca_py/_sklearn_compat.py": "9190acdff15d9443c1cfe13f079ffb74e0e903d5582be303d144d7b3e2cafdee",
+        "src/vbpca_py/_sparse_error.py": "410ff6cf10ae3900efa354d659f9ded8a312b331abdcf88c737481be37d27f04",
+        "src/vbpca_py/_sparsity.py": "bb676cb11bcfb94e1cad693d5d13230dcef20d71fa7b64bb069367280bf38a09",
+        "src/vbpca_py/_types.py": "046f3f237efe5f680bac1b0b799adc59cf15d04c9abb871a994ad2f23fa83ed7",
+        "src/vbpca_py/defaults.py": "4d0b67e8c09fb0b1c08fc1b8d49471608102387d9062f8887e3f9a10c31913ce",
+        "src/vbpca_py/dense_update_kernels.cpp": "3c988c513707ebb11574b85fdda6b39a863356f81e5b98f777014a4b8be523ae",
+        "src/vbpca_py/dense_update_kernels.pyi": "b2abd9f08cf415136402f370b59dfd4215202971ecb29e8e6d3ac3f1c7dc2b55",
+        "src/vbpca_py/encoding.py": "c8d529e6cd885330079b26e4c6398e8a0b1d35ad375ab9f58e6b15c3f07142c6",
+        "src/vbpca_py/errpca_pt.cpp": "db1bd38c8c4401849be5a9ea556a5098b67e34fec7efbb7af13e7bcbbbac9dae",
+        "src/vbpca_py/errpca_pt.pyi": "952bd33a774c4bdabf4954f400448cd45ad4efede70fe896bb39f51c20eb35ae",
+        "src/vbpca_py/estimators.py": "4e084de3fd738c0385e1a896a0d8e2a598645e3251a6832009891603242892dd",
+        "src/vbpca_py/model_selection.py": "8919480b8a867074574f2678b77874742a4722573ce823341b2245c8c0288245",
+        "src/vbpca_py/noise_update_kernels.cpp": "413032e19d385d68564c9801b6e260b5205176cbde0a9d8c8ae7fc11e71e1356",
+        "src/vbpca_py/noise_update_kernels.pyi": "e5bf81828e790dec4bbef4f915a706cc3ef19cd7f430424d0cc0ba66015c5375",
+        "src/vbpca_py/plotting.py": "0053262ede6d7178a8414c7b5b43df2d36c131297a4f13d373f03ee265cc869f",
+        "src/vbpca_py/preprocessing.py": "f5151e646cd65bbfdd96405fb3b6eb668c2222d3ecd4a4d0c11b5bd485929069",
+        "src/vbpca_py/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "src/vbpca_py/raw_model_selection.py": "7ea5d3b74c8e6c8252f29cc4ba6fe29fcb813c5577dcff799cb03a0b12e76d2d",
+        "src/vbpca_py/rotate_update_kernels.cpp": "c293ca8e01d6a8395a68934799dcd23c924ffe40617736cea1f779df3ebb3944",
+        "src/vbpca_py/rotate_update_kernels.pyi": "47ca8860aa04b662fb839b166145be23dc98bcaeab8c18151347fa5e4b24ceac",
+        "src/vbpca_py/sparse_update_kernels.cpp": "0c81cd6470dd4ce6e7181ad17ca1f40344862d7644428513fb61269bd2b3bdde",
+        "src/vbpca_py/sparse_update_kernels.pyi": "63dc53258cdfe6f0c6f69b72f6668b7bf5027502c8e3a5ab7196c3bdcd67fce9",
+        "src/vbpca_py/subtract_mu_from_sparse.cpp": "76e568043ac8d858587344e219ea1823da7182ac83037ef54a43f1ec52119032",
+        "src/vbpca_py/subtract_mu_from_sparse.pyi": "10bf9997d8849bed0f520de56732047335c9b1d6feab651ce39977f4c6de4919",
+        "src/vbpca_py/thread_limits.h": "69b32d1230747e2f5e3393d480b49b7d266c1a3566cc1ff610d222341a8ade2b",
+        "src/vbpca_py/thread_workers.h": "675abf2b20c6bf54372eabecea2083cae52e77e1c730e0802b482fd0aa792d0c"
+      },
+      "revision": "07ae33fef8257c5241f403bedbb905d9d1f79de9"
+    },
+    "candidate": {
+      "files": {
+        "analysis/benchmark_backend_phases.py": "47cc8c2c9a3cd6738a0acb7c3f994cd977a994fd766584e597934fe1d60009a0",
+        "analysis/cluster/README.md": "eeb5b11441ce6e1a0b1edf804b6ab2b35d0edefa20260972538d86e99fac649f",
+        "analysis/cluster/backend_comparison.sbatch": "61e0458510c7aad37c6332faf37d6b498e66a49fb27db1511b2baf792076e0cf",
+        "analysis/cluster/prepare_backend_comparison.py": "5c80330f032f094c8d792ac4a05fd50ece9bede5cfc0f526f4887de8e56812dc",
+        "analysis/cluster/prepare_profile_environment.sbatch": "f3f940fece6747b5e06c930a900f3072d8d02b891674cf90f785b3ac89a90a15",
+        "analysis/compare_backend_revisions.py": "62051753ccd986ba483fe4f920765acdadf339c54c1dd629a051ce3ff068ce2f",
+        "pyproject.toml": "ee59ef7af122edc9ca886780369a0fba8da5153b563d35dbd2ba20e958b7aa10",
+        "src/vbpca_py/__init__.py": "13082a6fdd79053e905734d847a13b53fcd4520882e20507d09975b2b67eeb5d",
+        "src/vbpca_py/_categorical_scores.py": "df0ebed86ddd0047feac848bd72e5d7f07a9bfef81133460b6d0ded55c3dccfb",
+        "src/vbpca_py/_converge.py": "32befa991d8f63d422fc7e139d57c0a6d889e8df42182ae225795121bd96e1d0",
+        "src/vbpca_py/_cost.py": "f38122a82303debf84af5363025ca1d308eb0c958d5e3ad8a42d092355429779",
+        "src/vbpca_py/_encoding_checks.py": "4005017ab221355d8d15d548e997c85c52aaa83d0888126c87658c2154def3d1",
+        "src/vbpca_py/_expand.py": "1b1cd7f5232cacb98b475d63d9a8779de7b8e0671a772955ef4423f1f1f5b543",
+        "src/vbpca_py/_full_update.py": "b2930da9ac628b1cbe6eb7bcf44756ced5a6ef22e0799c30d43ffa4af66696cc",
+        "src/vbpca_py/_mean.py": "35e899209f0540787472bcff02582026546924ebe6922fdc4c63949bbc093cbc",
+        "src/vbpca_py/_memory.py": "d8ce3e85f0398299c50ac00adb069bd5be55c6eea9277beddbf17b463db79f3a",
+        "src/vbpca_py/_missing.py": "7273d022562cae2b8e42af1cd8c1970fecb4da6767a915ea6c9b3f60143c8400",
+        "src/vbpca_py/_missingness_checks.py": "b555d3bea25501cbcc1261831c3c2cc9fb1620709fafd3b9e02a429516b811a1",
+        "src/vbpca_py/_monitoring.py": "fece30a1ad6cad1b0376be05667effcc17c023802ada5a34685de7f4ce8acf90",
+        "src/vbpca_py/_options.py": "345ebf993c23fdea8e83123325e4ab796e85a573c31c0bc7be5026c7cfaf2c34",
+        "src/vbpca_py/_pca_full.py": "6e83786588b0002d185334c3caafca36a2784b108840e0b2ff1177f54b1be187",
+        "src/vbpca_py/_remove_empty.py": "2d9957dd8888d03220657571fa463513db42b5fa53160a2630131a77321d3d15",
+        "src/vbpca_py/_rms.py": "2231f1d2587bed6f26a727598fdf70a9c19657da8b20ffbf85e513f167ddbf62",
+        "src/vbpca_py/_rotate.py": "c9002722b13a4c931f44c9dd68e880b9dc4e040bab30841122fdc1ce56b46c78",
+        "src/vbpca_py/_runtime_policy.py": "6b89142fe773f2b172e91a612da3197f66d12c6f2beeadf1816e7343276f0523",
+        "src/vbpca_py/_sklearn_compat.py": "9190acdff15d9443c1cfe13f079ffb74e0e903d5582be303d144d7b3e2cafdee",
+        "src/vbpca_py/_sparse_error.py": "410ff6cf10ae3900efa354d659f9ded8a312b331abdcf88c737481be37d27f04",
+        "src/vbpca_py/_sparsity.py": "165d2fba281ac889a37b2d0361a2e03fafee699a9df47c12ae470b0ecb9f43ba",
+        "src/vbpca_py/_types.py": "046f3f237efe5f680bac1b0b799adc59cf15d04c9abb871a994ad2f23fa83ed7",
+        "src/vbpca_py/defaults.py": "4d0b67e8c09fb0b1c08fc1b8d49471608102387d9062f8887e3f9a10c31913ce",
+        "src/vbpca_py/dense_update_kernels.cpp": "3c988c513707ebb11574b85fdda6b39a863356f81e5b98f777014a4b8be523ae",
+        "src/vbpca_py/dense_update_kernels.pyi": "b2abd9f08cf415136402f370b59dfd4215202971ecb29e8e6d3ac3f1c7dc2b55",
+        "src/vbpca_py/encoding.py": "c8d529e6cd885330079b26e4c6398e8a0b1d35ad375ab9f58e6b15c3f07142c6",
+        "src/vbpca_py/errpca_pt.cpp": "db1bd38c8c4401849be5a9ea556a5098b67e34fec7efbb7af13e7bcbbbac9dae",
+        "src/vbpca_py/errpca_pt.pyi": "952bd33a774c4bdabf4954f400448cd45ad4efede70fe896bb39f51c20eb35ae",
+        "src/vbpca_py/estimators.py": "4e084de3fd738c0385e1a896a0d8e2a598645e3251a6832009891603242892dd",
+        "src/vbpca_py/model_selection.py": "8919480b8a867074574f2678b77874742a4722573ce823341b2245c8c0288245",
+        "src/vbpca_py/noise_update_kernels.cpp": "413032e19d385d68564c9801b6e260b5205176cbde0a9d8c8ae7fc11e71e1356",
+        "src/vbpca_py/noise_update_kernels.pyi": "e5bf81828e790dec4bbef4f915a706cc3ef19cd7f430424d0cc0ba66015c5375",
+        "src/vbpca_py/plotting.py": "0053262ede6d7178a8414c7b5b43df2d36c131297a4f13d373f03ee265cc869f",
+        "src/vbpca_py/preprocessing.py": "f5151e646cd65bbfdd96405fb3b6eb668c2222d3ecd4a4d0c11b5bd485929069",
+        "src/vbpca_py/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "src/vbpca_py/raw_model_selection.py": "7ea5d3b74c8e6c8252f29cc4ba6fe29fcb813c5577dcff799cb03a0b12e76d2d",
+        "src/vbpca_py/rotate_update_kernels.cpp": "c293ca8e01d6a8395a68934799dcd23c924ffe40617736cea1f779df3ebb3944",
+        "src/vbpca_py/rotate_update_kernels.pyi": "47ca8860aa04b662fb839b166145be23dc98bcaeab8c18151347fa5e4b24ceac",
+        "src/vbpca_py/sparse_update_kernels.cpp": "0c81cd6470dd4ce6e7181ad17ca1f40344862d7644428513fb61269bd2b3bdde",
+        "src/vbpca_py/sparse_update_kernels.pyi": "63dc53258cdfe6f0c6f69b72f6668b7bf5027502c8e3a5ab7196c3bdcd67fce9",
+        "src/vbpca_py/subtract_mu_from_sparse.cpp": "76e568043ac8d858587344e219ea1823da7182ac83037ef54a43f1ec52119032",
+        "src/vbpca_py/subtract_mu_from_sparse.pyi": "10bf9997d8849bed0f520de56732047335c9b1d6feab651ce39977f4c6de4919",
+        "src/vbpca_py/thread_limits.h": "69b32d1230747e2f5e3393d480b49b7d266c1a3566cc1ff610d222341a8ade2b",
+        "src/vbpca_py/thread_workers.h": "675abf2b20c6bf54372eabecea2083cae52e77e1c730e0802b482fd0aa792d0c"
+      },
+      "revision": "aca9189a7e4f1b3df544ef44f315d8f3f45e1ee9"
+    }
+  },
+  "stop_rule": "Any failure stops the job; preserve incomplete outputs. No automatic retries or changes to other jobs.",
+  "study": "backend-292-source-copy-qualification"
+}

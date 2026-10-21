@@ -137,6 +137,53 @@ mathlib and SymPy and state the proof boundaries. Follow numerical comparisons
 with representative fixed-policy full fits before adopting a rewrite; the
 local phase ratios do not establish whole-fit or cross-machine speedups.
 
+## Source-revision memory and thread profiles
+
+`analysis/compare_backend_revisions.py` compares a baseline and candidate source
+tree using the same interpreter and numerical environment. Build/install each
+tree's intended native extensions first. For a Python-only repair with unchanged
+native sources, the same extension binaries can be used in both trees; retain
+their hashes. Confirm the loaded package paths rather than relying on an
+editable installation's version metadata.
+
+Run on an allocated Linux compute node or an otherwise suitable workstation.
+Inspect CPU topology with `lscpu -p=CPU,CORE,SOCKET` and supply four CPU IDs from
+distinct physical cores within the process allocation. These IDs are an example;
+choose valid IDs for the machine:
+
+```bash
+uv sync --extra dev --extra plot
+uv run python analysis/compare_backend_revisions.py \
+  --baseline /path/to/baseline --candidate /path/to/candidate \
+  --cpus 4 5 6 7 --repeats 3 --output /tmp/vbpca-revision-profile
+```
+
+The driver runs children sequentially, alternating revision order between
+repeats. It compares a 1,536-by-1,024 rank-8 fit, a 512-by-256 rank-32 fit and
+RMS on 3,000-by-1,500 arrays. Fits use four fixed iterations with stopping and
+tuning disabled. Each workload uses `(allocated cores, native threads, BLAS
+limit)` settings `(1,1,1)`, `(2,2,1)`, `(4,4,1)`, `(4,1,4)` and `(4,4,4)`.
+Inspect actual BLAS pools separately, for example with
+`python -m threadpoolctl -i numpy scipy.linalg` under the same environment and
+affinity. Thread limits do not prove that small operations use every thread.
+
+The comparison requires equality of saved factors, covariance arrays, noise,
+RMS trajectories, available cost arrays and requested diagnostics within each
+execution setting. These profiling fits suppress cost recording; separate
+fixed-policy integration tests exercise nonempty cost curves.
+It checks loaded source paths and actual affinity. Reports retain source/native
+hashes, environment limits, numerical versions and snapshot comparison receipts.
+Successful dense snapshots are deleted to bound artifact storage; failures leave
+their snapshots and logs for diagnosis. Generated reports remain outside git.
+
+Fit timings exclude imports, input generation and snapshot writes. Fit peak RSS
+is the fresh process's high-water mark, including imports and input generation;
+it is not an incremental allocation measurement. The RMS probe additionally
+records NumPy-visible traced allocation peaks and median timings after warmup.
+Use repeated paired results and variability, not a single peak or timing, when
+deciding whether a patch improves performance. Record CPU model/topology,
+software builds, BLAS pools and other competing work for each machine.
+
 ## Sparse observed-zero validation
 
 Run `uv run pytest -q tests/test_sparse_observed_zero_indices.py` to compare

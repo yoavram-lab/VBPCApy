@@ -25,6 +25,7 @@ from ._monitoring import InitResult, InitShapes, init_params, log_progress
 from ._remove_empty import remove_empty_entries
 from ._rms import RmsConfig, compute_rms
 from ._rotate import RotateParams, rotate_to_pca
+from ._sparsity import _as_dense_mask
 from .dense_update_kernels import (
     loadings_update_dense_masked_nopattern as _loadings_update_dense_masked_ext,
 )
@@ -299,7 +300,9 @@ def _prepare_data(
     if sp.issparse(x):
         x_data: Matrix = sp.csr_matrix(cast("Any", x))
     else:
-        x_data = np.array(x, dtype=float).copy()
+        # The previous array(...).copy() ended in C order. Retain that layout
+        # and input ownership with one allocation, including dtype conversion.
+        x_data = np.array(x, dtype=float, copy=True, order="C")
 
     x_probe = _coerce_probe(x_probe_opt, sparse_input=sp.issparse(x_data))
 
@@ -1288,7 +1291,7 @@ def _dense_column_accessor(arr: np.ndarray) -> Callable[[int], np.ndarray]:
 
 def _dense_mask_column_accessor(arr: np.ndarray) -> Callable[[int], np.ndarray]:
     def _col(j: int) -> np.ndarray:
-        return np.asarray(arr[:, j], dtype=float)
+        return arr[:, j]
 
     return _col
 
@@ -1302,7 +1305,7 @@ def _dense_row_accessor(arr: np.ndarray) -> Callable[[int], np.ndarray]:
 
 def _dense_mask_row_accessor(arr: np.ndarray) -> Callable[[int], np.ndarray]:
     def _row(i: int) -> np.ndarray:
-        return np.asarray(arr[i, :], dtype=float)
+        return arr[i, :]
 
     return _row
 
@@ -1329,7 +1332,7 @@ def _score_accessors(
         mask_col = _csc_mask_column_accessor(mask_csc, use_buffered=use_buffered)
 
     else:
-        mask_arr = np.asarray(state.mask, dtype=float)
+        mask_arr = _as_dense_mask(state.mask)
         mask_col = _dense_mask_column_accessor(mask_arr)
 
     return x_col, mask_col, int(state.x_data.shape[1])
@@ -1490,6 +1493,16 @@ def _score_update_with_patterns(state: ScoreState) -> ScoreState:
     return state
 
 
+def _dense_mask_is_fully_observed(mask: Matrix) -> bool:
+    """Inspect a dense mask without expanding boolean storage.
+
+    Returns:
+        Whether every mask value is positive, using the legacy numeric rule.
+    """
+    array = _as_dense_mask(mask)
+    return bool(np.all(array if array.dtype == np.bool_ else array > 0))
+
+
 def _update_scores(state: ScoreState) -> ScoreState:
     """Update scores and score covariances.
 
@@ -1504,17 +1517,11 @@ def _update_scores(state: ScoreState) -> ScoreState:
         if sp.issparse(state.x_data) and sp.issparse(state.mask):
             return _score_update_sparse_no_patterns(state)
 
-        dense_mask = None
-        fully_observed = False
-        if not sp.issparse(state.mask):
-            dense_mask = np.asarray(state.mask, dtype=float)
-            fully_observed = bool(np.all(dense_mask > 0))
-
         if (
-            dense_mask is not None
-            and fully_observed
-            and not _has_covariances(state.loading_covariances)
+            not _has_covariances(state.loading_covariances)
             and not sp.issparse(state.x_data)
+            and not sp.issparse(state.mask)
+            and _dense_mask_is_fully_observed(state.mask)
         ):
             return _score_update_fast_dense_no_av(state)
 
@@ -1548,7 +1555,7 @@ def _loadings_accessors(
         mask_row = _csr_mask_row_accessor(mask_csr, use_buffered=use_buffered)
 
     else:
-        mask_arr = np.asarray(state.mask, dtype=float)
+        mask_arr = _as_dense_mask(state.mask)
         mask_row = _dense_mask_row_accessor(mask_arr)
 
     return x_row, mask_row, int(state.x_data.shape[0])
@@ -2039,13 +2046,7 @@ def _update_loadings(
     Returns:
         Updated loadings and loading covariances.
     """
-    dense_mask = None
-    fully_observed = False
     sv_contrib = _has_covariances(state.score_covariances)
-
-    if not sp.issparse(state.mask):
-        dense_mask = np.asarray(state.mask, dtype=float)
-        fully_observed = bool(np.all(dense_mask > 0))
 
     if (
         state.pattern_index is None
@@ -2064,10 +2065,10 @@ def _update_loadings(
         return loadings, covariances
 
     if (
-        dense_mask is not None
-        and fully_observed
-        and not sv_contrib
+        not sv_contrib
         and not sp.issparse(state.x_data)
+        and not sp.issparse(state.mask)
+        and _dense_mask_is_fully_observed(state.mask)
     ):
         return _loadings_update_fast_dense_no_sv(state)
 

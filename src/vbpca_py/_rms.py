@@ -9,7 +9,7 @@ import numpy as np
 import scipy.sparse as sp
 
 from ._sparse_error import sparse_reconstruction_error
-from ._sparsity import validate_mask_compatibility
+from ._sparsity import _as_dense_mask, validate_mask_compatibility
 
 
 @dataclass(frozen=True)
@@ -150,7 +150,7 @@ def _compute_rms_dense(
         msg = "mask must be provided for dense data."
         raise ValueError(msg)
 
-    mask_arr = np.asarray(mask, dtype=float)
+    mask_arr = _as_dense_mask(mask)
 
     if mask_arr.shape != data_arr.shape:
         msg = "mask shape must match data shape."
@@ -168,8 +168,9 @@ def _compute_rms_dense(
         )
         raise ValueError(msg)
 
-    residual = data_arr - (loadings @ scores)
-    err = residual * mask_arr
+    err = data_arr - (loadings @ scores)
+    # This residual is newly owned; masking it cannot mutate caller inputs.
+    np.multiply(err, mask_arr, out=err)
 
     rms = float(np.sqrt(np.sum(err**2) / n_obs))
     return rms, err

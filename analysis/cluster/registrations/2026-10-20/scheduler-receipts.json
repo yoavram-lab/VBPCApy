@@ -1,0 +1,36 @@
+{
+  "source_revision": "aca9189a7e4f1b3df544ef44f315d8f3f45e1ee9",
+  "original_registration_sha256": "ed92e7adbb61496c59a835950f903473018343b41933e2a5448759dd8c36f5a3",
+  "allocation_amendment_sha256": "084bb54c694e937a121adf3e830d79da0ed0f1ce365a875ea89917d7810a7c8d",
+  "jobs": {
+    "rockfish_profile": {
+      "id": "32325436",
+      "state": "COMPLETED",
+      "exit_code": "0:0",
+      "allocated_cpus": 4,
+      "elapsed_seconds": 277,
+      "allocated_cpu_hours": 0.30777777777777776,
+      "total_cpu_seconds": 396.297,
+      "sampled_slurm_max_rss_kib": 258316,
+      "time_limit_minutes": 10
+    },
+    "skipjack_environment": {
+      "job_id": "1192139",
+      "state": "COMPLETED",
+      "allocated_cpus": 2,
+      "elapsed_seconds": 28,
+      "exit_code": "0:0"
+    },
+    "skipjack_profile": {
+      "job_id": "1192155",
+      "status_at_recording": "PENDING",
+      "reason": "QOSMaxCpuPerUserLimit",
+      "time_limit_minutes": 10
+    }
+  },
+  "automatic_retries": false,
+  "numerical_profile_results_available": true,
+  "completed_hosts": [
+    "rockfish"
+  ]
+}
