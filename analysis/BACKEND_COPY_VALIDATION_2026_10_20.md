@@ -170,3 +170,26 @@ Raw `comparison.json`, `hardware.json` and scheduler output remain under
 `/scratch4/struelo1/jcmacdon/vbpca-backend-292-aca9189/` and in the local
 qualification artifact directory. The comparison SHA256 is
 `846d00b3accd5a6b31506211d6e29deb26138245039957c97337c7489a8b01be`.
+
+## Integration with 0.4.11
+
+Source `45380185535849fcde31ffe3936318c490074893` integrates the released
+sparse correctness repairs and typed result mappings. Against the 0.4.11
+source tree (`8422d802ee74391e4bb093dc882c2565b41065e8`), only
+`_full_update.py`, `_rms.py` and `_sparsity.py` differ at runtime. The native
+extensions were rebuilt before testing. The full suite passed 1,391 tests
+with 94.45% source coverage; 55 optional tests were deselected. All 48
+numerical references passed, and 1,446 tests collected from the source
+archive. Format, lint, strict development and NumPy 2.4 typing, release
+metadata and the strict documentation build also passed.
+
+A fresh-process check against 0.4.11 repeated each of the three workloads
+at all five execution settings once. All 15 pairs had equal saved arrays,
+stable loaded source hashes and identical native binaries. This checks the
+integration; one pair per setting adds no timing evidence to the earlier
+repeated profiles. The original Rockfish and queued Skipjack comparisons
+retain their registered 0.4.10 baseline and earlier candidate source.
+
+The [integration receipt](cluster/registrations/2026-10-20/post-integration-2026-10-21.json)
+retains source signatures, the comparison digest and local validation. Merge
+remains held for Skipjack qualification and the integrated PR's CI.
