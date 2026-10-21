@@ -61,7 +61,12 @@ from ._full_update import (
     _update_scores,
 )
 from ._mean import ProbeMatrices, subtract_mu
-from ._memory import exceeds_budget, format_bytes, resolve_max_dense_bytes
+from ._memory import (
+    check_dense_output_budget,
+    exceeds_budget,
+    format_bytes,
+    resolve_max_dense_bytes,
+)
 from ._monitoring import InitialMonitoringInputs, InitShapes, _initial_monitoring
 from ._options import _options
 from ._runtime_policy import (
@@ -163,12 +168,19 @@ def pca_full(
             observed, including numerical zeros. Explicit probe coordinates
             are excluded from training even when selected by this mask.
             For sparse ``x``, the mask must match its stored structure.
-        **kwargs: Options; see :func:`_build_options`.
+        **kwargs: Options; see :func:`_build_options`. ``max_dense_bytes``
+            limits the combined float64 ``Xrec``, ``Vr`` and ``Vpred`` outputs
+            using the original shape (default 2,000,000,000; ``None`` disables
+            the limit). Factors, covariance stores and temporary arrays are
+            excluded; this is not a peak process-memory bound.
 
     Returns:
         Ordinary dictionary matching the historical PCA_FULL API, with typed
         fields described in :mod:`vbpca_py.results`. Large diagnostic arrays
         are ``None`` when ``return_diagnostics=False``.
+
+    Requests above ``max_dense_bytes`` raise ``ValueError`` before preparation.
+    Suppressing diagnostics omits those outputs.
 
     Examples:
         Fit two feature rows with one latent component. This short example uses
@@ -181,6 +193,7 @@ def pca_full(
         ...     maxiters=2,
         ...     niter_broadprior=0,
         ...     return_diagnostics=False,
+        ...     max_dense_bytes=1,
         ...     random_state=4,
         ... )
         >>> result["A"].shape, result["S"].shape
@@ -189,6 +202,15 @@ def pca_full(
         True
     """
     opts: MutableMapping[str, object] = _build_options(kwargs)
+    max_dense_bytes = resolve_max_dense_bytes(opts.get("max_dense_bytes"))
+    shape = np.shape(x)
+    if bool(opts.get("return_diagnostics", True)) and len(shape) == 2:
+        check_dense_output_budget(
+            (shape[0], shape[1]),
+            max_dense_bytes,
+            arrays=3,
+            operation="Fit diagnostics",
+        )
     use_prior, use_postvar = _select_algorithm(opts)
     _warn_if_no_post_warmup_window(opts, use_prior=use_prior)
 
@@ -212,6 +234,7 @@ def pca_full(
     return _pack_result(
         final,
         include_diagnostics=bool(opts.get("return_diagnostics", True)),
+        max_dense_bytes=max_dense_bytes,
         explained_var_solver=str(opts.get("explained_var_solver", "auto")),
         explained_var_gram_ratio=_float_opt(
             opts.get("explained_var_gram_ratio", 4.0), default=4.0
@@ -2204,10 +2227,11 @@ def _returned_metric(lc: LearningCurve, key: NumericTraceKey) -> float:
     return _last_metric(lc, key)
 
 
-def _pack_result(
+def _pack_result(  # noqa: PLR0913
     final: FinalState,
     *,
     include_diagnostics: bool = True,
+    max_dense_bytes: int | None = 2_000_000_000,
     explained_var_solver: str = "auto",
     explained_var_gram_ratio: float = 4.0,
     runtime_report: dict[str, object] | None = None,
@@ -2218,6 +2242,12 @@ def _pack_result(
         Dictionary mirroring the legacy MATLAB output structure.
     """
     if include_diagnostics:
+        check_dense_output_budget(
+            (final.a.shape[0], final.s.shape[1]),
+            max_dense_bytes,
+            arrays=3,
+            operation="Fit diagnostics",
+        )
         xrec = _reconstruct_data(final.a, final.s, final.mu)
         vr = _marginal_variance(final)
         # Predictive variance for a new observed entry adds the observation

@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Enforce `max_dense_bytes` before fit diagnostics, selected-model diagnostics
+  and inverse reconstruction. Fit diagnostics count all three persistent
+  full-shape float64 outputs together using the original shape. Suppressed
+  diagnostics and explicit `None` retain their opt-out behavior. Byte estimates
+  use Python integers to avoid overflow; the limit excludes temporary storage,
+  factors, covariance stores and peak process memory.
+
 - Retain boolean masks through dense updates and RMS calculations, skip
   ineligible fully observed checks, and mask newly owned residuals in place.
   Remove a duplicate preparation copy while retaining C layout, caller input

@@ -66,25 +66,46 @@ when the allocation is otherwise ambiguous.
 
 ## Memory budget
 
-`max_dense_bytes` currently guards dense observation-mask handling for sparse
-input. It does not bound all dense allocations or peak memory:
+`max_dense_bytes` bounds the combined persistent storage of the three full-shape
+fit diagnostics: reconstruction, latent variance and predictive variance. These
+are float64 arrays with the original feature-by-sample shape, even when input
+is sparse or empty rows/columns are removed during fitting. The default limit
+is 2,000,000,000 bytes. A request above the limit raises `ValueError` before
+fitting; exactly the limit is allowed.
 
 ```python
-# Set the dense observation-mask limit for sparse input
-model = VBPCA(n_components=5, max_dense_bytes=2 * 1024**3)
+from vbpca_py import VBPCA
+
+# Limit the three fit outputs together to 512 MiB.
+model = VBPCA(n_components=5, max_dense_bytes=512 * 1024**2)
+
+# Retain fitted factors without materializing those three outputs.
+model_without_outputs = VBPCA(n_components=5, return_diagnostics=False)
+
+# Explicitly disable the output limit when sufficient memory is available.
+model_without_limit = VBPCA(n_components=5, max_dense_bytes=None)
 ```
 
-Full reconstruction and uncertainty diagnostics are dense even when training
-input is sparse. With `return_diagnostics=True` (the default), the fit returns
-reconstruction, latent variance and predictive variance, each with the full
-feature-by-sample shape. For 5,846 features and 2,504 samples, three float64
-outputs alone require about 335 MiB, before factors, covariance arrays and
-temporary working storage. These outputs are not protected by the mask limit.
+For 5,846 features and 2,504 samples, the three outputs alone need about
+335 MiB. Factors, covariance stores, input copies, temporary arrays and allocator
+behavior are outside this limit, so it is not a bound on peak process memory.
+`return_diagnostics=False` omits those fit outputs; it does not bound temporary
+work or make fitting out of core.
 
-Use `return_diagnostics=False` when those fit-time outputs are unnecessary.
-The fitted factors remain available. Later operations that reconstruct the
-whole matrix can still allocate dense arrays; this option does not make
-inference or prediction out of core.
+The same option separately bounds dense observation-mask handling for sparse
+input and the single output of `inverse_transform()`. The latter checks the
+actual number of supplied score columns before reconstruction. These operations
+do not share a cumulative process-wide allowance. Invalid masks and incompatible
+score shapes still raise their own input errors.
+
+Component selection defaults to `SelectionConfig(compute_explained_variance=True)`,
+which requests the selected positive-rank model's reconstruction and variance
+outputs after its sweep. That operation receives the same combined three-output
+check, even when individual candidate fits omit diagnostics. For scalar-only
+selection, set `compute_explained_variance=False` and leave candidate
+`return_diagnostics=False`. The rank-zero selection baseline returns scalar
+metrics and no fitted estimator, so it has no persistent diagnostic outputs
+to charge. Its temporary scoring arrays remain outside this output limit.
 
 ## Runtime report
 
