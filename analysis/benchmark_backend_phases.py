@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
+import scipy.sparse as sp
 from threadpoolctl import threadpool_info
 
 import vbpca_py
@@ -48,6 +49,7 @@ _PHASE_TARGETS = {
     "restore_shape": "_restore_original_shape",
     "pack_result": "_pack_result",
     "explained_variance": "_explained_variance",
+    "sparse_views": "_coerce_sparse_views",
 }
 
 
@@ -74,12 +76,17 @@ def _parser() -> argparse.ArgumentParser:
         default="auto",
     )
     parser.add_argument("--skip-diagnostics", action="store_true")
+    parser.add_argument("--sparse", action="store_true")
+    parser.add_argument("--skip-bias", action="store_true")
+    parser.add_argument("--skip-rotation", action="store_true")
     parser.add_argument("--output", type=Path)
     parser.add_argument("--snapshot-dir", type=Path)
     return parser
 
 
-def _make_problem(args: argparse.Namespace) -> tuple[np.ndarray, np.ndarray]:
+def _make_problem(
+    args: argparse.Namespace,
+) -> tuple[np.ndarray | sp.csr_matrix, np.ndarray | sp.csr_matrix]:
     rng = np.random.default_rng(args.seed)
     rank = min(args.true_rank, args.features, args.samples)
     loadings = rng.normal(size=(args.features, rank))
@@ -92,6 +99,13 @@ def _make_problem(args: argparse.Namespace) -> tuple[np.ndarray, np.ndarray]:
     # Avoid empty rows and columns so the requested shape is the fitted shape.
     mask[:, 0] = True
     mask[0, :] = True
+    if args.sparse:
+        rows, columns = np.nonzero(mask)
+        # Include an explicit observed zero in the prepared input.
+        x[0, 0] = 0.0
+        return sp.csr_matrix(
+            (x[rows, columns], (rows, columns)), shape=x.shape
+        ), sp.csr_matrix(mask)
     return np.array(x, order=args.order), np.array(mask, order=args.order)
 
 
@@ -144,8 +158,8 @@ def _autotune_seconds(runtime_report: dict[str, object]) -> float:
 
 def _run_once(
     args: argparse.Namespace,
-    x: np.ndarray,
-    mask: np.ndarray,
+    x: np.ndarray | sp.csr_matrix,
+    mask: np.ndarray | sp.csr_matrix,
     repeat: int,
 ) -> dict[str, object]:
     rss_before = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
@@ -159,7 +173,8 @@ def _run_once(
             maxiters=args.iterations,
             niter_broadprior=0,
             convergence_criteria=_CONVERGENCE_OFF,
-            rotate2pca=True,
+            rotate2pca=not args.skip_rotation,
+            bias=not args.skip_bias,
             record_cost=False,
             return_diagnostics=not args.skip_diagnostics,
             runtime_tuning=args.runtime_tuning,
@@ -205,7 +220,10 @@ def _run_once(
         "shape": [args.features, args.samples],
         "components": args.components,
         "missing_rate": args.missing_rate,
-        "observed_fraction": float(np.mean(mask)),
+        "observed_fraction": float(mask.sum()) / (args.features * args.samples),
+        "storage": "csr" if args.sparse else "dense",
+        "bias": not args.skip_bias,
+        "rotation": not args.skip_rotation,
         "order": args.order,
         "threads": args.threads,
         "iterations": args.iterations,

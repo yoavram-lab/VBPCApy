@@ -190,10 +190,26 @@ matrices. This excludes BLAS workspace and the required output itself.
 `max_dense_bytes` still checks combined diagnostic output storage, rather than
 peak process memory. Use `return_diagnostics=False` to omit full outputs.
 
-The [benchmark procedure](../../scripts/benchmark_study.md#posterior-variance-contractions)
+The [benchmark procedure](https://github.com/yoavram-lab/VBPCApy/blob/main/scripts/benchmark_study.md#posterior-variance-contractions)
 includes covariance packing, numerical error, NumPy allocation peaks and
 optional whole-fit measurements. Selected-cell reconstruction remains a separate
 API proposal (#20); full output never fills unevaluated cells with zeros.
+
+## Sparse representations and allocation checks
+
+Sparse loading updates consume CSR rows directly. Score updates build a CSC
+view once per distinct centered matrix, and reuse it across iterations when
+values stay unchanged. Bias updates and bias-enabled rotations invalidate the
+cached values, including updates that reuse the original CSR object. Conversion
+time is included in score/loadings phase timings and total fit time.
+
+Native score and loading workers reuse their scratch vector across observed
+cells. The Linux/glibc CI allocation probe counts malloc/calloc/realloc calls
+around warmed kernels, including fixed input/output and Python argument costs.
+It compares fixed shape/rank workloads with widely differing observation counts
+and rejects growth with `nnz`. This is a deterministic allocation contract,
+rather than a portable timing threshold or a claim of zero allocations per fit.
+See [reproduction commands](https://github.com/yoavram-lab/VBPCApy/blob/main/scripts/benchmark_study.md#sparse-allocation-and-view-lifetimes).
 
 ## Native failures
 
