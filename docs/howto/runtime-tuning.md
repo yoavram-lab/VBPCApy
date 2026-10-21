@@ -162,6 +162,10 @@ between cold/warm pairs and cannot interrupt a native call. These isolated
 initial-state probes omit intervening rotation and do not establish a universal
 optimum. Compare complete fits and allocation throughput before adopting a policy.
 
+Pool discovery is collected only when `runtime_report=True` is requested.
+The first loaded-BLAS discovery adds startup work (several milliseconds in the
+small shared-host fixtures); the phase and whole-fit measurements include it.
+
 `execution_pools` distinguishes requested settings from effective native worker
 counts, resolved by the compiled kernels' own allocation and workload rules.
 Zero denotes an unused native pool. Complete-data matrix products and Python

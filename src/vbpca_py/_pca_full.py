@@ -854,19 +854,20 @@ def _resolve_runtime_threads_for_training(
     runtime_report["log_progress_stride"] = int(log_stride)
     runtime_report["accessor_mode"] = accessor_mode
     runtime_report["behavior_sources"] = behavior_sources
-    runtime_report["execution_pools"] = execution_pools(
-        runtime_threads,
-        workload,
-        patterns=prepared.pattern_index is not None,
-        loading_covariances=bool(len(training.model.av)),
-        score_covariances=bool(len(training.model.sv)),
-        bias=bool(opts.get("bias", True)),
-        missing_count=(
-            cast("NoiseComplement", opts["_noise_complement"]).rows.size
-            if opts.get("_noise_complement") is not None
-            else None
-        ),
-    )
+    if bool(opts.get("runtime_report", False)):
+        runtime_report["execution_pools"] = execution_pools(
+            runtime_threads,
+            workload,
+            patterns=prepared.pattern_index is not None,
+            loading_covariances=bool(len(training.model.av)),
+            score_covariances=bool(len(training.model.sv)),
+            bias=bool(opts.get("bias", True)),
+            missing_count=(
+                cast("NoiseComplement", opts["_noise_complement"]).rows.size
+                if opts.get("_noise_complement") is not None
+                else None
+            ),
+        )
     return runtime_threads, runtime_report
 
 

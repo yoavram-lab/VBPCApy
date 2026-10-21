@@ -290,6 +290,7 @@ def test_orchestration_resolves_statistics_and_retains_measured_threads(
         "maxiters": 0,
         "runtime_tuning": "safe",
         "dense_sufficient_statistics": "complement",
+        "runtime_report": True,
         "uniquesv": False,
         "auto_pattern_masked": False,
         "bias": False,
@@ -399,3 +400,21 @@ def test_manual_profile_builder_does_not_require_optional_dataframe_library(
     assert data is not None
     assert data["schema_version"] == 2
     assert data["default_threads"] == {"num_cpu_rms": 1}
+
+
+def test_unrequested_runtime_report_skips_blas_discovery(monkeypatch):
+    from test_cov_writeback_autotune import _prepare_state
+
+    import vbpca_py._pca_full as fitter
+
+    prepared, training, opts = _prepare_state(np.ones((3, 4)), runtime_tuning="off")
+    opts["runtime_report"] = False
+
+    def fail(*args, **kwargs):
+        pytest.fail("unrequested report must not discover BLAS pools")
+
+    monkeypatch.setattr(fitter, "execution_pools", fail)
+    _, report = fitter._resolve_runtime_threads_for_training(
+        prepared=prepared, training=training, opts=opts
+    )
+    assert "execution_pools" not in report
