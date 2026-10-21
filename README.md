@@ -62,6 +62,26 @@ More examples: [quickstart](https://yoavram-lab.github.io/VBPCApy/getting-starte
 
 See the [concept guides](https://yoavram-lab.github.io/VBPCApy/concepts/algorithm/) and [API reference](https://yoavram-lab.github.io/VBPCApy/api/vbpca/) for full details.
 
+## Typed fit results
+
+`PCAResult` and `LearningCurve` are exported from `vbpca_py`. They describe
+ordinary result dictionaries, retaining existing keys and array ownership.
+Learning curves contain numeric histories and metadata with different types:
+
+```python
+from vbpca_py import LearningCurve
+
+curve: LearningCurve | None = model.learning_curve_
+if curve is not None:
+    print(curve.get("convergence_reason"))
+    print(curve.get("returned_iteration"))
+```
+
+The low-level `pca_full()` return annotation is `PCAResult`. See the
+[result reference](docs/api/results.md) for array shapes, optional diagnostic
+outputs and shared covariance blocks. Type annotations specify dtypes; they
+do not validate array shapes or make arrays immutable.
+
 ## Categorical component selection
 
 Dense `AutoEncoder` and `MissingAwareOneHotEncoder` fits expose an

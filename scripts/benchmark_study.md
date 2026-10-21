@@ -1,5 +1,20 @@
 # Encoding-aware selection validation
 
+Result-contract checks run with the regular test suite and strict consumer
+typing:
+
+```bash
+just typecheck
+uv run pytest -q tests/test_result_contracts.py tests/test_sparse_pattern_groups.py
+```
+
+These checks cover the existing dictionary keys and heterogeneous learning
+curves, plus sparse covariance groups that partition sample columns. The
+sparse repair preserves observed zeros and compares shared/unshared fits,
+cost histories and uncertainty after consistent component-sign alignment.
+It changes a previously failing sparse-sharing path; adopting it in a study
+requires recording the new software pin. No frozen benchmark is regenerated.
+
 Encoding-aware selection affects categorical scoring and the selected capacity for
 mixed encodings. It adds a fitted schema for dense encoders, preserves fitted
 centering on later transforms, and decodes nominal categorical predictions

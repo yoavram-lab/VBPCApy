@@ -13,12 +13,30 @@ import numpy as np
 import pytest
 import scipy.sparse as sp
 
+import vbpca_py
 import vbpca_py.results as result_types
 from vbpca_py._pca_full import pca_full
 
 
 def test_public_return_annotation_can_be_resolved() -> None:
     assert get_type_hints(pca_full)["return"] is result_types.PCAResult
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "PCAResult",
+        "LearningCurve",
+        "Float64Array",
+        "IndexArray",
+        "PosteriorCovariances",
+        "CovarianceResult",
+        "HyperparameterResult",
+    ],
+)
+def test_result_contracts_are_exported_from_the_package_root(name) -> None:
+    assert name in vbpca_py.__all__
+    assert getattr(vbpca_py, name) is getattr(result_types, name)
 
 
 def test_result_docstring_examples() -> None:

@@ -33,6 +33,18 @@ from typing import Literal, TypeAlias, TypedDict
 import numpy as np
 import numpy.typing as npt
 
+__all__ = [
+    "CovarianceResult",
+    "Float64Array",
+    "HyperparameterResult",
+    "IndexArray",
+    "LearningCurve",
+    "NumericTraceKey",
+    "PCAResult",
+    "PhaseTimingKey",
+    "PosteriorCovariances",
+]
+
 Float64Array: TypeAlias = npt.NDArray[np.float64]
 IndexArray: TypeAlias = npt.NDArray[np.int_]
 PosteriorCovariances: TypeAlias = MutableSequence[Float64Array] | Float64Array

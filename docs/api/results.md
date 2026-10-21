@@ -9,7 +9,7 @@ not wrap or copy the fitted arrays.
 import numpy as np
 
 from vbpca_py._pca_full import pca_full
-from vbpca_py.results import PCAResult
+from vbpca_py import PCAResult
 
 data = np.array([[1., 2., 3.], [3., 1., 2.]])
 result: PCAResult = pca_full(
