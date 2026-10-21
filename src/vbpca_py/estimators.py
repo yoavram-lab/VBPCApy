@@ -9,6 +9,7 @@ import numpy as np
 import scipy.sparse as sp
 
 from vbpca_py._memory import (
+    check_dense_output_budget,
     exceeds_budget,
     format_bytes,
     resolve_max_dense_bytes,
@@ -107,7 +108,11 @@ class VBPCA(BaseEstimator):
                 and no explicit *xprobe* is passed to :meth:`fit`.  ``None``
                 (default) draws fresh entropy each call, matching prior
                 behaviour; set an int for reproducible fits.
-            **opts: Additional options passed to the underlying PCA_FULL implementation.
+            **opts: Additional PCA_FULL options. ``max_dense_bytes`` limits the
+                combined float64 reconstruction and two variance outputs
+                (default 2,000,000,000 bytes; ``None`` disables the limit).
+                ``return_diagnostics=False`` omits these fit outputs. Neither
+                option bounds factors, covariance stores or peak memory.
         """
         self.n_components = n_components
         self.bias = bias
@@ -247,7 +252,8 @@ class VBPCA(BaseEstimator):
             The fitted estimator instance.
 
         Raises:
-            ValueError: If ``mask`` shape does not match ``x``.
+            ValueError: If ``mask`` shape does not match ``x`` or requested
+                dense diagnostics exceed ``max_dense_bytes``.
         """
         _warn_deprecated_tol(self.tol)
         opts: dict[str, object] = {
@@ -272,6 +278,17 @@ class VBPCA(BaseEstimator):
             opts["convergence_criteria"] = self.convergence_criteria
         opts["random_state"] = self.random_state
         opts.update(self.opts)
+        max_dense_bytes = resolve_max_dense_bytes(
+            opts.get("max_dense_bytes", 2_000_000_000)
+        )
+        shape = np.shape(x)
+        if bool(opts.get("return_diagnostics", True)) and len(shape) == 2:
+            check_dense_output_budget(
+                (shape[0], shape[1]),
+                max_dense_bytes,
+                arrays=3,
+                operation="Fit diagnostics",
+            )
         if xprobe is not None:
             opts["xprobe"] = xprobe
         elif self.xprobe_fraction > 0.0:
@@ -283,9 +300,6 @@ class VBPCA(BaseEstimator):
             )
             opts["xprobe"] = xprobe_gen
 
-        max_dense_bytes = resolve_max_dense_bytes(
-            opts.get("max_dense_bytes", 2_000_000_000)
-        )
         if not sp.issparse(x) and mask is not None and sp.issparse(mask):
             msg = "mask must be dense when x is dense"
             raise ValueError(msg)
@@ -536,11 +550,25 @@ class VBPCA(BaseEstimator):
 
         Raises:
             RuntimeError: If the model is not fitted.
+            ValueError: If scores have incompatible dimensions or the single
+                dense output would exceed ``max_dense_bytes``.
         """
         if self.components_ is None or self.mean_ is None:
             msg = "Model not fitted"
             raise RuntimeError(msg)
         scores_arr = self.scores_ if scores is None else np.asarray(scores, dtype=float)
+        if (
+            scores_arr is None
+            or scores_arr.ndim != 2
+            or scores_arr.shape[0] != self.components_.shape[1]
+        ):
+            msg = "scores must have shape (n_components, n_samples)"
+            raise ValueError(msg)
+        check_dense_output_budget(
+            (self.components_.shape[0], scores_arr.shape[1]),
+            resolve_max_dense_bytes(self.opts.get("max_dense_bytes", 2_000_000_000)),
+            operation="Inverse reconstruction",
+        )
         recon = self.components_ @ scores_arr
         if self.bias:
             recon += self.mean_

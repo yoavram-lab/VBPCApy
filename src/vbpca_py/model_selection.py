@@ -20,7 +20,12 @@ from ._categorical_scores import (
     categorical_scores,
     validate_legacy_categorical_input,
 )
-from ._memory import exceeds_budget, format_bytes, resolve_max_dense_bytes
+from ._memory import (
+    check_dense_output_budget,
+    exceeds_budget,
+    format_bytes,
+    resolve_max_dense_bytes,
+)
 from ._missing import make_xprobe_mask
 from ._pca_full import (
     _explained_variance,
@@ -320,6 +325,14 @@ def _compute_evr_for_best(
 ) -> np.ndarray | None:
     if est.components_ is None or est.scores_ is None or est.mean_ is None:
         return None
+    check_dense_output_budget(
+        (est.components_.shape[0], est.scores_.shape[1]),
+        resolve_max_dense_bytes(est.opts.get("max_dense_bytes", 2_000_000_000)),
+        arrays=1
+        + int(est.variance_ is not None)
+        + int(est.predictive_variance_ is not None),
+        operation="Selected-model diagnostics",
+    )
     xrec = _reconstruct_data(est.components_, est.scores_, est.mean_)
     if solver == "auto":
         ev, evr = _explained_variance_from_factors(
@@ -349,6 +362,14 @@ def _compute_variance_for_best(est: VBPCA) -> np.ndarray | None:
         or est._muv is None  # noqa: SLF001
     ):
         return None
+    check_dense_output_budget(
+        (est.components_.shape[0], est.scores_.shape[1]),
+        resolve_max_dense_bytes(est.opts.get("max_dense_bytes", 2_000_000_000)),
+        arrays=1
+        + int(est.noise_variance_ is not None)
+        + int(est.reconstruction_ is not None),
+        operation="Selected-model diagnostics",
+    )
     from ._pca_full import FinalState  # noqa: PLC0415
 
     final = FinalState(
@@ -834,7 +855,10 @@ def select_n_components(
             ``1..min(n_features, n_samples)``.
         config: Selection parameters controlling metric, stopping behavior,
             patience, trials, and whether to compute explained variance or
-            retain the best model.
+            retain the best model. Requested selected-model diagnostics are
+            checked together against ``max_dense_bytes`` before the sweep.
+            Set ``compute_explained_variance=False`` and omit candidate
+            diagnostics for scalar-only selection.
         **opts: Additional options forwarded to the ``VBPCA`` constructor and fit.
 
     Returns:
@@ -855,16 +879,28 @@ def select_n_components(
     if cfg.patience is not None and int(cfg.patience) < 0:
         msg = "patience must be a non-negative integer or None"
         raise ValueError(msg)
+    k_values = _normalize_components(components, x.shape[0], x.shape[1])
+    max_dense_bytes = resolve_max_dense_bytes(
+        opts.get("max_dense_bytes", 2_000_000_000)
+    )
+    if any(k > 0 for k in k_values) and (
+        cfg.compute_explained_variance or bool(opts.get("return_diagnostics"))
+    ):
+        check_dense_output_budget(
+            (x.shape[0], x.shape[1]),
+            max_dense_bytes,
+            arrays=3,
+            operation="Selected-model diagnostics",
+        )
     x_arr: np.ndarray | sp.csr_matrix = (
         sp.csr_matrix(x, copy=True) if sp.issparse(x) else np.array(x, dtype=float)
     )
     mask_arg = _normalize_mask_for_selection(
         x,
         mask,
-        resolve_max_dense_bytes(opts.get("max_dense_bytes", 2_000_000_000)),
+        max_dense_bytes,
         opts,
     )
-    k_values = _normalize_components(components, x_arr.shape[0], x_arr.shape[1])
     if cfg.metric == "cost" and 0 in k_values:
         msg = "rank zero has no variational cost; select it with metric='rms' or 'prms'"
         raise ValueError(msg)
