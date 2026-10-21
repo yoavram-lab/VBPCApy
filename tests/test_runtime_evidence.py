@@ -349,3 +349,17 @@ def test_shared_patterns_skip_the_unrepresentative_no_pattern_probe(monkeypatch)
         ctx.runtime_report["autotune_probe"]["reason"]
         == "covariance_probe_resource_limit"
     )
+
+
+def test_selection_cache_distinguishes_eligible_statistics_crossovers():
+    from vbpca_py.model_selection import _runtime_policy_key
+
+    x = np.ones((400, 400))
+    automatic = {"dense_sufficient_statistics": "auto"}
+    assert _runtime_policy_key(
+        k=4, x=x, mask=None, opts=automatic
+    ) != _runtime_policy_key(k=5, x=x, mask=None, opts=automatic)
+    observed = {"dense_sufficient_statistics": "observed"}
+    assert _runtime_policy_key(
+        k=4, x=x, mask=None, opts=observed
+    ) == _runtime_policy_key(k=5, x=x, mask=None, opts=observed)

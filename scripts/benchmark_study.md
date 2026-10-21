@@ -372,3 +372,15 @@ posterior numerical receipts and source/native/BLAS/allocation provenance.
 This is an advisory shared-host measurement. Rebenchmark on the intended compute
 node and allocation rather than inferring universal thread or worker defaults.
 Portable package build flags and frozen publication pins remain unchanged.
+
+
+The October 21 shared-host allocation run used four allocated physical cores,
+three alternating-order repeats per configuration and four completed fits per
+batch (512 features, 256 samples, four fixed iterations). All posterior
+comparisons passed at ranks 8 and 32. Weak latent coordinates are jointly
+orthogonally aligned with both covariance families, retaining raw failures in
+the receipt; means, priors, noise and full prediction/variance outputs are
+compared directly. Timings include imports/startup and therefore need not favor
+more workers on these small fits. Summed process peaks stayed below the 2 GiB
+pilot-screened budget. These measurements qualify the benchmark's execution and
+provenance, not a universal outer-worker or statistical default.

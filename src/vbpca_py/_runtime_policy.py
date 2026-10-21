@@ -1,9 +1,8 @@
 """Runtime policy helpers for execution-path and threading controls.
 
-Phase 1 scope is intentionally minimal and behavior-preserving:
-- centralize parsing/normalization of runtime-related options,
-- define common environment override keys,
-- prepare structured hooks for future hardware/data-aware autotuning.
+Execution settings are allocation-aware and workload-matched. Optional probes
+and persistent profiles affect execution only; statistical settings are supplied
+by the caller and remain outside this module's policy.
 """
 
 from __future__ import annotations
@@ -22,7 +21,6 @@ from . import sparse_update_kernels as suk
 from ._cpu_limits import available_cpu_count
 from ._runtime_profiles import (
     PROFILE_SCHEMA_VERSION,
-    atomic_write_profile,
     automatic_profile_path,
     load_profile,
     save_profile_rule,
@@ -191,13 +189,6 @@ def _load_runtime_profile_data(
     if profile_path is None or not profile_path.exists():
         return None
     return load_profile(profile_path)
-
-
-def _persist_runtime_profile(
-    profile_path: Path,
-    data: dict[str, object],
-) -> None:
-    atomic_write_profile(profile_path, data)
 
 
 def save_autotune_profile_rule(

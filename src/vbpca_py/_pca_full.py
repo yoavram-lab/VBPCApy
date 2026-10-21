@@ -727,6 +727,7 @@ def _resolve_noise_sufficient_statistics(
         ),
     }
 
+
 def _probe_covariances(store: CovarianceStore) -> np.ndarray | None:
     return _covariances_stack(store) if len(store) else None
 
@@ -860,8 +861,11 @@ def _resolve_runtime_threads_for_training(
         loading_covariances=bool(len(training.model.av)),
         score_covariances=bool(len(training.model.sv)),
         bias=bool(opts.get("bias", True)),
-        missing_count=(cast("NoiseComplement", opts["_noise_complement"]).rows.size
-            if opts.get("_noise_complement") is not None else None),
+        missing_count=(
+            cast("NoiseComplement", opts["_noise_complement"]).rows.size
+            if opts.get("_noise_complement") is not None
+            else None
+        ),
     )
     return runtime_threads, runtime_report
 

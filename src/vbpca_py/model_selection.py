@@ -28,6 +28,7 @@ from ._memory import (
 )
 from ._missing import make_xprobe_mask
 from ._pca_full import (
+    _DENSE_COMPLEMENT_MIN_CELLS,
     _dense_complement_thresholds,
     _explained_variance,
     _explained_variance_from_factors,
@@ -581,7 +582,13 @@ def _runtime_policy_key(
         _matrix_representation(mask),
         _matrix_representation(cast("Matrix | None", opts.get("xprobe"))),
         _component_regime(k),
-        _dense_complement_thresholds(k),
+        (
+            _dense_complement_thresholds(k)
+            if not sp.issparse(x)
+            and x.shape[0] * x.shape[1] >= _DENSE_COMPLEMENT_MIN_CELLS
+            and str(opts.get("dense_sufficient_statistics", "auto")) == "auto"
+            else None
+        ),
         k >= 8,
         str(getattr(x, "strides", "sparse")),
         option_signature,
@@ -760,9 +767,11 @@ def _fit_with_reused_runtime_policy(
         policy = _runtime_policy_from_report(report)
         if policy:
             cache[policy_key] = policy
-        entry["runtime_policy_source"] = "measured"
-        entry["runtime_tuning_sec"] = _runtime_tuning_elapsed(report)
-        report["runtime_policy_source"] = "measured"
+        elapsed = _runtime_tuning_elapsed(report)
+        source = "measured" if elapsed > 0 else "resolved"
+        entry["runtime_policy_source"] = source
+        entry["runtime_tuning_sec"] = elapsed
+        report["runtime_policy_source"] = source
         report["runtime_policy_regime"] = entry["runtime_policy_regime"]
 
     return entry, est

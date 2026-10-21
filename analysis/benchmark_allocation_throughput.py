@@ -18,7 +18,11 @@ import sys
 from pathlib import Path
 from time import perf_counter
 
-from compare_backend_revisions import _child_environment  # noqa: PLC2701
+from compare_backend_revisions import (
+    _align_latent_coordinates,  # noqa: PLC2701
+    _child_environment,  # noqa: PLC2701 - shared numerical receipt helpers
+    _digest,  # noqa: PLC2701
+)
 
 
 def _batch(args: argparse.Namespace, workers: int, destination: Path) -> dict:
@@ -181,6 +185,7 @@ def _compare_worker_prefix(baseline: Path, candidate: Path, *, offset: int) -> d
     for path in sorted(candidate.glob("*.npz")):
         reference = baseline / f"fit-{offset + int(path.stem.split('-')[1])}.npz"
         with np.load(reference) as expected, np.load(path) as actual:
+            aligned, alignment = _align_latent_coordinates(expected, actual)
             if set(expected.files) != set(actual.files):
                 raise ValueError("Snapshot keys differ")
             for key in expected.files:
@@ -188,7 +193,7 @@ def _compare_worker_prefix(baseline: Path, candidate: Path, *, offset: int) -> d
                     raise ValueError(f"Snapshot dtype differs: {key}")
                 if expected[key].dtype.kind in "fc":
                     np.testing.assert_allclose(
-                        actual[key],
+                        aligned.get(key, actual[key]),
                         expected[key],
                         rtol=1e-8,
                         atol=1e-10,
@@ -196,10 +201,15 @@ def _compare_worker_prefix(baseline: Path, candidate: Path, *, offset: int) -> d
                     )
                 else:
                     np.testing.assert_array_equal(actual[key], expected[key])
-            receipts.append(path.name)
+            receipts.append({
+                "name": path.name,
+                "baseline_sha256": _digest(reference),
+                "candidate_sha256": _digest(path),
+                "latent_alignment": alignment,
+            })
     return {
         "snapshots": receipts,
-        "comparison": "rtol=1e-8, atol=1e-10; metadata/dtypes exact",
+        "comparison": "rtol=1e-8, atol=1e-10; joint orthogonal latent coordinates; physical outputs direct, metadata/dtypes exact",
     }
 
 
