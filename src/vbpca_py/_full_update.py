@@ -46,6 +46,8 @@ from .sparse_update_kernels import (
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, MutableMapping
 
+    import numpy.typing as npt
+
 logger = logging.getLogger(__name__)
 
 _EPS_VAR = 1e-15  # minimum variance for numerical safety
@@ -370,7 +372,8 @@ def _probe_mask(x_probe: Matrix) -> Matrix:
         mask_probe = sp.csr_matrix(x_probe, copy=True)
         mask_probe.data = np.ones(mask_probe.nnz, dtype=bool)
         return mask_probe
-    return ~np.isnan(np.asarray(x_probe, dtype=float))
+    dense_mask: npt.NDArray[np.bool_] = ~np.isnan(np.asarray(x_probe, dtype=float))
+    return dense_mask
 
 
 def _exclude_probe_from_training(
@@ -935,7 +938,10 @@ def _row_sums(err_mx: np.ndarray | sp.spmatrix) -> np.ndarray:
             else sp.csr_matrix(cast("Any", err_mx))
         )
         return np.asarray(err_sparse.sum(axis=1)).ravel()
-    return np.sum(np.asarray(err_mx, dtype=float), axis=1)
+    dense_sums: npt.NDArray[np.float64] = np.sum(
+        np.asarray(err_mx, dtype=float), axis=1
+    )
+    return dense_sums
 
 
 # ---------------------------------------------------------------------------
