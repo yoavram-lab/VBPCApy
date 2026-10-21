@@ -98,6 +98,15 @@ from ._runtime_policy import (
     resolve_runtime_thread_config_with_report,
     save_autotune_profile_rule,
 )
+from .options import (
+    Algorithm,
+    BiasUpdateOrder,
+    CompatMode,
+    CostDiagnostics,
+    ExplainedVarianceSolver,
+    StatisticsMode,
+    VarianceUpdateOrder,
+)
 from .results import PCAResult  # noqa: TC001  # Public runtime type-hint resolution.
 
 logger = logging.getLogger(__name__)
@@ -105,7 +114,7 @@ logger = logging.getLogger(__name__)
 Array = np.ndarray
 Sparse = sp.csr_matrix
 Matrix = Array | Sparse
-_ALLOWED_COMPAT_MODES = {"strict_legacy", "modern"}
+_ALLOWED_COMPAT_MODES = {mode.value for mode in CompatMode}
 _PHASE_TIMING_KEYS: tuple[PhaseTimingKey, ...] = (
     "phase_scores_sec",
     "phase_loadings_sec",
@@ -2640,7 +2649,9 @@ def _build_options(  # noqa: PLR0915 - centralized option normalization
     bias_order = bias_order_raw.strip().lower()
     if bias_order == "auto":
         bias_order = "legacy" if compat_mode == "strict_legacy" else "post_factor"
-    if bias_order not in {"legacy", "post_factor"}:
+    if bias_order not in {
+        mode.value for mode in BiasUpdateOrder if mode is not BiasUpdateOrder.AUTO
+    }:
         msg = (
             "bias_update_order must be one of {'auto', 'legacy', 'post_factor'} "
             f"(got {bias_order_raw!r})."
@@ -2651,7 +2662,11 @@ def _build_options(  # noqa: PLR0915 - centralized option normalization
     variance_order = variance_order_raw.strip().lower()
     if variance_order == "auto":
         variance_order = "legacy" if compat_mode == "strict_legacy" else "post_rotation"
-    if variance_order not in {"legacy", "post_rotation"}:
+    if variance_order not in {
+        mode.value
+        for mode in VarianceUpdateOrder
+        if mode is not VarianceUpdateOrder.AUTO
+    }:
         msg = (
             "variance_update_order must be one of "
             f"{{'auto', 'legacy', 'post_rotation'}} (got {variance_order_raw!r})."
@@ -2664,7 +2679,7 @@ def _build_options(  # noqa: PLR0915 - centralized option normalization
 
     dense_statistics_raw = str(opts.get("dense_sufficient_statistics", "auto"))
     dense_statistics = dense_statistics_raw.strip().lower()
-    if dense_statistics not in {"auto", "observed", "complement"}:
+    if dense_statistics not in {mode.value for mode in StatisticsMode}:
         msg = (
             "dense_sufficient_statistics must be one of "
             "{'auto', 'observed', 'complement'} "
@@ -2678,7 +2693,7 @@ def _build_options(  # noqa: PLR0915 - centralized option normalization
 
     solver_raw = str(opts.get("explained_var_solver", "auto"))
     solver = solver_raw.strip().lower()
-    if solver not in {"auto", "svd", "gram"}:
+    if solver not in {mode.value for mode in ExplainedVarianceSolver}:
         msg = (
             "explained_var_solver must be one of {'auto', 'svd', 'gram'} "
             f"(got {solver_raw!r})."
@@ -2707,7 +2722,7 @@ def _validate_cost_diagnostics(opts: dict[str, object]) -> None:
         ValueError: If the mode is unknown or requires a missing cost trace.
     """
     mode = str(opts.get("cost_diagnostics", "trace")).strip().lower()
-    if mode not in {"trace", "endpoint"}:
+    if mode not in {item.value for item in CostDiagnostics}:
         msg = "cost_diagnostics must be 'trace' or 'endpoint'"
         raise ValueError(msg)
     opts["cost_diagnostics"] = mode
@@ -2744,15 +2759,17 @@ def _select_algorithm(opts: Mapping[str, object]) -> tuple[bool, bool]:
     Raises:
         ValueError: If ``algorithm`` is not one of {"ppca", "map", "vb"}.
     """
-    algorithm = str(opts["algorithm"]).lower()
-    if algorithm == "ppca":
+    # Preserve the legacy normalization contract: lowercasing without stripping.
+    try:
+        algorithm = Algorithm(str(opts["algorithm"]).lower())
+    except ValueError:
+        msg = f"Wrong value of the argument 'algorithm': {opts['algorithm']}"
+        raise ValueError(msg) from None
+    if algorithm is Algorithm.PPCA:
         return False, False
-    if algorithm == "map":
+    if algorithm is Algorithm.MAP:
         return True, False
-    if algorithm == "vb":
-        return True, True
-    msg = f"Wrong value of the argument 'algorithm': {opts['algorithm']}"
-    raise ValueError(msg)
+    return True, True
 
 
 def _warn_if_no_post_warmup_window(

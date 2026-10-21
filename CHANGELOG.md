@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- String-compatible enums for solver algorithms, numerical policies, runtime
+  modes and stopping-rule names, with explicit parsing and executable examples.
+  Existing string normalizers and numerical defaults remain unchanged.
+  Initialization continues to accept warm-start mappings and MAT filenames.
+
 ### Performance
 
 - Use screened complete-minus-missing full-covariance noise statistics for
