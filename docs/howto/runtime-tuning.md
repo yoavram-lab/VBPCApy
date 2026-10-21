@@ -17,7 +17,7 @@ model = VBPCA(n_components=5, runtime_tuning="safe")
 # Wider search, slightly longer startup
 model = VBPCA(n_components=5, runtime_tuning="aggressive")
 
-# No autotuning — use num_cpu for all kernels
+# No autotuning; request num_cpu for native kernels
 model = VBPCA(n_components=5, runtime_tuning="off", num_cpu=4)
 ```
 
@@ -48,18 +48,43 @@ Kernel-specific options and an explicitly supplied `num_cpu` take precedence.
 Environment overrides apply when the corresponding Python option has not been
 set.
 
+`num_cpu` controls VBPCApy's native kernels. NumPy/SciPy linear algebra can use
+a separate BLAS thread pool. Set its limits before starting Python, then
+measure the combination on the allocated compute node:
+
+```bash
+OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 OMP_NUM_THREADS=1 \
+  VBPCA_NUM_THREADS=4 python fit.py
+```
+
+This is a starting configuration, not a recommendation for every matrix.
+Compare native and BLAS thread counts separately. When running several fits
+concurrently, measure completed fits per allocation as well as single-fit
+latency, and include their combined memory use. Process affinity and scheduler
+variables do not necessarily express container CPU quotas; set explicit limits
+when the allocation is otherwise ambiguous.
+
 ## Memory budget
 
-For large sparse matrices, VBPCApy avoids unintended densification. Control the
-budget with `max_dense_bytes`:
+`max_dense_bytes` currently guards dense observation-mask handling for sparse
+input. It does not bound all dense allocations or peak memory:
 
 ```python
-# Allow up to 2 GB of dense arrays
+# Set the dense observation-mask limit for sparse input
 model = VBPCA(n_components=5, max_dense_bytes=2 * 1024**3)
 ```
 
-If a dense operation would exceed this budget, it raises an error instead of
-silently allocating.
+Full reconstruction and uncertainty diagnostics are dense even when training
+input is sparse. With `return_diagnostics=True` (the default), the fit returns
+reconstruction, latent variance and predictive variance, each with the full
+feature-by-sample shape. For 5,846 features and 2,504 samples, three float64
+outputs alone require about 335 MiB, before factors, covariance arrays and
+temporary working storage. These outputs are not protected by the mask limit.
+
+Use `return_diagnostics=False` when those fit-time outputs are unnecessary.
+The fitted factors remain available. Later operations that reconstruct the
+whole matrix can still allocate dense arrays; this option does not make
+inference or prediction out of core.
 
 ## Runtime report
 
@@ -81,6 +106,19 @@ power-of-two rank ranges by default. This reduces repeated tuning during
 independently tuned comparison. Each trace entry records whether its settings
 were measured or reused and the time spent tuning.
 
+Treat the report as evidence about the probe, not a guarantee of optimal
+execution. The current dense thread probe uses C-order arrays without
+posterior covariance output and does not benchmark the complement path.
+Compare complete fixed-iteration fits when the actual workload differs.
+Native kernels can clamp requested counts to the available allocation even
+when the report retains the requested count. The tuning time budget is checked
+between calls and cannot interrupt a slow individual kernel call.
+
+Persistent profiles are opt-in through `runtime_profile`. Until profiles
+include hardware and build fingerprints, use separate paths for different
+machines, allocations and software builds. Avoid concurrent writers to one
+profile file. Rebenchmark after a BLAS, native build or workload change.
+
 ## Covariance writeback modes
 
 The `cov_writeback_mode` option controls how posterior covariances are written back
@@ -88,12 +126,13 @@ after each update:
 
 | Mode | Description |
 |------|-------------|
-| `"python"` | Pure-Python writeback (slowest, most portable) |
-| `"bulk"` | Batch writeback via NumPy (good default) |
-| `"kernel"` | C++ kernel writeback (fastest on supported platforms) |
+| `"python"` | Python handling of individual covariance outputs |
+| `"bulk"` | Stacked covariance output from native updates |
+| `"kernel"` | Currently follows the same stacked-output branch as `"bulk"` |
 
 When `runtime_tuning` is `"safe"` or `"aggressive"`, the writeback mode is
-benchmarked and selected automatically.
+benchmarked and selected automatically. The current aliases do not imply
+different implementations or a universal speed ordering.
 
 ## Dense sufficient statistics
 
@@ -104,7 +143,7 @@ Masked dense score and loading updates support two exact accumulation forms:
   missing-cell contributions.
 
 Set `dense_sufficient_statistics="auto"` (the default) to use the
-benchmarked density and rank policy. The policy is conservative and keeps the
+current density and rank policy. The policy is conservative and keeps the
 observed-cell implementation for the genomics study workload:
 
 ```python

@@ -179,6 +179,12 @@ The [numerical validation guide](docs/howto/numerical-validation.md) describes
 the always-run reference checks, compatibility scope and tolerances. Extended
 Octave comparisons remain separate from the required numerical gate.
 
+The [October 2026 backend review](analysis/BACKEND_REVIEW_2026_10_20.md)
+records remaining measured costs, reference-paper checks and hardware-tuning
+requirements. Its diagnostic probes and algebraic prototypes are analysis
+tools; they do not change the installed solver. Reproduction commands are in
+[scripts/benchmark_study.md](scripts/benchmark_study.md#backend-review-probes).
+
 The `trade-a-*` analysis recipes require a local
 [trade-study](https://github.com/jcm-sci/trade-study) checkout. After syncing
 the environment, install its full extras (including adaptive optimisation,

@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Documentation
+
+- Correct the scope of `max_dense_bytes`, describe dense diagnostic outputs,
+  and distinguish native and BLAS thread limits. Document the current tuning
+  probe, profile and covariance-writeback limitations.
+- Add a backend review with reproducible diagnostic probes, independent
+  numerical comparisons, and scoped Lean/SymPy algebra checks. The prototypes
+  are analysis tools; solver updates, defaults and publication pins are unchanged.
+
 ## [0.4.10] - 2026-10-20
 
 ### Added
