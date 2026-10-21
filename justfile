@@ -28,7 +28,7 @@ format:
 
 # Type-check library code (strict mode).
 typecheck:
-	uv run --extra dev --extra plot mypy --strict src
+	uv run --extra dev --extra plot mypy --strict src tests/typing_results.py
 
 # Run the test suite quietly.
 test:
@@ -131,7 +131,7 @@ build-test:
 	source "$CLEANROOM/venv/bin/activate"
 	uv build --wheel --out-dir "$CLEANROOM/dist"
 	uv pip install --no-cache "$CLEANROOM"/dist/*.whl
-	uv pip install pytest pytest-benchmark hypothesis numpy scipy matplotlib
+	uv pip install pytest pytest-benchmark hypothesis numpy scipy matplotlib mypy scipy-stubs
 	python -m pytest tests -q -x -m 'not perf and not octave' \
 		--ignore=tests/test_octave_parity_smoke.py \
 		--ignore=tests/test_rms_regression.py \

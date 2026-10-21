@@ -6,10 +6,13 @@ from __future__ import annotations
 import warnings as _warnings_mod
 from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
-from typing import Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import numpy as np
 import scipy.sparse as sp
+
+if TYPE_CHECKING:
+    import numpy.typing as npt
 
 from ._encoding_checks import detect_one_hot_blocks, encoding_warnings
 from ._missingness_checks import mcar_screen, missingness_summary, scale_warnings
@@ -48,6 +51,7 @@ def _is_sparse(x: object) -> bool:
 
 def _ensure_mask(x: np.ndarray, mask: Mask | None) -> Mask:
     """Return a boolean mask where True marks observed entries."""
+    finite: npt.NDArray[np.bool_]
     if np.issubdtype(x.dtype, np.number):
         finite = ~np.isnan(x.astype(float))
     else:
@@ -58,7 +62,8 @@ def _ensure_mask(x: np.ndarray, mask: Mask | None) -> Mask:
     if observed.shape != x.shape:
         msg = f"mask shape {observed.shape} does not match data shape {x.shape}"
         raise ValueError(msg)
-    return observed & finite
+    combined: npt.NDArray[np.bool_] = observed & finite
+    return combined
 
 
 def _declared_levels(levels: Sequence[Any]) -> list[Any]:

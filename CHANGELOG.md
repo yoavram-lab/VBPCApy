@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Typed result and learning-curve mappings, float64/index array aliases and
+  executable docstring examples. Existing result keys and array ownership are
+  retained; learning-curve annotations now distinguish histories from metadata.
+
 ### Fixed
 
 - Group sparse covariance patterns by sample column. Shared-pattern fits now
