@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Group sparse covariance patterns by sample column. Shared-pattern fits now
+  update each sample in its assigned group and pass complete column groups
+  to rotation, preserving sparse storage and observed zeros.
+
 ### Documentation
 
 - Correct the scope of `max_dense_bytes`, describe dense diagnostic outputs,

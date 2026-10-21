@@ -63,6 +63,23 @@ model = VBPCA(n_components=4, maxiters=200)
 model.fit(X_sparse, mask=mask)
 ```
 
+## Share covariance for repeated observation patterns
+
+Samples with the same observed feature rows can share a score covariance
+block. Enable `uniquesv=True` to group those sample columns using the sparse
+mask structure:
+
+```python
+model = VBPCA(
+    n_components=4, maxiters=200, uniquesv=True, return_diagnostics=False
+)
+model.fit(X_sparse)
+```
+
+This retains sparse storage during pattern grouping. Its usefulness depends
+on how often observation patterns repeat; it does not guarantee a speedup.
+Disabling full diagnostics avoids allocating their feature-by-sample outputs.
+
 ## Sparse preprocessing
 
 For categorical data stored in sparse format, use `MissingAwareSparseOneHotEncoder`:
@@ -71,7 +88,10 @@ For categorical data stored in sparse format, use `MissingAwareSparseOneHotEncod
 from vbpca_py import MissingAwareSparseOneHotEncoder
 
 # Single categorical column as a sparse vector
-cat_col = sp.csr_matrix(rng.choice([0, 1, 2, 3], size=(100, 1)).astype(float))
+categories = rng.choice([0, 1, 2, 3], size=100).astype(float)
+cat_col = sp.csr_matrix(
+    (categories, (np.arange(100), np.zeros(100, dtype=int))), shape=(100, 1)
+)
 
 enc = MissingAwareSparseOneHotEncoder()
 encoded = enc.fit_transform(cat_col)
@@ -104,7 +124,9 @@ removed before fitting. For most datasets the results are identical.
 ```python
 # Densify for comparison (only for small matrices!)
 X_dense_full = X_sparse.toarray()
-mask_dense = (X_dense_full != 0).astype(float)
+stored_pattern = X_sparse.copy()
+stored_pattern.data = np.ones(stored_pattern.nnz, dtype=bool)
+mask_dense = stored_pattern.toarray().astype(bool)
 
 model_dense = VBPCA(n_components=4, maxiters=200)
 model_dense.fit(X_dense_full, mask=mask_dense)
@@ -116,8 +138,9 @@ print(f"Dense  RMS: {model_dense.rms_:.6f}")
 print(f"Sparse RMS: {model_sparse.rms_:.6f}")
 ```
 
-The results should be numerically close. The sparse path avoids materialising
-the full matrix and uses specialised C++ kernels.
+The results should be numerically close. Training uses sparse kernels, while
+full reconstruction and uncertainty diagnostics produce dense arrays. The
+explicit stored-pattern mask also retains observed zeros in this comparison.
 
 !!! note "`inverse_transform` returns dense"
     Even when the input is sparse, `inverse_transform()` always returns a dense
