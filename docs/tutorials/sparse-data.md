@@ -116,8 +116,11 @@ model = VBPCA(n_components=4, compat_mode="strict_legacy")
 model = VBPCA(n_components=4, compat_mode="modern")
 ```
 
-The difference affects how entirely-empty rows or columns are detected and
-removed before fitting. For most datasets the results are identical.
+Modern mode also retains explicitly stored observed zeros when selecting
+noise-update coordinates, excluding probes and removing stored NaNs. Use it
+when zero is an observed value. Strict-legacy mode retains the historical
+normalization and probe handling. The modes can give different fitted results;
+record the choice with your analysis settings.
 
 ## Dense vs sparse comparison
 

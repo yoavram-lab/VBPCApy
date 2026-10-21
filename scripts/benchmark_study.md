@@ -136,3 +136,13 @@ The [algebra-check instructions](../analysis/proof_checks/README.md) pin Lean,
 mathlib and SymPy and state the proof boundaries. Follow numerical comparisons
 with representative fixed-policy full fits before adopting a rewrite; the
 local phase ratios do not establish whole-fit or cross-machine speedups.
+
+## Sparse observed-zero validation
+
+Run `uv run pytest -q tests/test_sparse_observed_zero_indices.py` to compare
+modern dense and sparse representations with explicitly stored zeros. The
+checks cover fixed-iteration factors, noise, covariance, reconstruction,
+uncertainty and cost/RMS histories, including probes and NaN cleanup. They
+also retain explicit strict-legacy coordinate and probe behavior. Record the
+compatibility mode and software pin with sparse benchmarks. This correctness
+repair does not upgrade or rerun a frozen scientific study automatically.

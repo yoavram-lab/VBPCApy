@@ -48,6 +48,11 @@ More examples: [quickstart](https://yoavram-lab.github.io/VBPCApy/getting-starte
 
 ## Features
 
+For sparse observations whose values include zero, use `compat_mode="modern"`
+and retain those zeros explicitly in storage. Modern fits use the mask-defined
+observation set through noise updates, probe exclusion and NaN cleanup. See the
+[sparse tutorial](docs/tutorials/sparse-data.md) for storage and mode choices.
+
 - Dense or sparse data with explicit missing-entry masks
 - Optional bias estimation and rotation to PCA-aligned solution
 - Posterior covariances for scores and loadings; held-out probe RMS

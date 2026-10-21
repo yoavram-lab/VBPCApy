@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Retain explicitly stored observed zeros in modern sparse noise-update
+  coordinates, probe exclusion and NaN cleanup. Dense and sparse observations
+  now use the same mask-defined set; strict-legacy handling is retained.
 - Group sparse covariance patterns by sample column. Shared-pattern fits now
   update each sample in its assigned group and pass complete column groups
   to rotation, preserving sparse storage and observed zeros.

@@ -313,7 +313,12 @@ def _prepare_data(
             else np.asarray(mask_override, dtype=bool)
         )
 
-    x_data, mask_clean = _exclude_probe_from_training(x_data, x_probe, mask_clean)
+    x_data, mask_clean = _exclude_probe_from_training(
+        x_data,
+        x_probe,
+        mask_clean,
+        compat_mode=str(opts.get("compat_mode", "strict_legacy")),
+    )
 
     x_data, x_probe, row_idx, col_idx, init_opt = remove_empty_entries(
         x_data,
@@ -380,6 +385,8 @@ def _exclude_probe_from_training(
     x_data: Matrix,
     x_probe: Matrix | None,
     mask: Matrix | None,
+    *,
+    compat_mode: str = "strict_legacy",
 ) -> tuple[Matrix, Matrix | None]:
     """Remove probe positions from training data and an optional mask.
 
@@ -400,7 +407,12 @@ def _exclude_probe_from_training(
         raise ValueError(msg)
 
     if sp.issparse(x_data):
-        return _exclude_sparse_probe(x_data, x_probe, mask)
+        return _exclude_sparse_probe(
+            x_data,
+            x_probe,
+            mask,
+            preserve_zeros=compat_mode.strip().lower() == "modern",
+        )
     return _exclude_dense_probe(x_data, x_probe, mask)
 
 
@@ -408,6 +420,8 @@ def _exclude_sparse_probe(
     x_data: Matrix,
     x_probe: Matrix,
     mask: Matrix | None,
+    *,
+    preserve_zeros: bool = False,
 ) -> tuple[sp.csr_matrix, Matrix | None]:
     """Remove sparse probe coordinates from sparse training inputs.
 
@@ -422,8 +436,15 @@ def _exclude_sparse_probe(
         raise ValueError(msg)
     probe_sparse = sp.csr_matrix(_probe_mask(x_probe), dtype=bool)
     data_sparse = sp.csr_matrix(x_data, copy=True)
-    data_sparse -= data_sparse.multiply(probe_sparse)
-    data_sparse.eliminate_zeros()
+    if preserve_zeros:
+        coordinates = data_sparse.tocoo(copy=False)
+        heldout = np.asarray(
+            probe_sparse[coordinates.row, coordinates.col], dtype=bool
+        ).ravel()
+        data_sparse = _filter_csr_entries(data_sparse, ~heldout)
+    else:
+        data_sparse -= data_sparse.multiply(probe_sparse)
+        data_sparse.eliminate_zeros()
 
     if mask is None:
         return data_sparse, None
@@ -485,12 +506,29 @@ def _validate_mask_shape(mask: Matrix, x_data: Matrix) -> None:
 # -- mask helpers -------------------------------------------------------------
 
 
-def _normalize_sparse_data(x_csr: sp.csr_matrix, compat_mode: str) -> sp.csr_matrix:
-    """Apply strict_legacy normalization in-place on sparse data without densifying.
+def _filter_csr_entries(
+    matrix: sp.csr_matrix, keep: npt.NDArray[np.bool_]
+) -> sp.csr_matrix:
+    """Retain selected stored entries, including zero-valued observations.
 
     Returns:
-        Normalized CSR matrix with stored zeros mapped to ``eps`` (strict_legacy)
-        and stored NaNs removed.
+        An owned CSR matrix with unchanged shape and retained entry values.
+    """
+    prefix = np.empty(matrix.nnz + 1, dtype=np.intp)
+    prefix[0] = 0
+    np.cumsum(keep, dtype=np.intp, out=prefix[1:])
+    return sp.csr_matrix(
+        (matrix.data[keep], matrix.indices[keep], prefix[matrix.indptr]),
+        shape=matrix.shape,
+    )
+
+
+def _normalize_sparse_data(x_csr: sp.csr_matrix, compat_mode: str) -> sp.csr_matrix:
+    """Normalize sparse observations in an owned CSR copy without densifying.
+
+    Returns:
+        CSR matrix with stored NaNs removed. Modern mode retains other stored
+        zeros; strict-legacy mode maps them to ``eps`` before NaN removal.
     """
     x_csr = sp.csr_matrix(x_csr, copy=True)
 
@@ -502,8 +540,11 @@ def _normalize_sparse_data(x_csr: sp.csr_matrix, compat_mode: str) -> sp.csr_mat
 
     nan_mask = np.isnan(data)
     if nan_mask.any():
-        data[nan_mask] = 0.0
-        x_csr.eliminate_zeros()
+        if use_eps_for_zeros:
+            data[nan_mask] = 0.0
+            x_csr.eliminate_zeros()
+        else:
+            x_csr = _filter_csr_entries(x_csr, ~nan_mask)
     return x_csr
 
 
@@ -710,16 +751,17 @@ def _observed_indices_with_mode(
     """Return observed indices according to compatibility mode.
 
     In ``strict_legacy`` mode this matches historical nonzero semantics.
-    In ``modern`` mode for dense inputs this uses the explicit observation
-    mask, decoupling observedness from numeric normalization conventions.
+    In ``modern`` mode this uses the explicit observation mask for dense and
+    sparse inputs, retaining observed zeros independently of data values.
     """
     mode = compat_mode.strip().lower()
-    if mode == "modern" and not sp.issparse(x_data):
-        mask_arr = np.asarray(mask, dtype=bool)
-        i_idx_dense, j_idx_dense = np.nonzero(mask_arr)
-        return np.asarray(i_idx_dense, dtype=np.intp), np.asarray(
-            j_idx_dense, dtype=np.intp
-        )
+    if mode == "modern":
+        if sp.issparse(mask):
+            rows, columns = mask.nonzero()
+        else:
+            mask_arr = np.asarray(mask, dtype=bool)
+            rows, columns = np.nonzero(mask_arr)
+        return np.asarray(rows, dtype=np.intp), np.asarray(columns, dtype=np.intp)
     return _observed_indices(x_data)
 
 
