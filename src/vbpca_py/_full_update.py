@@ -723,12 +723,13 @@ def _observed_indices_with_mode(
 def _patterns_from_csc(
     mask_csc: sp.csc_matrix,
 ) -> tuple[int, list[list[int]], np.ndarray]:
-    """Build missingness patterns from a CSC mask without densifying.
+    """Group sample columns with matching observed rows without densifying.
 
     Returns:
-        Tuple of pattern count, pattern row lists, and column-to-pattern map.
+        Pattern count, sample-column groups, and column-to-pattern map.
     """
     pattern_to_id: dict[tuple[int, ...], int] = {}
+    obs_patterns: list[list[int]] = []
     pattern_index = np.empty(mask_csc.shape[1], dtype=int)
 
     for col in range(mask_csc.shape[1]):
@@ -738,9 +739,10 @@ def _patterns_from_csc(
         if pid is None:
             pid = len(pattern_to_id)
             pattern_to_id[rows_tuple] = pid
+            obs_patterns.append([])
+        obs_patterns[pid].append(col)
         pattern_index[col] = pid
 
-    obs_patterns = [list(pattern) for pattern in pattern_to_id]
     return len(obs_patterns), obs_patterns, pattern_index
 
 
