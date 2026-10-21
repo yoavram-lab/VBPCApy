@@ -140,6 +140,17 @@ py::dict weighted_cov_eigh_psd(
         throw std::invalid_argument("weights length must match cov_stack size.");
     }
 
+    // Rank zero has a valid empty eigensystem. Eigen's dynamic-size solver
+    // does not support this case; keep it out of the native decomposition.
+    // Validate all input shapes and the normalizer before returning.
+    if (k == 0) {
+        py::dict out;
+        out["cov"] = Eigen::MatrixXd(0, 0);
+        out["eigvals"] = Eigen::VectorXd(0);
+        out["eigvecs"] = Eigen::MatrixXd(0, 0);
+        return out;
+    }
+
     Eigen::MatrixXd cov = base;
     if (n_items > 0) {
         const auto *stack_ptr = static_cast<const double *>(cov_buf.ptr);
