@@ -21,8 +21,11 @@ def _run_octave_eval(cmd: str) -> float:
         text=True,
     )
     if result.returncode != 0:
-        msg = f"octave failed: {result.stderr}\n{result.stdout}"
-        pytest.skip(msg)
+        msg = (
+            f"octave exited with status {result.returncode}\n"
+            f"stderr:\n{result.stderr}\nstdout:\n{result.stdout}"
+        )
+        pytest.fail(msg, pytrace=False)
     return float(result.stdout.strip() or "nan")
 
 
