@@ -325,20 +325,6 @@ for iter = 1:opts.maxiters
     %V = rms^2 + V/ndata;
     V = ( sXv + 2*hpV ) / (ndata + 2*hpV);
 
-    % Debug export: save covariance aggregates for early iterations
-    if iter <= 2
-        av_sum = zeros(size(Av{1}));
-        for ai = 1:numel(Av), av_sum = av_sum + Av{ai}; end
-        sv_traces_now = cellfun(@trace, Sv);
-        av_traces_now = cellfun(@trace, Av);
-        outfile = '/tmp/oct_cov_debug.mat';
-        if exist(outfile, 'file')
-            save(outfile, 'iter', 'av_sum', 'Av', 'Sv', 'av_traces_now', 'sv_traces_now', '-append');
-        else
-            save(outfile, 'iter', 'av_sum', 'Av', 'Sv', 'av_traces_now', 'sv_traces_now');
-        end
-    end
-    
     t = toc;
     lc.rms = [ lc.rms rms ]; lc.prms = [ lc.prms prms ]; lc.V = [ lc.V V ]; lc.sXv = [ lc.sXv sXv ];
     lc.sXv_sv = [ lc.sXv_sv sXv_sv ]; lc.sXv_avcov = [ lc.sXv_avcov sXv_avcov ]; lc.sXv_avtrace = [ lc.sXv_avtrace sXv_avtrace ];
