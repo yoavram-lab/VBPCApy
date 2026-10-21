@@ -390,7 +390,9 @@ The manual **Advisory performance comparison** workflow builds two immutable
 compatible revisions in one numerical environment. Default `ubuntu-latest`
 timings are advisory. A dedicated Linux runner label can be supplied for a
 controlled comparison; the label itself does not establish hardware stability.
-The baseline and candidate are resolved to SHAs before either is built.
+The baseline and candidate are resolved to SHAs before either is built. A
+custom runner must already provide Eigen and a portable C++ compiler; its
+allocation and build environment are recorded with the artifacts.
 
 ```bash
 uv run python scripts/run_performance_comparison.py --baseline BASE_SHA --candidate CANDIDATE_SHA --output /tmp/vbpca-perf-ci
