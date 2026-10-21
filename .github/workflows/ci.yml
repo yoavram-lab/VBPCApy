@@ -25,6 +25,8 @@ jobs:
           filters: |
             octave:
               - 'src/vbpca_py/_rotate.py'
+              - 'src/vbpca_py/_remove_empty.py'
+              - 'src/vbpca_py/_monitoring.py'
               - 'src/vbpca_py/rotate_update_kernels.cpp'
               - 'src/vbpca_py/_rms.py'
               - 'src/vbpca_py/_mean.py'

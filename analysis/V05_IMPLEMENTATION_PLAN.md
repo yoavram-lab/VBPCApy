@@ -152,10 +152,15 @@ flowchart TD
     A[Document layout, masks, scorer, migration and version floor]
     A --> B[Typed categories and complete option inventory]
     B --> C[Validated solver config and typed numerical helpers]
+    A --> L[Warm-start ownership and covariance-layout corrections]
+    A --> M[Observation-presence preparation corrections]
+    L --> C
+    M --> C
     A --> D[Legacy boundary and native estimator foundations]
     C --> D
     D --> E[Conditional projection, inverse and row-wise scoring]
     D --> F[Native preprocessors and observation-mask normalization]
+    M --> F
     E --> G[Tags, feature names and output containers]
     F --> G
     E --> H[Selection helper layout and mask-aware CV/Pipeline]
@@ -243,3 +248,24 @@ The installed 1.9.1 source was also inspected for sparse/transformer/small-sampl
 checks. Versions 1.6.1, 1.7.2, 1.8.0 and 1.9.1 were exercised explicitly rather
 than inferring behavior from current documentation. The first implementation PR records the exact dependency/runtime
 inventory used for its tests.
+
+## Implementation checkpoint
+
+The contract map merged in #320 before production edits. The categorical
+foundation (#324), native empty-eigensystem correction (#323), development
+metadata gate (#325), and fit-owned initialization payloads (#329) have merged
+after green CI. Main now reports `0.5.0.dev0`; no 0.5 release has been published.
+The legacy estimator layout remains in place until its explicit migration.
+
+The preimplementation/boundary probes identified additional prerequisites.
+Warm-start ownership (#326, addressed by #329) precedes covariance-layout and
+retained-feature metadata corrections (#327). Observation-presence preparation
+(#328) precedes typed initialization and native masks/preprocessors. Record
+these dependencies in #92/#318/#178 rather than treating them as new scientific
+defaults. Covariance axes, sample indices and pattern-block indices need
+separate contracts, with full covariance cross terms retained.
+
+Representative runtime tuning (#316) and advisory performance infrastructure
+(#321) landed separately during this audit. Include their qualified current-main
+behavior in the release assessment; do not repeat completed tuner work or
+change frozen study environments. The statistical-policy work remains separate.

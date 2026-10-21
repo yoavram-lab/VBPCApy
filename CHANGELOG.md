@@ -33,6 +33,12 @@ The development version is not a release announcement.
   mappings and nested covariance arrays, and starts repeated fits from the
   values the caller supplied.
 
+- Detect modern sparse empty axes from observations, retaining stored zeros
+  and observed constant-zero features while excluding stored NaNs. Boolean
+  masks now determine empty axes from their values in both compatibility
+  modes. Keep historical unmasked sparse sum-based handling explicit. Correct
+  and execute the sparse-construction documentation example.
+
 - Return a valid empty eigensystem for rank-zero native rotation instead of
   calling an unsupported Eigen decomposition and crashing the Python process.
   Retain shape and normalizer validation and positive-rank calculations.
