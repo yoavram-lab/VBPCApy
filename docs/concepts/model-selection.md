@@ -1,5 +1,45 @@
 # Model Selection
 
+## Cost diagnostic modes
+
+Selection preserves full per-iteration cost traces by default, including when
+the selection metric is PRMS. Cost-driven selection and stopping, and requested
+replay evidence, retain those traces.
+
+For an explicitly fixed PRMS stopping policy that does not consume cost, opt in
+to a single cost evaluation per fitted candidate:
+
+```python
+from vbpca_py import SelectionConfig, select_n_components
+
+best_k, metrics, trace, model = select_n_components(
+    X,
+    components=[0, 2, 4],
+    config=SelectionConfig(metric="prms", cost_diagnostics="endpoint"),
+    record_cost=False,
+    convergence_criteria={"cost": False, "composite": False},
+)
+```
+
+Endpoint mode preserves fitted factors, the stopping policy, selected capacity
+and the historical returned-iteration cost. If probe stopping restores an
+earlier iteration, its cost is evaluated using that saved state. Earlier cost
+trace entries remain `NaN`; endpoint mode cannot supply a replay trace. An
+initialization-only return and the mean-only rank-zero candidate have no
+iterative variational cost, so their cost remains `NaN`.
+
+The fitter rejects endpoint mode with `record_cost=True` or any enabled
+cost-consuming event, including relative/curvature cost stops and composite
+`elbo_rel`. Cost-based capacity selection requires trace mode. No stopping
+criterion is silently disabled. `SelectionConfig.cost_diagnostics` controls
+the selection sweep; standalone `VBPCA`/`pca_full` also accept the fit option
+`cost_diagnostics="endpoint"`. Cross-validation accepts that fit option and
+records the mode in its result table. Candidate traces and requested runtime
+reports retain diagnostic-mode provenance.
+
+The [paired sweep benchmark](https://github.com/yoavram-lab/VBPCApy/blob/main/scripts/benchmark_study.md#selection-cost-diagnostics)
+compares total sweep time, endpoint metrics and cost-evaluation counts.
+
 VBPCApy provides two strategies for choosing the number of latent components $k$:
 a sequential sweep and K-fold cross-validation.
 

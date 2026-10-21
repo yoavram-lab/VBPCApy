@@ -30,6 +30,8 @@ if TYPE_CHECKING:
 from ._converge import (
     _VALID_CRITERION_NAMES,
     ConvergenceState,
+    _append_cost_value,
+    _cost_trace_required,
     _log_and_check_convergence,
 )
 from ._expand import _add_m_cols, _add_m_rows
@@ -174,6 +176,10 @@ def pca_full(
             using the original shape (default 2,000,000,000; ``None`` disables
             the limit). Factors, covariance stores and temporary arrays are
             excluded; this is not a peak process-memory bound.
+            ``cost_diagnostics="endpoint"`` evaluates only the returned
+            iteration's cost, provided ``record_cost=False`` and no enabled
+            stopping event consumes a cost trace. The default ``"trace"``
+            preserves per-iteration recording when requested or required.
 
     Returns:
         Ordinary dictionary matching the historical PCA_FULL API, with typed
@@ -308,6 +314,7 @@ class TrainingState:
     runtime_report: dict[str, object] | None
     sparse_view_source: Matrix | None = None
     sparse_csc: sp.csc_matrix | None = None
+    endpoint_s_xv: float | None = None
 
 
 @dataclass
@@ -318,6 +325,7 @@ class _ProbeBestState:
     iteration: int
     model: ModelState | None
     restore: bool
+    s_xv: float | None = None
 
 
 @dataclass(frozen=True)
@@ -1337,6 +1345,11 @@ def _run_training_loop(
         opts=opts,
     )
     training.runtime_report = runtime_report
+    runtime_report["cost_diagnostics"] = {
+        "mode": str(opts.get("cost_diagnostics", "trace")),
+        "trace_required": _cost_trace_required(opts),
+        "endpoint_evaluations": 0,
+    }
 
     # Hyperparameters for Va, Vmu, V (kept here for compatibility).
     cfg = IterationConfig(
@@ -1400,6 +1413,12 @@ def _run_training_loop(
 
     _finalize_probe_best(training, probe_best, reason)
 
+    if (
+        opts.get("cost_diagnostics") == "endpoint"
+        and training.endpoint_s_xv is not None
+    ):
+        _record_endpoint_cost(ctx)
+
     return training
 
 
@@ -1459,6 +1478,7 @@ def _update_probe_best(
         return
     best.rms = current
     best.iteration = iteration
+    best.s_xv = training.endpoint_s_xv
     if best.restore:
         best.model = _copy_model_state(training.model)
 
@@ -1473,6 +1493,7 @@ def _finalize_probe_best(
     returned = terminal
     if reason == "earlystop" and best.model is not None:
         training.model = best.model
+        training.endpoint_s_xv = best.s_xv
         returned = best.iteration
 
     training.lc["terminal_iteration"] = terminal
@@ -1744,8 +1765,60 @@ def _noise_phase(ctx: IterationContext, rms: float) -> tuple[float, float]:
         hp_v=float(cfg.hp_v),
     )
     m.noise_var = float(noise_state.noise_var)
+    ctx.training.endpoint_s_xv = float(s_xv)
     ctx.bias_state.noise_var = float(m.noise_var)
     return float(s_xv), time.perf_counter() - noise_start
+
+
+def _convergence_state(
+    ctx: IterationContext,
+    x_data: Matrix,
+    s_xv: float,
+) -> ConvergenceState:
+    m = ctx.training.model
+    cfg = ctx.cfg
+    return ConvergenceState(
+        opts=dict(cfg.opts),
+        x_data=x_data,
+        loadings=m.a,
+        scores=m.s,
+        mu=m.mu,
+        noise_var=float(m.noise_var),
+        va=m.va,
+        loading_covariances=_covariances_list(m.av),
+        vmu=float(m.vmu),
+        mu_variances=m.muv,
+        score_covariances=_covariances_list(m.sv),
+        pattern_index=ctx.prepared.pattern_index,
+        mask=ctx.prepared.mask,
+        s_xv=float(s_xv),
+        n_data=float(ctx.prepared.n_data),
+        time_start=float(ctx.training.time_start),
+        lc=ctx.training.lc,
+        loadings_old=ctx.training.a_old,
+        dsph=ctx.training.dsph,
+    )
+
+
+def _record_endpoint_cost(ctx: IterationContext) -> None:
+    """Evaluate the returned iteration's cost before final rotation/prior refresh."""
+    training = ctx.training
+    if training.endpoint_s_xv is None:
+        return
+    started = time.perf_counter()
+    state = _convergence_state(ctx, ctx.prepared.x_data, training.endpoint_s_xv)
+    state.opts["record_cost"] = True
+    state.lc = {"cost": []}
+    _append_cost_value(state)
+    returned = int(training.lc.get("returned_iteration", 0))
+    training.lc["cost"][returned] = state.lc["cost"][-1]
+    if training.runtime_report is not None:
+        training.runtime_report["cost_diagnostics"] = {
+            "mode": "endpoint",
+            "returned_iteration": returned,
+            "endpoint_evaluations": 1,
+            "elapsed_sec": time.perf_counter() - started,
+        }
 
 
 def _convergence_phase(
@@ -1755,31 +1828,9 @@ def _convergence_phase(
     prms: float,
     s_xv: float,
 ) -> tuple[str | None, float]:
-    m = ctx.training.model
-    cfg = ctx.cfg
     converge_start = time.perf_counter()
     lc, _, convmsg, a_old = _log_and_check_convergence(
-        ConvergenceState(
-            opts=dict(cfg.opts),
-            x_data=x_data,
-            loadings=m.a,
-            scores=m.s,
-            mu=m.mu,
-            noise_var=float(m.noise_var),
-            va=m.va,
-            loading_covariances=_covariances_list(m.av),
-            vmu=float(m.vmu),
-            mu_variances=m.muv,
-            score_covariances=_covariances_list(m.sv),
-            pattern_index=ctx.prepared.pattern_index,
-            mask=ctx.prepared.mask,
-            s_xv=float(s_xv),
-            n_data=float(ctx.prepared.n_data),
-            time_start=float(ctx.training.time_start),
-            lc=ctx.training.lc,
-            loadings_old=ctx.training.a_old,
-            dsph=ctx.training.dsph,
-        ),
+        _convergence_state(ctx, x_data, s_xv),
         float(rms),
         float(prms),
     )
@@ -2385,6 +2436,7 @@ def _build_options(kwargs: Mapping[str, object]) -> dict[str, object]:
         "cfstop_rel": None,
         "cfstop_curv": None,
         "record_cost": False,
+        "cost_diagnostics": "trace",
         "record_prior_trace": False,
         "composite_stop": None,
         "patience": 1,
@@ -2482,10 +2534,30 @@ def _build_options(kwargs: Mapping[str, object]) -> dict[str, object]:
 
     _validate_convergence_opts(opts)
     _disable_unavailable_slowing_down(opts)
+    _validate_cost_diagnostics(opts)
 
     if wrnmsg:
         logger.warning("pca_full options warning: %s", wrnmsg)
     return opts
+
+
+def _validate_cost_diagnostics(opts: dict[str, object]) -> None:
+    """Resolve diagnostic mode without disabling cost-consuming events.
+
+    Raises:
+        ValueError: If the mode is unknown or requires a missing cost trace.
+    """
+    mode = str(opts.get("cost_diagnostics", "trace")).strip().lower()
+    if mode not in {"trace", "endpoint"}:
+        msg = "cost_diagnostics must be 'trace' or 'endpoint'"
+        raise ValueError(msg)
+    opts["cost_diagnostics"] = mode
+    if mode == "endpoint" and _cost_trace_required(opts):
+        msg = (
+            "cost_diagnostics='endpoint' requires record_cost=False and no "
+            "enabled cost-dependent stopping criteria"
+        )
+        raise ValueError(msg)
 
 
 def _disable_unavailable_slowing_down(opts: dict[str, object]) -> None:
