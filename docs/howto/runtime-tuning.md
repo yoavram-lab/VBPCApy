@@ -174,6 +174,27 @@ model = VBPCA(n_components=10, dense_sufficient_statistics="auto")
 The runtime report records the requested mode, resolved score/loading modes,
 observed fraction, and thresholds. Explicit modes are useful for benchmarking.
 
+## Posterior variance diagnostics
+
+Full diagnostic output retains the reconstruction mean, posterior variance and
+predictive variance at every feature/sample cell. Predictive variance adds the
+observation noise to posterior variance. The contraction retains all loading
+and score covariance entries, shared pattern covariances and bias uncertainty;
+PPCA/MAP omit their absent covariance terms.
+
+Uncertainty is evaluated in rectangular blocks of at most 128 features and
+128 samples using matrix products. Covariance packing and outer products use
+only those blocks; NumPy scratch storage scales as
+`O(128 * rank**2 + 128**2)` rather than additional full feature-by-sample
+matrices. This excludes BLAS workspace and the required output itself.
+`max_dense_bytes` still checks combined diagnostic output storage, rather than
+peak process memory. Use `return_diagnostics=False` to omit full outputs.
+
+The [benchmark procedure](../../scripts/benchmark_study.md#posterior-variance-contractions)
+includes covariance packing, numerical error, NumPy allocation peaks and
+optional whole-fit measurements. Selected-cell reconstruction remains a separate
+API proposal (#20); full output never fills unevaluated cells with zeros.
+
 ## Native failures
 
 Dense and sparse update kernels require finite, positive `noise_var`. Invalid

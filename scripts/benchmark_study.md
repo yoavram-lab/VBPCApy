@@ -137,6 +137,29 @@ mathlib and SymPy and state the proof boundaries. Follow numerical comparisons
 with representative fixed-policy full fits before adopting a rewrite; the
 local phase ratios do not establish whole-fit or cross-machine speedups.
 
+## Posterior variance contractions
+
+Compare the historical einsum, optimized einsum, full GEMM and bounded GEMM
+implementations, including covariance packing:
+
+```bash
+OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+  uv run --extra dev python scripts/benchmark_posterior_variance.py \
+  --repeats 5 --include-fits --output /tmp/vbpca-variance.json
+uv run pytest -q tests/test_posterior_variance.py tests/test_diagnostic_memory.py
+just numerical-reference
+```
+
+The command uses deterministic full, off-diagonal posterior covariances and
+alternating measurement order after warmup. It records shape/rank, individual
+timings, NumPy allocation peaks, covariance-packing scope, software versions,
+source hash, affinity and actual BLAS pools. NumPy peaks exclude native BLAS
+workspace. Whole-fit comparisons use the same fixed four-iteration policy and
+compare factors, reconstruction, noise and both uncertainty outputs. Timing on
+a shared host is advisory; pin CPU allocation and repeat on target hardware
+before interpreting throughput. The rewrite changes diagnostic evaluation,
+and leaves numerical stopping, statistical defaults and publication pins alone.
+
 ## Source-revision memory and thread profiles
 
 `analysis/compare_backend_revisions.py` compares a baseline and candidate source
