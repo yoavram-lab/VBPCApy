@@ -220,6 +220,8 @@ double noise_sxv_sum(
 }  // namespace
 
 PYBIND11_MODULE(noise_update_kernels, m) {
+    m.def("effective_thread_count", [](int requested, int n_items) { return resolve_num_threads(requested, n_items); });
+
     m.doc() = "Noise variance accumulation kernels for VB-PCA.";
 
     m.def(

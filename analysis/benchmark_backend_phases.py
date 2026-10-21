@@ -64,6 +64,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--threads", type=int, default=1)
     parser.add_argument("--repeats", type=int, default=1)
     parser.add_argument("--seed", type=int, default=207)
+    parser.add_argument("--initialization-offset", type=int, default=0)
     parser.add_argument("--order", choices=("C", "F"), default="C")
     parser.add_argument(
         "--runtime-tuning",
@@ -170,6 +171,7 @@ def _run_once(
 ) -> dict[str, object]:
     rss_before = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     started = time.perf_counter()
+    cpu_started = time.process_time()
     with _profile_orchestration() as orchestration:
         result = pca_module.pca_full(
             x,
@@ -189,7 +191,7 @@ def _run_once(
             runtime_report=True,
             num_cpu=args.threads,
             compat_mode="modern",
-            random_state=args.seed + repeat,
+            random_state=args.seed + repeat + args.initialization_offset,
             display=0,
             verbose=0,
         )
@@ -242,6 +244,7 @@ def _run_once(
         "diagnostics": not args.skip_diagnostics,
         "record_cost": bool(args.record_cost),
         "wall_seconds": wall_seconds,
+        "cpu_seconds": time.process_time() - cpu_started,
         "max_rss_before_kib": int(rss_before),
         "max_rss_after_kib": int(rss_after),
         "orchestration": orchestration,

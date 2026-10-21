@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <fstream>
+#include <sstream>
 #include <string>
 #include <thread>
 
@@ -10,6 +12,62 @@
 #endif
 
 namespace vbpca_threads {
+
+inline int quota_at(const std::string &directory) {
+    std::ifstream v2(directory + "/cpu.max");
+    std::string quota;
+    long long period = 0;
+    if (v2 >> quota >> period) {
+        if (quota == "max") return 0;
+        try {
+            const long long value = std::stoll(quota);
+            if (value > 0 && period > 0)
+                return static_cast<int>(std::max(1LL, std::min(2147483647LL, value / period)));
+        } catch (...) {}
+    }
+    std::ifstream v1quota(directory + "/cpu.cfs_quota_us");
+    std::ifstream v1period(directory + "/cpu.cfs_period_us");
+    long long value = 0;
+    if (v1quota >> value && v1period >> period && value > 0 && period > 0)
+        return static_cast<int>(std::max(1LL, std::min(2147483647LL, value / period)));
+    return 0;
+}
+
+inline int cgroup_limit() {
+#if defined(__linux__)
+    int limit = 0;
+    auto include = [&](const std::string &directory) {
+        const int quota = quota_at(directory);
+        if (quota > 0) limit = limit > 0 ? std::min(limit, quota) : quota;
+    };
+    for (const char *mount : {"/sys/fs/cgroup", "/sys/fs/cgroup/cpu",
+            "/sys/fs/cgroup/cpu,cpuacct", "/sys/fs/cgroup/cpuacct,cpu"}) include(mount);
+    std::ifstream membership("/proc/self/cgroup");
+    std::string line;
+    while (std::getline(membership, line)) {
+        const auto first = line.find(':');
+        const auto second = line.find(':', first == std::string::npos ? 0 : first + 1);
+        if (first == std::string::npos || second == std::string::npos) continue;
+        const std::string controllers = "," + line.substr(first + 1, second - first - 1) + ",";
+        const std::string group = line.substr(second + 1);
+        if (group.empty() || group[0] != '/' || group.find("..") != std::string::npos) continue;
+        for (const char *mount : {"/sys/fs/cgroup", "/sys/fs/cgroup/cpu",
+                "/sys/fs/cgroup/cpu,cpuacct", "/sys/fs/cgroup/cpuacct,cpu"}) {
+            if ((controllers == ",," && std::string(mount) != "/sys/fs/cgroup") ||
+                (controllers != ",," && (controllers.find(",cpu,") == std::string::npos ||
+                 std::string(mount) == "/sys/fs/cgroup"))) continue;
+            std::string relative = group;
+            while (!relative.empty()) {
+                include(std::string(mount) + relative);
+                relative.erase(relative.find_last_of('/'));
+            }
+        }
+    }
+    return limit;
+#else
+    return 0;
+#endif
+}
 
 inline int positive_env(const char *key) {
     const char *raw = std::getenv(key);
@@ -50,6 +108,8 @@ inline int process_thread_limit() {
             limit = std::min(limit, allocated);
         }
     }
+    const int quota = cgroup_limit();
+    if (quota > 0) limit = std::min(limit, quota);
     return std::max(1, limit);
 }
 

@@ -471,6 +471,8 @@ py::dict loadings_update_sparse_nopattern(
 }  // namespace
 
 PYBIND11_MODULE(sparse_update_kernels, m) {
+    m.def("effective_thread_count", [](int requested, int n_items, long long work_units) { return resolve_num_threads(requested, n_items, work_units); });
+
     m.doc() = "Sparse score/loadings update kernels for pattern-free VB-PCA updates.";
 
     m.def(

@@ -48,6 +48,7 @@ from ._full_update import (
     ScoreState,
     _build_masks_and_counts,
     _covariances_list,
+    _covariances_stack,
     _final_rotation,
     _initialize_parameters,
     _missing_patterns_info,
@@ -77,6 +78,7 @@ from ._noise_statistics import (
 )
 from ._options import _options
 from ._posterior_variance import marginal_variance
+from ._runtime_execution import execution_pools
 from ._runtime_policy import (
     DenseMaskedAutotuneInputs,
     RuntimeThreadConfig,
@@ -725,6 +727,52 @@ def _resolve_noise_sufficient_statistics(
         ),
     }
 
+def _probe_covariances(store: CovarianceStore) -> np.ndarray | None:
+    return _covariances_stack(store) if len(store) else None
+
+
+def _runtime_execution_signature(
+    prepared: PreparedProblem, training: TrainingState, opts: Mapping[str, object]
+) -> tuple[tuple[str, str], ...]:
+    model = training.model
+    return tuple(
+        sorted(
+            {
+                "loading_covariances": str(bool(len(model.av))),
+                "score_covariances": str(bool(len(model.sv))),
+                "loading_layout": str(model.a.strides),
+                "score_layout": str(model.s.strides),
+                "x_layout": str(getattr(prepared.x_data, "strides", "sparse")),
+                "patterns": str(prepared.pattern_index is not None),
+                "score_complement": str(opts.get("_dense_score_use_complement", False)),
+                "loading_complement": str(
+                    opts.get("_dense_loading_use_complement", False)
+                ),
+                "noise_statistics": str(
+                    opts.get("noise_sufficient_statistics", "auto")
+                ),
+            }.items()
+        )
+    )
+
+
+def _probe_within_resource_budget(ctx: _AutotuneContext) -> bool:
+    rank = ctx.workload.n_components
+    estimated = 8 * rank * rank * (ctx.workload.n_features + ctx.workload.n_samples)
+    work = ctx.workload.n_observed * max(1, rank * rank)
+    if rank <= 128 and estimated <= 64 * 1024**2 and work <= 200_000_000:
+        return True
+    ctx.runtime_report["autotune_probe"] = {
+        "status": "skipped",
+        "reason": "covariance_probe_resource_limit",
+        "covariance_bytes_upper_bound": estimated,
+        "maximum_rank": 128,
+        "maximum_covariance_bytes": 64 * 1024**2,
+        "observed_rank_squared_work": work,
+        "maximum_observed_rank_squared_work": 200_000_000,
+    }
+    return False
+
 
 def _resolve_runtime_threads_for_training(
     *,
@@ -740,12 +788,26 @@ def _resolve_runtime_threads_for_training(
         is_sparse=bool(sp.issparse(prepared.x_data)),
     )
 
+    execution_report: dict[str, object] = {}
+    _resolve_dense_sufficient_statistics(
+        prepared=prepared,
+        workload=workload,
+        opts=opts,
+        runtime_report=execution_report,
+    )
+    _resolve_noise_sufficient_statistics(
+        prepared=prepared, workload=workload, opts=opts, runtime_report=execution_report
+    )
+    workload = replace(
+        workload, execution=_runtime_execution_signature(prepared, training, opts)
+    )
     _ensure_phase_timing_keys(training.lc)
 
     runtime_threads, runtime_report = resolve_runtime_thread_config_with_report(
         dict(opts),
         workload=workload,
     )
+    runtime_report.update(execution_report)
     preflight = opts.pop("_runtime_preflight", None)
     if preflight:
         runtime_report["preflight"] = preflight
@@ -766,14 +828,16 @@ def _resolve_runtime_threads_for_training(
             profile_path=resolve_profile_path(opts.get("runtime_profile")),
         )
 
-        runtime_threads, runtime_report = _autotune_dense_masked_runtime(ctx)
-        runtime_threads, runtime_report = _autotune_sparse_runtime(ctx)
-        runtime_threads, runtime_report, accessor_source_override = (
+        ctx.runtime_threads, ctx.runtime_report = _autotune_dense_masked_runtime(ctx)
+        ctx.runtime_threads, ctx.runtime_report = _autotune_sparse_runtime(ctx)
+        ctx.runtime_threads, ctx.runtime_report, accessor_source_override = (
             _autotune_masked_batch_and_accessor(ctx)
         )
-        runtime_threads, runtime_report, cov_source_override = (
+        ctx.runtime_threads, ctx.runtime_report, cov_source_override = (
             _autotune_cov_writeback_mode(ctx)
         )
+
+        runtime_threads, runtime_report = ctx.runtime_threads, ctx.runtime_report
 
     cov_writeback_mode, log_stride, accessor_mode, behavior_sources = (
         _resolve_runtime_behavior(
@@ -783,28 +847,34 @@ def _resolve_runtime_threads_for_training(
             accessor_source_override=accessor_source_override,
         )
     )
-    _resolve_dense_sufficient_statistics(
-        prepared=prepared,
-        workload=workload,
-        opts=opts,
-        runtime_report=runtime_report,
-    )
-    _resolve_noise_sufficient_statistics(
-        prepared=prepared, workload=workload, opts=opts, runtime_report=runtime_report
-    )
     runtime_report["cov_writeback_mode"] = cov_writeback_mode
     runtime_report["bias_update_order"] = str(opts["bias_update_order"])
     runtime_report["variance_update_order"] = str(opts["variance_update_order"])
     runtime_report["log_progress_stride"] = int(log_stride)
     runtime_report["accessor_mode"] = accessor_mode
     runtime_report["behavior_sources"] = behavior_sources
+    runtime_report["execution_pools"] = execution_pools(
+        runtime_threads,
+        workload,
+        patterns=prepared.pattern_index is not None,
+        loading_covariances=bool(len(training.model.av)),
+        score_covariances=bool(len(training.model.sv)),
+        bias=bool(opts.get("bias", True)),
+        missing_count=(cast("NoiseComplement", opts["_noise_complement"]).rows.size
+            if opts.get("_noise_complement") is not None else None),
+    )
     return runtime_threads, runtime_report
 
 
 def _autotune_dense_masked_runtime(
     ctx: _AutotuneContext,
 ) -> tuple[RuntimeThreadConfig, dict[str, object]]:
-    if ctx.workload.is_sparse or ctx.prepared.mask is None:
+    if (
+        ctx.workload.is_sparse
+        or ctx.prepared.mask is None
+        or ctx.prepared.pattern_index is not None
+        or not _probe_within_resource_budget(ctx)
+    ):
         return ctx.runtime_threads, ctx.runtime_report
 
     cap = _thread_cap(
@@ -820,17 +890,9 @@ def _autotune_dense_masked_runtime(
 
     reps = 1 if ctx.tuning_mode == "safe" else 2
     max_time = 0.25 if ctx.tuning_mode == "safe" else 0.6
-    prior_prec = _prior_precision_matrix(
-        ctx.training.model.va, ctx.training.model.noise_var
-    )
-    inputs = DenseMaskedAutotuneInputs(
-        x_data=np.asarray(ctx.prepared.x_data, dtype=np.float64),
-        mask=np.asarray(ctx.prepared.mask, dtype=np.bool_),
-        loadings=np.asarray(ctx.training.model.a, dtype=np.float64),
-        scores=np.asarray(ctx.training.model.s, dtype=np.float64),
-        noise_var=float(ctx.training.model.noise_var),
-        prior_prec=np.asarray(prior_prec, dtype=np.float64),
-    )
+    packing_start = time.perf_counter()
+    inputs = _build_dense_cov_inputs(ctx)
+    packing_seconds = time.perf_counter() - packing_start
 
     try:
         best_score, best_load, auto_report = autotune_dense_masked_threads(
@@ -847,6 +909,15 @@ def _autotune_dense_masked_runtime(
             "reason": "benchmark_numerical_failure",
             "exception_type": type(exc).__name__,
         }
+        return ctx.runtime_threads, ctx.runtime_report
+
+    auto_report["input_pack_seconds"] = packing_seconds
+    auto_report["elapsed_sec"] = (
+        float(cast("float", auto_report.get("elapsed_sec", 0.0))) + packing_seconds
+    )
+    if not auto_report.get("score") or not auto_report.get("loadings"):
+        auto_report["status"] = "insufficient_probe_budget"
+        ctx.runtime_report["autotune_probe"] = auto_report
         return ctx.runtime_threads, ctx.runtime_report
 
     runtime_threads = replace(
@@ -870,14 +941,14 @@ def _autotune_dense_masked_runtime(
     runtime_report["autotune_dense_masked"] = auto_report
 
     with contextlib.suppress(OSError):
-        save_autotune_profile_rule(
+        saved = save_autotune_profile_rule(
             profile_path=ctx.profile_path,
             workload=ctx.workload,
             score_threads=int(best_score),
             loadings_threads=int(best_load),
             source=f"autotune_dense_masked_{ctx.tuning_mode}",
         )
-        if ctx.profile_path is not None:
+        if saved and ctx.profile_path is not None:
             runtime_report["runtime_profile_saved"] = str(ctx.profile_path)
 
     return runtime_threads, runtime_report
@@ -1055,6 +1126,9 @@ def _autotune_masked_batch_and_accessor(
     if ctx.prepared.pattern_index is None or not ctx.prepared.obs_patterns:
         return ctx.runtime_threads, ctx.runtime_report, accessor_source_override
 
+    if not _probe_within_resource_budget(ctx):
+        return ctx.runtime_threads, ctx.runtime_report, accessor_source_override
+
     subset = _build_pattern_autotune_subset(
         ctx, max_columns=96 if ctx.tuning_mode == "aggressive" else 64
     )
@@ -1122,7 +1196,11 @@ def _autotune_masked_batch_and_accessor(
 def _autotune_sparse_runtime(
     ctx: _AutotuneContext,
 ) -> tuple[RuntimeThreadConfig, dict[str, object]]:
-    if not ctx.workload.is_sparse:
+    if (
+        not ctx.workload.is_sparse
+        or ctx.prepared.pattern_index is not None
+        or not _probe_within_resource_budget(ctx)
+    ):
         return ctx.runtime_threads, ctx.runtime_report
 
     cap = _thread_cap(
@@ -1137,25 +1215,9 @@ def _autotune_sparse_runtime(
 
     reps = 1 if ctx.tuning_mode == "safe" else 2
     max_time = 0.35 if ctx.tuning_mode == "safe" else 0.8
-    x_csc = sp.csc_matrix(ctx.prepared.x_data)
-    x_csr = sp.csr_matrix(ctx.prepared.x_data)
-    prior_prec = _prior_precision_matrix(
-        ctx.training.model.va, ctx.training.model.noise_var
-    )
-    inputs = SparseAutotuneInputs(
-        n_features=ctx.prepared.n_features,
-        n_samples=ctx.prepared.n_samples,
-        x_csc_data=np.asarray(x_csc.data, dtype=np.float64),
-        x_csc_indices=np.asarray(x_csc.indices, dtype=np.int32),
-        x_csc_indptr=np.asarray(x_csc.indptr, dtype=np.int32),
-        x_csr_data=np.asarray(x_csr.data, dtype=np.float64),
-        x_csr_indices=np.asarray(x_csr.indices, dtype=np.int32),
-        x_csr_indptr=np.asarray(x_csr.indptr, dtype=np.int32),
-        loadings=np.asarray(ctx.training.model.a, dtype=np.float64),
-        scores=np.asarray(ctx.training.model.s, dtype=np.float64),
-        noise_var=float(ctx.training.model.noise_var),
-        prior_prec=np.asarray(prior_prec, dtype=np.float64),
-    )
+    packing_start = time.perf_counter()
+    inputs = _build_sparse_cov_inputs(ctx)
+    packing_seconds = time.perf_counter() - packing_start
 
     best_score, best_load, auto_report = autotune_sparse_nopattern_threads(
         inputs,
@@ -1164,6 +1226,15 @@ def _autotune_sparse_runtime(
         max_total_time=max_time,
         tuning_mode=ctx.tuning_mode,
     )
+
+    auto_report["input_pack_seconds"] = packing_seconds
+    auto_report["elapsed_sec"] = (
+        float(cast("float", auto_report.get("elapsed_sec", 0.0))) + packing_seconds
+    )
+    if not auto_report.get("score") or not auto_report.get("loadings"):
+        auto_report["status"] = "insufficient_probe_budget"
+        ctx.runtime_report["autotune_probe"] = auto_report
+        return ctx.runtime_threads, ctx.runtime_report
 
     runtime_threads = replace(
         ctx.runtime_threads,
@@ -1186,13 +1257,13 @@ def _autotune_sparse_runtime(
     runtime_report["autotune_sparse"] = auto_report
 
     with contextlib.suppress(OSError):
-        save_autotune_profile_rule(
+        saved = save_autotune_profile_rule(
             profile_path=ctx.profile_path,
             workload=ctx.workload,
             score_threads=int(best_score),
             loadings_threads=int(best_load),
         )
-        if ctx.profile_path is not None:
+        if saved and ctx.profile_path is not None:
             runtime_report["runtime_profile_saved"] = str(ctx.profile_path)
 
     return runtime_threads, runtime_report
@@ -1217,6 +1288,10 @@ def _build_sparse_cov_inputs(ctx: _AutotuneContext) -> SparseAutotuneInputs:
         scores=np.asarray(ctx.training.model.s, dtype=np.float64),
         noise_var=float(ctx.training.model.noise_var),
         prior_prec=np.asarray(prior_prec, dtype=np.float64),
+        loading_covariances=_probe_covariances(ctx.training.model.av),
+        score_covariances=_probe_covariances(ctx.training.model.sv),
+        return_score_covariances=bool(len(ctx.training.model.sv)),
+        return_loading_covariances=bool(len(ctx.training.model.av)),
     )
 
 
@@ -1225,12 +1300,20 @@ def _build_dense_cov_inputs(ctx: _AutotuneContext) -> DenseMaskedAutotuneInputs:
         ctx.training.model.va, ctx.training.model.noise_var
     )
     return DenseMaskedAutotuneInputs(
+        score_use_complement=bool(ctx.opts.get("_dense_score_use_complement", False)),
+        loading_use_complement=bool(
+            ctx.opts.get("_dense_loading_use_complement", False)
+        ),
         x_data=np.asarray(ctx.prepared.x_data, dtype=np.float64),
         mask=np.asarray(ctx.prepared.mask, dtype=np.bool_),
         loadings=np.asarray(ctx.training.model.a, dtype=np.float64),
         scores=np.asarray(ctx.training.model.s, dtype=np.float64),
         noise_var=float(ctx.training.model.noise_var),
         prior_prec=np.asarray(prior_prec, dtype=np.float64),
+        loading_covariances=_probe_covariances(ctx.training.model.av),
+        score_covariances=_probe_covariances(ctx.training.model.sv),
+        return_score_covariances=bool(len(ctx.training.model.sv)),
+        return_loading_covariances=bool(len(ctx.training.model.av)),
     )
 
 
@@ -1243,7 +1326,11 @@ def _autotune_cov_writeback_mode(
     if cov_raw is not None and cov_mode_normalized != "auto":
         return ctx.runtime_threads, ctx.runtime_report, None
 
-    if ctx.prepared.mask is None:
+    if (
+        ctx.prepared.mask is None
+        or ctx.prepared.pattern_index is not None
+        or not _probe_within_resource_budget(ctx)
+    ):
         return ctx.runtime_threads, ctx.runtime_report, None
 
     reps = 1 if ctx.tuning_mode == "safe" else 2
