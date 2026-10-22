@@ -61,12 +61,14 @@ def test_vbpca_transform_and_inverse_errors(monkeypatch: pytest.MonkeyPatch) -> 
 
 
 def test_vbpca_get_options_merges_overrides() -> None:
-    est = VBPCA(2, bias=False, maxiters=5, tol=1e-3, verbose=2, foo="bar")
+    est = VBPCA(2, bias=False, maxiters=5, tol=1e-3, verbose=2)
     opts = est.get_options()
     assert opts["bias"] is False
     assert opts["maxiters"] == 5
     assert opts["verbose"] == 2
-    assert opts.get("foo") == "bar"
+    assert "foo" not in opts
+    with pytest.raises(TypeError, match="foo"):
+        VBPCA(2, foo="bar")
 
 
 def test_select_n_components_invalid_metric_and_components() -> None:

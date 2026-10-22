@@ -495,7 +495,6 @@ def test_iteration_order_scores_rotate_loadings(
         "maxiters": 1,
         "bias": 1,
         "verbose": 0,
-        "autosave": 0,
         "rotate2pca": 1,
     })
 
@@ -810,7 +809,6 @@ def test_initialize_model_centers_prepared_data_once() -> None:
         "maxiters": 1,
         "bias": 1,
         "verbose": 0,
-        "autosave": 0,
         "rotate2pca": 0,
     })
 

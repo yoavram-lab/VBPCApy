@@ -33,7 +33,9 @@ def _recommend(n, p, **kwargs):
 )
 @pytest.mark.parametrize("priority", ["balanced", "accuracy", "speed"])
 def test_every_recommendation_leaves_relative_cost_stopping_inactive(n, p, priority):
-    opts = _build_options(_recommend(n, p, priority=priority))
+    # Recommendations include estimator-only probe generation. Resolve through
+    # that boundary before inspecting the low-level stopping configuration.
+    opts = _build_options(VBPCA(1, **_recommend(n, p, priority=priority)).get_options())
     assert opts["cfstop_rel"] is None
     criteria = opts["convergence_criteria"]
     if p > 200 or p / n > 2 or n / p > 15:

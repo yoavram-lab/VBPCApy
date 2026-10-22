@@ -3,6 +3,7 @@
 from importlib.metadata import version
 
 from vbpca_py._missing import make_xprobe_mask
+from vbpca_py.configuration import PCAOptions
 from vbpca_py.defaults import recommend_config
 from vbpca_py.encoding import EncodedVariable, EncodingSchema
 from vbpca_py.estimators import VBPCA
@@ -65,6 +66,7 @@ __all__ = [
     "MissingAwareStandardScaler",
     "MissingAwareWinsorizer",
     "NumericTraceKey",
+    "PCAOptions",
     "PCAResult",
     "PhaseTimingKey",
     "PosteriorCovariances",
