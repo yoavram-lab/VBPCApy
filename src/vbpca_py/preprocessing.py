@@ -159,12 +159,22 @@ def _sparse_mean_var(mat: sp.csc_matrix) -> tuple[np.ndarray, np.ndarray]:  # no
         offsets = starts[first:last] - start
         values = np.asarray(mat.data[start : int(ends[last - 1])], dtype=np.float64)
         anchors = values[offsets]
-        centered = values - np.repeat(anchors, local_counts)
-        mean_offsets = np.add.reduceat(centered, offsets) / local_counts
-        means[selected] = anchors + mean_offsets
-        centered -= np.repeat(mean_offsets, local_counts)
-        np.square(centered, out=centered)
-        vars_[selected] = np.add.reduceat(centered, offsets) / local_counts
+        with np.errstate(over="ignore", invalid="ignore"):
+            centered = values - np.repeat(anchors, local_counts)
+            mean_offsets = np.add.reduceat(centered, offsets) / local_counts
+            means[selected] = anchors + mean_offsets
+            centered -= np.repeat(mean_offsets, local_counts)
+            np.square(centered, out=centered)
+            vars_[selected] = np.add.reduceat(centered, offsets) / local_counts
+        # Opposite-sign finite extremes can overflow the shift or its sum.
+        # Reuse dense moments only for affected columns, preserving the existing
+        # nonfinite-scale fallback without slowing ordinary sparse columns.
+        for position in np.flatnonzero(~np.isfinite(mean_offsets)):
+            lo = offsets[position]
+            hi = lo + local_counts[position]
+            means[selected[position]], vars_[selected[position]] = _observed_mean_var(
+                values[lo:hi]
+            )
         first = last
     return means, vars_
 

@@ -124,3 +124,29 @@ def test_sparse_centered_moments_bound_entry_chunks_without_densifying(monkeypat
         scaler.mean_, [0.0, 0.0, np.nan, 1.0], rtol=0.0, atol=0.0
     )
     np.testing.assert_allclose(scaler.var_, [2 / 3, 4.0, np.nan, 1.0], rtol=1e-14)
+
+
+@pytest.mark.parametrize("storage", ["dense", "csr", "csc"])
+@pytest.mark.parametrize("column", [[-1e308, 1e308], [-1e308, 0.0, 0.0]])
+def test_standard_scaler_extreme_values_preserve_finite_mean_fallback(storage, column):
+    x = np.array(column)[:, None]
+    if storage == "dense":
+        values = x
+    else:
+        # Keep zeros explicitly stored: they are observations.
+        rows = np.arange(len(column))
+        values = getattr(sp, storage + "_matrix")(
+            (x[:, 0], (rows, np.zeros(len(column), dtype=int))), shape=x.shape
+        )
+    with np.errstate(over="ignore", invalid="ignore"):
+        reference = MissingAwareStandardScaler().fit(x)
+        scaler = MissingAwareStandardScaler().fit(values)
+        result = scaler.transform(values)
+        expected = reference.transform(x)
+    actual = result if storage == "dense" else result.toarray()
+    np.testing.assert_array_equal(scaler.mean_, reference.mean_)
+    assert np.isfinite(scaler.mean_).all()
+    np.testing.assert_array_equal(scaler.var_, [np.inf])
+    np.testing.assert_array_equal(scaler.scale_, [1.0])
+    np.testing.assert_array_equal(actual, expected)
+    assert np.isfinite(actual).all()
