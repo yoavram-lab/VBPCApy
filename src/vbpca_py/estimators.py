@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import warnings
+from dataclasses import replace
 from typing import TYPE_CHECKING, cast
 
 import numpy as np
@@ -15,13 +16,29 @@ from vbpca_py._memory import (
     resolve_max_dense_bytes,
 )
 from vbpca_py._missing import make_xprobe_mask
-from vbpca_py._pca_full import Matrix, _build_options, pca_full
+from vbpca_py._pca_full import Matrix, pca_full
 from vbpca_py._sklearn_compat import BaseEstimator
+from vbpca_py.configuration import PCAOptions
 from vbpca_py.model_selection import SelectionConfig, select_n_components
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
+    from pathlib import Path
 
+    import numpy.typing as npt
+
+    from vbpca_py.options import (
+        AccessorMode,
+        Algorithm,
+        BiasUpdateOrder,
+        CompatMode,
+        CostDiagnostics,
+        CovarianceWriteback,
+        ExplainedVarianceSolver,
+        RuntimeTuning,
+        StatisticsMode,
+        VarianceUpdateOrder,
+    )
     from vbpca_py.results import LearningCurve
 
 __all__ = ["VBPCA"]
@@ -41,7 +58,7 @@ def _warn_deprecated_tol(tol: float | None) -> None:
 class VBPCA(BaseEstimator):
     """Variational Bayesian PCA with a sklearn-like interface."""
 
-    def __init__(  # noqa: PLR0913
+    def __init__(  # noqa: PLR0913, PLR0915
         self,
         n_components: int,
         *,
@@ -58,7 +75,45 @@ class VBPCA(BaseEstimator):
         criterion_order: list[str] | None = None,
         convergence_criteria: dict[str, bool] | None = None,
         random_state: int | np.random.Generator | None = None,
-        **opts: object,
+        init: object = "random",
+        max_dense_bytes: int | None = 2_000_000_000,
+        uniquesv: bool = False,
+        auto_pattern_masked: bool = False,
+        angle_every: int = 1,
+        minangle: float = 1e-8,
+        algorithm: Algorithm | str = "vb",
+        earlystop: bool = False,
+        rmsstop: npt.ArrayLike | None = (100.0, 1e-4, 1e-3),
+        cfstop: npt.ArrayLike | None = (),
+        cfstop_rel: float | None = None,
+        cfstop_curv: float | None = None,
+        record_cost: bool = False,
+        cost_diagnostics: CostDiagnostics | str = "trace",
+        record_prior_trace: bool = False,
+        composite_stop: Mapping[str, float] | None = None,
+        patience: int = 1,
+        num_cpu: int | None = None,
+        num_cpu_score_update: int | None = None,
+        num_cpu_loadings_update: int | None = None,
+        num_cpu_noise_update: int | None = None,
+        num_cpu_rms: int | None = None,
+        runtime_tuning: RuntimeTuning | str = "safe",
+        runtime_profile: str | Path | None = None,
+        dense_sufficient_statistics: StatisticsMode | str = "auto",
+        noise_sufficient_statistics: StatisticsMode | str = "auto",
+        masked_batch_size: int = 0,
+        cov_writeback_mode: CovarianceWriteback | str | None = None,
+        log_progress_stride: int | None = None,
+        accessor_mode: AccessorMode | str | None = None,
+        rotate2pca: bool = True,
+        display: bool = False,
+        bias_update_order: BiasUpdateOrder | str = "auto",
+        variance_update_order: VarianceUpdateOrder | str = "auto",
+        compat_mode: CompatMode | str = "strict_legacy",
+        return_diagnostics: bool = True,
+        runtime_report: bool = False,
+        explained_var_solver: ExplainedVarianceSolver | str = "auto",
+        explained_var_gram_ratio: float = 4.0,
     ) -> None:
         """
         Initialize the estimator with common VB-PCA options.
@@ -108,17 +163,52 @@ class VBPCA(BaseEstimator):
                 and no explicit *xprobe* is passed to :meth:`fit`.  ``None``
                 (default) draws fresh entropy each call, matching prior
                 behaviour; set an int for reproducible fits.
-            **opts: Additional PCA_FULL options. ``max_dense_bytes`` limits the
-                combined float64 reconstruction and two variance outputs
-                (default 2,000,000,000 bytes; ``None`` disables the limit).
-                ``return_diagnostics=False`` omits these fit outputs. Neither
-                option bounds factors, covariance stores or peak memory.
+            init: Random initialization, a MAT filename or a warm-start payload.
+            max_dense_bytes: Combined reconstruction/variance output limit in
+                bytes; None disables it. This does not bound peak fit memory.
+            uniquesv: Group identical sample missingness patterns.
+            auto_pattern_masked: Enable automatic grouped-pattern handling.
+            angle_every: Iteration stride for principal-angle diagnostics.
+            minangle: Angle stopping threshold.
+            algorithm: VB, MAP or PPCA numerical update policy.
+            earlystop: Restore/stop according to held-out probe diagnostics.
+            rmsstop: RMS plateau window and absolute/relative thresholds.
+            cfstop: Cost plateau window and absolute/relative thresholds.
+            cfstop_rel: Relative cost improvement threshold.
+            cfstop_curv: Cost curvature threshold.
+            record_cost: Record the per-iteration variational objective.
+            cost_diagnostics: Full trace or endpoint objective evaluation.
+            record_prior_trace: Record loading prior variances each iteration.
+            composite_stop: Composite angle/RMS/cost stopping thresholds.
+            patience: Consecutive qualifying iterations required for stopping.
+            num_cpu: Global native-kernel thread hint; None inherits policy.
+            num_cpu_score_update: Score-update thread override.
+            num_cpu_loadings_update: Loading-update thread override.
+            num_cpu_noise_update: Noise-update thread override.
+            num_cpu_rms: RMS thread override.
+            runtime_tuning: Off, safe or aggressive runtime tuning.
+            runtime_profile: Optional runtime-profile file.
+            dense_sufficient_statistics: Dense observed/complement execution.
+            noise_sufficient_statistics: Noise observed/complement execution.
+            masked_batch_size: Grouped-pattern batch size; zero selects policy.
+            cov_writeback_mode: Covariance writeback execution mode.
+            log_progress_stride: Progress logging stride.
+            accessor_mode: Sparse/grouped-pattern accessor implementation.
+            rotate2pca: Rotate factors to principal axes while fitting.
+            display: Enable legacy progress display.
+            bias_update_order: Mean-update ordering, or compatibility default.
+            variance_update_order: Noise-update ordering, or compatibility default.
+            compat_mode: Legacy or modern numerical compatibility policy.
+            return_diagnostics: Include reconstruction and variance fit outputs.
+            runtime_report: Retain execution-policy diagnostics after fit.
+            explained_var_solver: Factor/SVD/Gram explained-variance computation.
+            explained_var_gram_ratio: Gram solver aspect-ratio threshold.
         """
         self.n_components = n_components
         self.bias = bias
         self.maxiters = maxiters
         self.tol = tol
-        self.verbose = int(verbose)
+        self.verbose = verbose
         self.hp_va = hp_va
         self.hp_vb = hp_vb
         self.hp_v = hp_v
@@ -128,7 +218,45 @@ class VBPCA(BaseEstimator):
         self.criterion_order = criterion_order
         self.convergence_criteria = convergence_criteria
         self.random_state = random_state
-        self.opts = opts
+        self.init = init
+        self.max_dense_bytes = max_dense_bytes
+        self.uniquesv = uniquesv
+        self.auto_pattern_masked = auto_pattern_masked
+        self.angle_every = angle_every
+        self.minangle = minangle
+        self.algorithm = algorithm
+        self.earlystop = earlystop
+        self.rmsstop = rmsstop
+        self.cfstop = cfstop
+        self.cfstop_rel = cfstop_rel
+        self.cfstop_curv = cfstop_curv
+        self.record_cost = record_cost
+        self.cost_diagnostics = cost_diagnostics
+        self.record_prior_trace = record_prior_trace
+        self.composite_stop = composite_stop
+        self.patience = patience
+        self.num_cpu = num_cpu
+        self.num_cpu_score_update = num_cpu_score_update
+        self.num_cpu_loadings_update = num_cpu_loadings_update
+        self.num_cpu_noise_update = num_cpu_noise_update
+        self.num_cpu_rms = num_cpu_rms
+        self.runtime_tuning = runtime_tuning
+        self.runtime_profile = runtime_profile
+        self.dense_sufficient_statistics = dense_sufficient_statistics
+        self.noise_sufficient_statistics = noise_sufficient_statistics
+        self.masked_batch_size = masked_batch_size
+        self.cov_writeback_mode = cov_writeback_mode
+        self.log_progress_stride = log_progress_stride
+        self.accessor_mode = accessor_mode
+        self.rotate2pca = rotate2pca
+        self.display = display
+        self.bias_update_order = bias_update_order
+        self.variance_update_order = variance_update_order
+        self.compat_mode = compat_mode
+        self.return_diagnostics = return_diagnostics
+        self.runtime_report = runtime_report
+        self.explained_var_solver = explained_var_solver
+        self.explained_var_gram_ratio = explained_var_gram_ratio
         self.components_: np.ndarray | None = None
         self.scores_: np.ndarray | None = None
         self.mean_: np.ndarray | None = None
@@ -166,68 +294,37 @@ class VBPCA(BaseEstimator):
         self._pattern_index: np.ndarray | None = None
         self._muv: np.ndarray | None = None
 
-    def get_params(self, *, deep: bool = True) -> dict[str, object]:  # noqa: ARG002
-        """Return constructor parameters (scikit-learn compatibility).
-
-        Args:
-            deep: Ignored; accepted for scikit-learn API compatibility.
+    def _solver_kwargs(self) -> dict[str, object]:
+        """Gather stored arguments without changing constructor identities.
 
         Returns:
-            Mapping of constructor parameter names to their current values,
-            including any extra options supplied via ``**opts``.
+            Canonical numerical option names; None-valued inherited defaults
+            retain their existing estimator meaning.
         """
-        params: dict[str, object] = {
-            "n_components": self.n_components,
-            "bias": self.bias,
-            "maxiters": self.maxiters,
-            "tol": self.tol,
-            "verbose": self.verbose,
-            "hp_va": self.hp_va,
-            "hp_vb": self.hp_vb,
-            "hp_v": self.hp_v,
-            "niter_broadprior": self.niter_broadprior,
-            "va_init": self.va_init,
-            "xprobe_fraction": self.xprobe_fraction,
-            "criterion_order": self.criterion_order,
-            "convergence_criteria": self.convergence_criteria,
-            "random_state": self.random_state,
-        }
-        params.update(self.opts)
-        return params
-
-    def set_params(self, **params: object) -> VBPCA:
-        """Set constructor parameters (scikit-learn compatibility).
-
-        Args:
-            **params: Parameter names mapped to new values.  Keys that are not
-                recognised constructor parameters are stored in ``opts`` and
-                forwarded to the underlying solver.
-
-        Returns:
-            The estimator instance, enabling method chaining.
-        """
-        valid_params = {
-            "n_components",
-            "bias",
+        result = self.get_params(deep=False)
+        for name in ("n_components", "tol", "xprobe_fraction"):
+            result.pop(name)
+        for name in (
             "maxiters",
-            "tol",
-            "verbose",
             "hp_va",
             "hp_vb",
             "hp_v",
             "niter_broadprior",
             "va_init",
-            "xprobe_fraction",
-            "criterion_order",
-            "convergence_criteria",
-            "random_state",
-        }
-        for key, value in params.items():
-            if key in valid_params:
-                setattr(self, key, value)
-            else:
-                self.opts[key] = value
-        return self
+        ):
+            if result[name] is None:
+                result.pop(name)
+        if result.get("num_cpu") is None:
+            result.pop("num_cpu")
+        return result
+
+    def get_config(self) -> PCAOptions:
+        """Resolve current estimator parameters into typed solver configuration.
+
+        Returns:
+            A fresh immutable configuration with owned small policy containers.
+        """
+        return PCAOptions.from_kwargs(**self._solver_kwargs())
 
     def fit(  # noqa: C901, PLR0912, PLR0914, PLR0915
         self,
@@ -256,33 +353,10 @@ class VBPCA(BaseEstimator):
                 dense diagnostics exceed ``max_dense_bytes``.
         """
         _warn_deprecated_tol(self.tol)
-        opts: dict[str, object] = {
-            "bias": self.bias,
-            "verbose": self.verbose,
-        }
-        if self.maxiters is not None:
-            opts["maxiters"] = self.maxiters
-        if self.hp_va is not None:
-            opts["hp_va"] = self.hp_va
-        if self.hp_vb is not None:
-            opts["hp_vb"] = self.hp_vb
-        if self.hp_v is not None:
-            opts["hp_v"] = self.hp_v
-        if self.niter_broadprior is not None:
-            opts["niter_broadprior"] = self.niter_broadprior
-        if self.va_init is not None:
-            opts["va_init"] = self.va_init
-        if self.criterion_order is not None:
-            opts["criterion_order"] = self.criterion_order
-        if self.convergence_criteria is not None:
-            opts["convergence_criteria"] = self.convergence_criteria
-        opts["random_state"] = self.random_state
-        opts.update(self.opts)
-        max_dense_bytes = resolve_max_dense_bytes(
-            opts.get("max_dense_bytes", 2_000_000_000)
-        )
+        options = self.get_config()
+        max_dense_bytes = resolve_max_dense_bytes(options.max_dense_bytes)
         shape = np.shape(x)
-        if bool(opts.get("return_diagnostics", True)) and len(shape) == 2:
+        if options.return_diagnostics and len(shape) == 2:
             check_dense_output_budget(
                 (shape[0], shape[1]),
                 max_dense_bytes,
@@ -290,7 +364,7 @@ class VBPCA(BaseEstimator):
                 operation="Fit diagnostics",
             )
         if xprobe is not None:
-            opts["xprobe"] = xprobe
+            options = replace(options, xprobe=xprobe)
         elif self.xprobe_fraction > 0.0:
             x, xprobe_gen = make_xprobe_mask(
                 x,
@@ -298,7 +372,7 @@ class VBPCA(BaseEstimator):
                 rng=np.random.default_rng(self.random_state),
                 mask=mask,
             )
-            opts["xprobe"] = xprobe_gen
+            options = replace(options, xprobe=xprobe_gen)
 
         if not sp.issparse(x) and mask is not None and sp.issparse(mask):
             msg = "mask must be dense when x is dense"
@@ -353,7 +427,9 @@ class VBPCA(BaseEstimator):
                 mask_param = mask_bool
             data_for_fit = x_dense
 
-        result = pca_full(data_for_fit, self.n_components, mask=mask_param, **opts)
+        result = pca_full(
+            data_for_fit, self.n_components, mask=mask_param, options=options
+        )
         self.components_ = np.asarray(result["A"], dtype=float)
         self.scores_ = np.asarray(result["S"], dtype=float)
         self.mean_ = np.asarray(result["Mu"], dtype=float)
@@ -495,30 +571,8 @@ class VBPCA(BaseEstimator):
         return int(np.sum(self.component_relevance_ > threshold))
 
     def get_options(self) -> dict[str, object]:
-        """Return the resolved pca_full options (defaults + overrides)."""
-        opts: dict[str, object] = {
-            "bias": self.bias,
-            "verbose": self.verbose,
-        }
-        if self.maxiters is not None:
-            opts["maxiters"] = self.maxiters
-        if self.hp_va is not None:
-            opts["hp_va"] = self.hp_va
-        if self.hp_vb is not None:
-            opts["hp_vb"] = self.hp_vb
-        if self.hp_v is not None:
-            opts["hp_v"] = self.hp_v
-        if self.niter_broadprior is not None:
-            opts["niter_broadprior"] = self.niter_broadprior
-        if self.va_init is not None:
-            opts["va_init"] = self.va_init
-        if self.criterion_order is not None:
-            opts["criterion_order"] = self.criterion_order
-        if self.convergence_criteria is not None:
-            opts["convergence_criteria"] = self.convergence_criteria
-        opts["random_state"] = self.random_state
-        opts.update(self.opts)
-        return _build_options(opts)
+        """Return a fresh legacy keyword export of :meth:`get_config`."""
+        return self.get_config().to_kwargs()
 
     def transform(self, x: Matrix | None = None) -> np.ndarray:
         """Return scores from the fitted model; new data not yet supported.
@@ -566,7 +620,7 @@ class VBPCA(BaseEstimator):
             raise ValueError(msg)
         check_dense_output_budget(
             (self.components_.shape[0], scores_arr.shape[1]),
-            resolve_max_dense_bytes(self.opts.get("max_dense_bytes", 2_000_000_000)),
+            resolve_max_dense_bytes(self.max_dense_bytes),
             operation="Inverse reconstruction",
         )
         recon = self.components_ @ scores_arr
@@ -590,13 +644,7 @@ class VBPCA(BaseEstimator):
             shared model-selection helper.
         """
         _warn_deprecated_tol(self.tol)
-        merged_opts: dict[str, object] = {
-            "bias": self.bias,
-            "verbose": self.verbose,
-            **self.opts,
-        }
-        if self.maxiters is not None:
-            merged_opts["maxiters"] = self.maxiters
+        merged_opts = self._solver_kwargs()
         merged_opts.update(opts)
 
         cfg = config if config is not None else SelectionConfig()

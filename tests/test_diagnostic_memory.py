@@ -101,7 +101,7 @@ def test_inverse_transform_checks_actual_new_sample_count() -> None:
         model.inverse_transform(np.ones((1, 5)))
     with pytest.raises(ValueError, match="scores must have shape"):
         model.inverse_transform(np.ones(4))
-    model.opts["max_dense_bytes"] = None
+    model.set_params(max_dense_bytes=None)
     assert model.inverse_transform(np.ones((1, 5))).shape == (2, 5)
 
 
@@ -148,7 +148,7 @@ def test_selected_model_helpers_guard_materialization(
     model = VBPCA(1, return_diagnostics=False, **_options()).fit(
         np.arange(8, dtype=float).reshape(2, 4) + 1
     )
-    model.opts["max_dense_bytes"] = 1
+    model.set_params(max_dense_bytes=1)
     monkeypatch.setattr(
         ms, "_reconstruct_data", lambda *_a: pytest.fail("reconstructed")
     )

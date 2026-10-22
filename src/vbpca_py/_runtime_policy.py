@@ -1115,7 +1115,7 @@ def resolve_runtime_policy(
     )
 
 
-def apply_runtime_policy_defaults(opts: dict[str, Any]) -> dict[str, Any]:
+def apply_runtime_policy_defaults(opts: dict[str, object]) -> dict[str, object]:
     """Apply normalized runtime-policy fields onto an options mapping.
 
     Returns:

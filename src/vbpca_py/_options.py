@@ -8,15 +8,14 @@ case-insensitively by lowercasing them.
 """
 
 from collections.abc import Mapping
-from typing import Any
 
 
-def _normalize_keys_to_lower(opts: Mapping[str, Any]) -> dict[str, Any]:
+def _normalize_keys_to_lower(opts: Mapping[str, object]) -> dict[str, object]:
     """Return a copy of ``opts`` with all keys lowercased.
 
     If multiple keys differ only by case, the last one in iteration order wins.
     """
-    normalized: dict[str, Any] = {}
+    normalized: dict[str, object] = {}
     for key, value in opts.items():
         lower_key = key.lower()
         normalized[lower_key] = value
@@ -24,8 +23,8 @@ def _normalize_keys_to_lower(opts: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _options(
-    defopts: Mapping[str, Any], **kwargs: object
-) -> tuple[dict[str, Any], str]:
+    defopts: Mapping[str, object], **kwargs: object
+) -> tuple[dict[str, object], str]:
     """Merge user-provided options into default options (case-insensitive).
 
     Keys from ``kwargs`` are normalized to lowercase before merging. Keys
@@ -51,7 +50,7 @@ def _options(
             of the form ``"Unknown parameter(s): k1, k2, ..."``.
     """
     # Start from defaults (copy so we don't mutate defopts).
-    opts: dict[str, Any] = dict(defopts)
+    opts: dict[str, object] = dict(defopts)
 
     # Normalize user-provided keys to lowercase.
     user_opts = _normalize_keys_to_lower(kwargs)

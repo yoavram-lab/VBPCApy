@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, SupportsIndex, SupportsInt, cast
+from typing import TYPE_CHECKING, Any, SupportsFloat, SupportsIndex, SupportsInt, cast
 
 if TYPE_CHECKING:
     from collections.abc import MutableMapping, Sequence
@@ -101,7 +101,7 @@ class ConvergenceState:
 # ---------------------------------------------------------------------------
 
 
-def _angle_stop_message(opts: Mapping[str, Any], angle_a: float) -> str | None:
+def _angle_stop_message(opts: Mapping[str, object], angle_a: float) -> str | None:
     """Return an angle-based convergence message, or None if not triggered."""
     minangle_val = opts.get("minangle", np.inf)
     minangle = (
@@ -118,7 +118,7 @@ def _angle_stop_message(opts: Mapping[str, Any], angle_a: float) -> str | None:
 
 
 def _early_stop_message(
-    opts: Mapping[str, Any],
+    opts: Mapping[str, object],
     prms: np.ndarray,
 ) -> str | None:
     """Return an early-stopping message based on probe RMS, or None."""
@@ -268,7 +268,7 @@ def _slowing_down_message(sd_iter: int | None) -> str | None:
 
 
 def _cost_criteria(
-    opts: Mapping[str, Any],
+    opts: Mapping[str, object],
     cost: np.ndarray,
 ) -> str | None:
     """Evaluate all cost/ELBO-based stopping criteria in priority order.
@@ -281,7 +281,7 @@ def _cost_criteria(
 
 
 def _cost_criteria_tagged(
-    opts: Mapping[str, Any],
+    opts: Mapping[str, object],
     cost: np.ndarray,
 ) -> tuple[str | None, str | None]:
     """Like :func:`_cost_criteria` but also returns a reason tag.
@@ -298,7 +298,7 @@ def _cost_criteria_tagged(
 
 
 def _cost_subcriteria(
-    opts: Mapping[str, Any],
+    opts: Mapping[str, object],
     cost: np.ndarray,
 ) -> dict[str, str | None]:
     """Evaluate every cost subcriterion without applying winner priority.
@@ -308,19 +308,25 @@ def _cost_subcriteria(
     """
     cfstop = opts.get("cfstop")
     plateau_msg = (
-        _plateau_stop(cost, cfstop, "cost")
+        _plateau_stop(cost, cast("Sequence[float] | np.ndarray", cfstop), "cost")
         if cost.size >= 2 and cfstop is not None
         else None
     )
 
     cfstop_rel = opts.get("cfstop_rel")
     rel_msg = (
-        _relative_elbo_stop(cost, float(cfstop_rel)) if cfstop_rel is not None else None
+        _relative_elbo_stop(
+            cost, float(cast("str | SupportsFloat | SupportsIndex", cfstop_rel))
+        )
+        if cfstop_rel is not None
+        else None
     )
 
     cfstop_curv = opts.get("cfstop_curv")
     curv_msg = (
-        _elbo_curvature_stop(cost, float(cfstop_curv))
+        _elbo_curvature_stop(
+            cost, float(cast("str | SupportsFloat | SupportsIndex", cfstop_curv))
+        )
         if cfstop_curv is not None
         else None
     )
@@ -486,7 +492,7 @@ def _append_cost_diagnostics(
 
 
 def convergence_check(
-    opts: Mapping[str, Any],
+    opts: Mapping[str, object],
     lc: LearningCurve,
     angle_a: float,
     sd_iter: int | None = None,
@@ -530,14 +536,16 @@ def convergence_check(
         "earlystop": ("earlystop", _early_stop_message(opts, prms)),
         "rms_plateau": (
             "rms_plateau",
-            _plateau_stop(rms, rmsstop, "RMS")
+            _plateau_stop(rms, cast("Sequence[float] | np.ndarray", rmsstop), "RMS")
             if rms.size >= 2 and rmsstop is not None
             else None,
         ),
         "cost": cost_check,
         "composite": (
             "composite",
-            _composite_stop(composite_cfg, angle_a, rms, cost)
+            _composite_stop(
+                cast("Mapping[str, float]", composite_cfg), angle_a, rms, cost
+            )
             if composite_cfg
             else None,
         ),
@@ -545,8 +553,10 @@ def convergence_check(
     }
 
     # Determine ordering and enablement.
-    order = opts.get("criterion_order") or DEFAULT_CRITERION_ORDER
-    enabled: dict[str, bool] = opts.get("convergence_criteria") or {}
+    order = cast(
+        "Sequence[str]", opts.get("criterion_order") or DEFAULT_CRITERION_ORDER
+    )
+    enabled = cast("Mapping[str, bool]", opts.get("convergence_criteria") or {})
 
     # Preserve each cost rule independently in addition to the aggregate
     # ``criterion_satisfied_cost`` trace used by the public criterion order.
@@ -554,7 +564,11 @@ def convergence_check(
     _append_slowing_availability(lc, sd_iter)
 
     patience_val = opts.get("patience")
-    patience = int(patience_val) if patience_val is not None else 1
+    patience = (
+        int(cast("str | SupportsInt | SupportsIndex", patience_val))
+        if patience_val is not None
+        else 1
+    )
     reason_tag, candidate = _apply_criterion_patience(
         all_checks,
         order,
@@ -723,7 +737,10 @@ def _cost_trace_required(opts: Mapping[str, object]) -> bool:
             return True
         for name in ("cfstop_rel", "cfstop_curv"):
             value = opts.get(name)
-            if value is not None and float(cast("Any", value)) > 0:
+            if (
+                value is not None
+                and float(cast("str | SupportsFloat | SupportsIndex", value)) > 0
+            ):
                 return True
 
     composite = opts.get("composite_stop")
@@ -734,7 +751,16 @@ def _cost_trace_required(opts: Mapping[str, object]) -> bool:
 
 
 def _angle_for_iteration(state: ConvergenceState) -> tuple[float, float | None]:
-    angle_every = max(1, _coerce_int(cast("Any", state.opts.get("angle_every", 1)), 1))
+    angle_every = max(
+        1,
+        _coerce_int(
+            cast(
+                "str | SupportsInt | SupportsIndex | None",
+                state.opts.get("angle_every", 1),
+            ),
+            1,
+        ),
+    )
     iter_index = len(state.lc["rms"])
     if iter_index % angle_every != 0:
         state.lc["angle"].append(float("nan"))

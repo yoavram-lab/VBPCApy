@@ -174,6 +174,7 @@ def _fit_candidate(
 
     candidate_opts = dict(opts)
     xprobe = candidate_opts.pop("xprobe", None)
+    preflight = candidate_opts.pop("_runtime_preflight", None)
     groups = candidate_opts.pop("_cell_groups", None)
     schema = candidate_opts.pop("_encoding_schema", None)
     scorer = cast(
@@ -192,6 +193,12 @@ def _fit_candidate(
         )
     est = VBPCA(k, **candidate_opts)  # type: ignore[arg-type]
     est.fit(x_arr, mask=mask, xprobe=cast("Matrix | None", xprobe))
+    if preflight and est.runtime_report_ is not None:
+        existing = est.runtime_report_.get("preflight", [])
+        est.runtime_report_["preflight"] = [
+            *cast("list[dict[str, object]]", preflight),
+            *cast("list[dict[str, object]]", existing),
+        ]
 
     rms = _to_float(est.rms_)
     prms = _to_float(est.prms_)
@@ -336,7 +343,7 @@ def _compute_evr_for_best(
         return None
     check_dense_output_budget(
         (est.components_.shape[0], est.scores_.shape[1]),
-        resolve_max_dense_bytes(est.opts.get("max_dense_bytes", 2_000_000_000)),
+        resolve_max_dense_bytes(est.max_dense_bytes),
         arrays=1
         + int(est.variance_ is not None)
         + int(est.predictive_variance_ is not None),
@@ -373,7 +380,7 @@ def _compute_variance_for_best(est: VBPCA) -> np.ndarray | None:
         return None
     check_dense_output_budget(
         (est.components_.shape[0], est.scores_.shape[1]),
-        resolve_max_dense_bytes(est.opts.get("max_dense_bytes", 2_000_000_000)),
+        resolve_max_dense_bytes(est.max_dense_bytes),
         arrays=1
         + int(est.noise_variance_ is not None)
         + int(est.reconstruction_ is not None),

@@ -105,6 +105,8 @@ from ._runtime_policy import (
     resolve_runtime_thread_config_with_report,
     save_autotune_profile_rule,
 )
+from ._solver_options import SolverOptions
+from .configuration import PCAOptions, _from_normalized
 from .options import (
     Algorithm,
     BiasUpdateOrder,
@@ -181,6 +183,7 @@ def pca_full(
     n_components: int,
     *,
     mask: Matrix | None = None,
+    options: PCAOptions | None = None,
     **kwargs: object,
 ) -> PCAResult:
     """Run VBPCA with full posterior covariances.
@@ -194,6 +197,8 @@ def pca_full(
             observed, including numerical zeros. Explicit probe coordinates
             are excluded from training even when selected by this mask.
             For sparse ``x``, the mask must match its stored structure.
+        options: Optional typed settings. Legacy keyword options and this record
+            are mutually exclusive; the separate data mask remains accepted.
         **kwargs: Options; see :func:`_build_options`. ``max_dense_bytes``
             limits the combined float64 ``Xrec``, ``Vr`` and ``Vpred`` outputs
             using the original shape (default 2,000,000,000; ``None`` disables
@@ -215,6 +220,9 @@ def pca_full(
     Requests above ``max_dense_bytes`` raise ``ValueError`` before preparation.
     Suppressing diagnostics omits those outputs.
 
+    Raises:
+        TypeError: Options are unknown, of the wrong type, or supplied in both forms.
+
     Examples:
         Fit two feature rows with one latent component. This short example uses
         two iterations to demonstrate the API; it does not establish convergence.
@@ -234,10 +242,18 @@ def pca_full(
         >>> result["Xrec"] is None
         True
     """
-    opts: MutableMapping[str, object] = _build_options(kwargs)
-    max_dense_bytes = resolve_max_dense_bytes(opts.get("max_dense_bytes"))
+    if options is not None and kwargs:
+        msg = "Pass either options=PCAOptions(...) or legacy keyword options, not both"
+        raise TypeError(msg)
+    if options is not None and not isinstance(options, PCAOptions):
+        msg = "options must be a PCAOptions instance"
+        raise TypeError(msg)
+    opts = _solver_options_from_raw(
+        options.to_kwargs() if options is not None else kwargs
+    )
+    max_dense_bytes = resolve_max_dense_bytes(opts.config.max_dense_bytes)
     shape = np.shape(x)
-    if bool(opts.get("return_diagnostics", True)) and len(shape) == 2:
+    if bool(opts.config.return_diagnostics) and len(shape) == 2:
         check_dense_output_budget(
             (shape[0], shape[1]),
             max_dense_bytes,
@@ -273,21 +289,21 @@ def pca_full(
         prepared=prepared, training=training, use_prior=use_prior, opts=opts
     )
     training = _maybe_finalize_rotation(prepared=prepared, training=training, opts=opts)
-    if str(opts.get("variance_update_order")) == "post_rotation":
+    if str(opts.config.variance_update_order) == "post_rotation":
         _refresh_prior_variances(
             prepared=prepared, training=training, use_prior=use_prior, opts=opts
         )
     final = _restore_original_shape(prepared=prepared, training=training)
     return _pack_result(
         final,
-        include_diagnostics=bool(opts.get("return_diagnostics", True)),
+        include_diagnostics=bool(opts.config.return_diagnostics),
         max_dense_bytes=max_dense_bytes,
-        explained_var_solver=str(opts.get("explained_var_solver", "auto")),
+        explained_var_solver=str(opts.config.explained_var_solver),
         explained_var_gram_ratio=_float_opt(
-            opts.get("explained_var_gram_ratio", 4.0), default=4.0
+            opts.config.explained_var_gram_ratio, default=4.0
         ),
         runtime_report=(
-            final.runtime_report if bool(opts.get("runtime_report", 0)) else None
+            final.runtime_report if bool(opts.config.runtime_report) else None
         ),
     )
 
@@ -399,7 +415,11 @@ class IterationConfig:
     verbose: int
     num_cpu: int
     runtime_threads: RuntimeThreadConfig
-    opts: MutableMapping[str, object]
+    opts: SolverOptions
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.opts, SolverOptions):
+            object.__setattr__(self, "opts", _solver_options_from_raw(self.opts))
 
 
 @dataclass
@@ -418,13 +438,17 @@ class IterationContext:
 class _AutotuneContext:
     prepared: PreparedProblem
     training: TrainingState
-    opts: MutableMapping[str, object]
+    opts: SolverOptions
     workload: RuntimeWorkloadProfile
     runtime_threads: RuntimeThreadConfig
     runtime_report: dict[str, object]
     tuning_mode: str
     hw_threads: int
     profile_path: Path | None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.opts, SolverOptions):
+            self.opts = _solver_options_from_raw(self.opts)
 
 
 @dataclass(frozen=True)
@@ -851,7 +875,7 @@ def _resolve_runtime_threads_for_training(
         ctx = _AutotuneContext(
             prepared=prepared,
             training=training,
-            opts=opts,
+            opts=_typed_solver_options(opts),
             workload=workload,
             runtime_threads=runtime_threads,
             runtime_report=runtime_report,
@@ -870,6 +894,9 @@ def _resolve_runtime_threads_for_training(
         )
 
         runtime_threads, runtime_report = ctx.runtime_threads, ctx.runtime_report
+        if ctx.opts is not opts:
+            for key in ("masked_batch_size", "accessor_mode", "cov_writeback_mode"):
+                opts[key] = ctx.opts[key]
 
     cov_writeback_mode, log_stride, accessor_mode, behavior_sources = (
         _resolve_runtime_behavior(
@@ -916,7 +943,7 @@ def _autotune_dense_masked_runtime(
     cap = _thread_cap(
         hint_threads=ctx.runtime_threads.score_update_dense
         or ctx.runtime_threads.loadings_update_dense,
-        global_hint=ctx.opts.get("num_cpu"),
+        global_hint=ctx.opts.config.num_cpu,
         hw_threads=ctx.hw_threads,
     )
 
@@ -1110,7 +1137,7 @@ def _measure_pattern_autotune_combo(
             dense_num_cpu=ctx.runtime_threads.score_update_dense,
             x_csr=x_csr,
             x_csc=x_csc,
-            cov_writeback_mode=str(ctx.opts.get("cov_writeback_mode", "python")),
+            cov_writeback_mode=str(ctx.opts.config.cov_writeback_mode),
             log_progress_stride=0,
             accessor_mode=str(accessor_mode),
         )
@@ -1171,14 +1198,14 @@ def _autotune_masked_batch_and_accessor(
     if subset is None:
         return ctx.runtime_threads, ctx.runtime_report, accessor_source_override
 
-    user_batch = _int_opt(ctx.opts.get("masked_batch_size", 0))
+    user_batch = _int_opt(ctx.opts.config.masked_batch_size)
     batch_candidates = (
         [user_batch]
         if user_batch > 0
         else _pattern_batch_candidates(subset, ctx.tuning_mode)
     )
 
-    accessor_raw = ctx.opts.get("accessor_mode")
+    accessor_raw = ctx.opts.config.accessor_mode
     accessor_normalized = normalize_accessor_mode(accessor_raw)
     if accessor_raw is not None and accessor_normalized != "auto":
         accessor_candidates = [accessor_normalized]
@@ -1242,7 +1269,7 @@ def _autotune_sparse_runtime(
     cap = _thread_cap(
         hint_threads=ctx.runtime_threads.score_update_sparse
         or ctx.runtime_threads.loadings_update_sparse,
-        global_hint=ctx.opts.get("num_cpu"),
+        global_hint=ctx.opts.config.num_cpu,
         hw_threads=ctx.hw_threads,
     )
     candidates = _dense_autotune_candidates(ctx, cap)
@@ -1336,10 +1363,8 @@ def _build_dense_cov_inputs(ctx: _AutotuneContext) -> DenseMaskedAutotuneInputs:
         ctx.training.model.va, ctx.training.model.noise_var
     )
     return DenseMaskedAutotuneInputs(
-        score_use_complement=bool(ctx.opts.get("_dense_score_use_complement", False)),
-        loading_use_complement=bool(
-            ctx.opts.get("_dense_loading_use_complement", False)
-        ),
+        score_use_complement=bool(ctx.opts.dense_score_use_complement),
+        loading_use_complement=bool(ctx.opts.dense_loading_use_complement),
         x_data=np.asarray(ctx.prepared.x_data, dtype=np.float64),
         mask=np.asarray(ctx.prepared.mask, dtype=np.bool_),
         loadings=np.asarray(ctx.training.model.a, dtype=np.float64),
@@ -1356,7 +1381,7 @@ def _build_dense_cov_inputs(ctx: _AutotuneContext) -> DenseMaskedAutotuneInputs:
 def _autotune_cov_writeback_mode(
     ctx: _AutotuneContext,
 ) -> tuple[RuntimeThreadConfig, dict[str, object], str | None]:
-    cov_raw = ctx.opts.get("cov_writeback_mode")
+    cov_raw = ctx.opts.config.cov_writeback_mode
     cov_mode_normalized = normalize_cov_writeback_mode(cov_raw)
 
     if cov_raw is not None and cov_mode_normalized != "auto":
@@ -1540,7 +1565,7 @@ def _run_training_loop(
         verbose=_int_opt(opts.get("verbose", 0)),
         num_cpu=max(0, _int_opt(opts.get("num_cpu", 1), default=1)),
         runtime_threads=runtime_threads,
-        opts=opts,
+        opts=_typed_solver_options(opts),
     )
 
     bias_state = BiasState(
@@ -1703,7 +1728,7 @@ def _update_hyperpriors_phase(ctx: IterationContext) -> None:
         HyperpriorContext(
             iteration=ctx.iteration,
             use_prior=cfg.use_prior,
-            niter_broadprior=_int_opt(cfg.opts.get("niter_broadprior", 0)),
+            niter_broadprior=_int_opt(cfg.opts.config.niter_broadprior),
             bias_enabled=bool(cfg.opts["bias"]),
             mu=ctx.bias_state.mu,
             mu_variances=ctx.bias_state.muv,
@@ -1717,7 +1742,7 @@ def _update_hyperpriors_phase(ctx: IterationContext) -> None:
             obs_fraction=obs_frac,
         )
     )
-    if bool(cfg.opts.get("record_prior_trace", False)):
+    if bool(cfg.opts.config.record_prior_trace):
         trace = ctx.training.lc.setdefault("prior_trace", [])
         trace.append(np.asarray(m.va, dtype=float).tolist())
 
@@ -1794,7 +1819,7 @@ def _score_and_rotate(
     cfg = ctx.cfg
     score_start = time.perf_counter()
     score_x_csr, score_x_csc = _score_sparse_views(ctx.training, x_data)
-    masked_batch_size = max(0, _int_opt(cfg.opts.get("masked_batch_size", 0)))
+    masked_batch_size = max(0, _int_opt(cfg.opts.config.masked_batch_size))
 
     score_state = ScoreState(
         x_data=x_data,
@@ -1813,12 +1838,12 @@ def _score_and_rotate(
         x_csc=score_x_csc,
         sparse_num_cpu=cfg.runtime_threads.score_update_sparse,
         dense_num_cpu=cfg.runtime_threads.score_update_dense,
-        dense_use_complement=bool(cfg.opts.get("_dense_score_use_complement", False)),
-        cov_writeback_mode=str(cfg.opts.get("cov_writeback_mode", "python")),
+        dense_use_complement=bool(cfg.opts.dense_score_use_complement),
+        cov_writeback_mode=str(cfg.opts.config.cov_writeback_mode),
         log_progress_stride=max(
-            0, _int_opt(cfg.opts.get("log_progress_stride", 1), default=1)
+            0, _int_opt(cfg.opts.config.log_progress_stride, default=1)
         ),
-        accessor_mode=str(cfg.opts.get("accessor_mode", "legacy")),
+        accessor_mode=str(cfg.opts.config.accessor_mode),
     )
     score_state = _update_scores(score_state)
     m.s = score_state.scores
@@ -1863,14 +1888,12 @@ def _update_loadings_phase(ctx: IterationContext, x_data: Matrix) -> float:
             x_csr=loadings_x_csr,
             sparse_num_cpu=cfg.runtime_threads.loadings_update_sparse,
             dense_num_cpu=cfg.runtime_threads.loadings_update_dense,
-            dense_use_complement=bool(
-                cfg.opts.get("_dense_loading_use_complement", False)
-            ),
-            cov_writeback_mode=str(cfg.opts.get("cov_writeback_mode", "python")),
+            dense_use_complement=bool(cfg.opts.dense_loading_use_complement),
+            cov_writeback_mode=str(cfg.opts.config.cov_writeback_mode),
             log_progress_stride=max(
-                0, _int_opt(cfg.opts.get("log_progress_stride", 1), default=1)
+                0, _int_opt(cfg.opts.config.log_progress_stride, default=1)
             ),
-            accessor_mode=str(cfg.opts.get("accessor_mode", "legacy")),
+            accessor_mode=str(cfg.opts.config.accessor_mode),
         )
     )
     return time.perf_counter() - loadings_start
@@ -1896,7 +1919,7 @@ def _rms_phase(
     )
     ctx.training.err_mx = err_mx
 
-    if str(cfg.opts.get("bias_update_order")) == "post_factor":
+    if str(cfg.opts.config.bias_update_order) == "post_factor":
         mu_before = ctx.training.model.mu.copy()
         x_data, x_probe = _bias_and_center(ctx)
         mu_increment = ctx.training.model.mu - mu_before
@@ -1934,7 +1957,7 @@ def _noise_phase(ctx: IterationContext, rms: float) -> tuple[float, float]:
         n_data=float(ctx.prepared.n_data),
         noise_var=float(m.noise_var),
         sparse_num_cpu=cfg.runtime_threads.noise_sxv_sum,
-        complement=cast("NoiseComplement | None", cfg.opts.get("_noise_complement")),
+        complement=cfg.opts.noise_complement,
     )
     noise_state, s_xv = _update_noise_variance(
         noise_state,
@@ -1962,7 +1985,7 @@ def _convergence_state(
     m = ctx.training.model
     cfg = ctx.cfg
     return ConvergenceState(
-        opts=dict(cfg.opts),
+        opts=cfg.opts.copy(),
         x_data=x_data,
         loadings=m.a,
         scores=m.s,
@@ -2026,12 +2049,12 @@ def _convergence_phase(
 def _iteration_step(ctx: IterationContext) -> None:
     """One full iteration of updates; mutates ``ctx.training`` in place."""
     iter_start = time.perf_counter()
-    post_rotation = str(ctx.cfg.opts.get("variance_update_order")) == "post_rotation"
+    post_rotation = str(ctx.cfg.opts.config.variance_update_order) == "post_rotation"
 
     if not post_rotation:
         _update_hyperpriors_phase(ctx)
 
-    if str(ctx.cfg.opts.get("bias_update_order")) == "legacy":
+    if str(ctx.cfg.opts.config.bias_update_order) == "legacy":
         x_data, x_probe = _bias_and_center(ctx)
     else:
         x_data = ctx.centering_state.x_data
@@ -2079,7 +2102,7 @@ def _accept_convergence_stop(ctx: IterationContext, convmsg: str | None) -> bool
     """
     cfg = ctx.cfg
     in_warmup = cfg.use_prior and ctx.iteration <= _int_opt(
-        cfg.opts.get("niter_broadprior", 0)
+        cfg.opts.config.niter_broadprior
     )
     if in_warmup:
         # Warmup criteria are diagnostic only. They must not leak a reason or
@@ -2587,6 +2610,71 @@ def _validate_convergence_opts(opts: dict[str, object]) -> None:
         }
 
 
+def _typed_solver_options(values: MutableMapping[str, object]) -> SolverOptions:
+    """Retain typed state or adapt an internal legacy-helper mapping.
+
+    Returns:
+        The original typed state, or a normalized compatibility record.
+    """
+    return (
+        values
+        if isinstance(values, SolverOptions)
+        else _solver_options_from_raw(values)
+    )
+
+
+def _checked_option_kwargs(
+    values: Mapping[str, object], defaults: Mapping[str, object]
+) -> dict[str, object]:
+    """Reject unknown names and separate explicitly supported internal metadata.
+
+    Returns:
+        User option values with private orchestration metadata removed.
+
+    Raises:
+        TypeError: An option name is not recognized.
+    """
+    metadata = {"_num_cpu_user_set", "_runtime_preflight"}
+    unknown = sorted(
+        name
+        for name in values
+        if name.lower() not in defaults and name.lower() not in metadata
+    )
+    if unknown:
+        msg = f"Unknown pca_full option(s): {', '.join(unknown)}"
+        raise TypeError(msg)
+    return {
+        name: value for name, value in values.items() if name.lower() not in metadata
+    }
+
+
+def _solver_options_from_raw(values: Mapping[str, object]) -> SolverOptions:
+    """Create per-fit typed state from the validated keyword compatibility path.
+
+    Returns:
+        Immutable typed configuration and separately owned mutable metadata.
+    """
+    runtime_keys = {
+        "_dense_score_use_complement",
+        "_dense_loading_use_complement",
+        "_noise_complement",
+        "_runtime_preflight",
+    }
+    normalized = _build_options({
+        name: value for name, value in values.items() if name not in runtime_keys
+    })
+    if "_num_cpu_user_set" in values:
+        normalized["_num_cpu_user_set"] = values["_num_cpu_user_set"]
+    config = _from_normalized(normalized)
+    result = SolverOptions(
+        config, num_cpu_user_set=bool(normalized.get("_num_cpu_user_set", False))
+    )
+    for name in runtime_keys:
+        if name in values:
+            result[name] = values[name]
+    return result
+
+
 def _build_options(  # noqa: PLR0915 - centralized option normalization
     kwargs: Mapping[str, object],
 ) -> dict[str, object]:
@@ -2654,8 +2742,10 @@ def _build_options(  # noqa: PLR0915 - centralized option normalization
         "explained_var_gram_ratio": 4.0,
     }
 
-    opts, wrnmsg = _options(opts_default, **kwargs)
-    opts["_num_cpu_user_set"] = any(str(key).lower() == "num_cpu" for key in kwargs)
+    opts, wrnmsg = _options(
+        opts_default, **_checked_option_kwargs(kwargs, opts_default)
+    )
+    opts["_num_cpu_user_set"] = opts["num_cpu"] is not None
 
     compat_mode_raw = opts.get("compat_mode", "strict_legacy")
     compat_mode = str(compat_mode_raw).strip().lower()

@@ -13,10 +13,27 @@ The development version is not a release announcement.
 
 ### Added
 
+- Frozen, slotted `PCAOptions` at the numerical solver boundary, with owned
+  stopping-policy containers and legacy keyword import/export. Separate
+  execution caches and tuning metadata from public requested settings.
+
 - String-compatible enums for solver algorithms, numerical policies, runtime
   modes and stopping-rule names, with explicit parsing and executable examples.
   Existing string normalizers and numerical defaults remain unchanged.
   Initialization continues to accept warm-start mappings and MAT filenames.
+
+### Changed
+
+- Expose every `VBPCA` solver control as an explicit constructor parameter and
+  use native sklearn parameter introspection, cloning and grid-search plumbing.
+  Store constructor inputs unchanged and validate at configuration/fit time.
+  Replace mutable `.opts` writes with `set_params`; `get_options()` exports
+  fresh public requests and retains `num_cpu=None` for inheritance. Pass probe
+  data to `fit(x, xprobe=...)`. Unknown
+  names now fail clearly, including the previously ignored MATLAB `autosave`.
+  Low-level recognized keyword calls remain supported; `options=PCAOptions`
+  cannot be mixed with solver keyword overrides. See the solver options guide
+  for ownership, thread precedence and migration examples.
 
 ### Performance
 

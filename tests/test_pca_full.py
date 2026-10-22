@@ -133,7 +133,6 @@ def test_pca_full_dense_vb_basic() -> None:
         n_components=2,
         maxiters=5,
         algorithm="vb",
-        autosave=0,
         display=0,
         verbose=0,
     )
@@ -224,7 +223,6 @@ def test_pca_full_mask_argument_matches_implicit_mask() -> None:
         x,
         n_components=2,
         maxiters=8,
-        autosave=0,
         display=0,
         verbose=0,
         compat_mode="strict_legacy",
@@ -236,7 +234,6 @@ def test_pca_full_mask_argument_matches_implicit_mask() -> None:
         n_components=2,
         mask=mask,
         maxiters=8,
-        autosave=0,
         display=0,
         verbose=0,
         compat_mode="strict_legacy",
@@ -263,7 +260,6 @@ def test_pca_full_mask_argument_respects_eps_for_zeros_strict_legacy() -> None:
         x,
         n_components=1,
         maxiters=8,
-        autosave=0,
         display=0,
         verbose=0,
         compat_mode="strict_legacy",
@@ -275,7 +271,6 @@ def test_pca_full_mask_argument_respects_eps_for_zeros_strict_legacy() -> None:
         n_components=1,
         mask=mask,
         maxiters=8,
-        autosave=0,
         display=0,
         verbose=0,
         compat_mode="strict_legacy",
@@ -299,7 +294,6 @@ def test_pca_full_strict_legacy_is_deterministic_with_seed() -> None:
             x,
             n_components=3,
             maxiters=10,
-            autosave=0,
             display=0,
             verbose=0,
             compat_mode="strict_legacy",
@@ -331,7 +325,6 @@ def test_pca_full_rms_matches_manual_masked_rms() -> None:
         x,
         n_components=2,
         maxiters=12,
-        autosave=0,
         display=0,
         verbose=0,
         compat_mode="strict_legacy",
@@ -684,7 +677,6 @@ def test_pca_full_sparse_map_basic() -> None:
         n_components=2,
         maxiters=5,
         algorithm="map",
-        autosave=0,
         display=0,
         verbose=0,
     )
@@ -720,7 +712,6 @@ def test_pca_full_invalid_compat_mode_raises() -> None:
             x,
             n_components=2,
             maxiters=2,
-            autosave=0,
             display=0,
             verbose=0,
             compat_mode="legacy",
@@ -735,7 +726,6 @@ def test_pca_full_runtime_report_toggle() -> None:
         n_components=2,
         maxiters=2,
         algorithm="vb",
-        autosave=0,
         display=0,
         verbose=0,
     )
@@ -747,7 +737,6 @@ def test_pca_full_runtime_report_toggle() -> None:
         n_components=2,
         maxiters=2,
         algorithm="vb",
-        autosave=0,
         display=0,
         verbose=0,
         runtime_report=1,
@@ -772,7 +761,6 @@ def test_pca_full_ppca_no_posterior_variances() -> None:
         n_components=2,
         maxiters=5,
         algorithm="ppca",
-        autosave=0,
         display=0,
         verbose=0,
     )
@@ -812,7 +800,6 @@ def test_pca_full_uniquesv_pattern_mode() -> None:
         maxiters=5,
         algorithm="vb",
         uniquesv=1,
-        autosave=0,
         display=0,
         verbose=0,
     )
@@ -846,7 +833,6 @@ def test_pca_full_cost_computation_cfstop() -> None:
         maxiters=4,
         algorithm="vb",
         cfstop=np.array([10, 1e-4, 1e-3]),
-        autosave=0,
         display=0,
         verbose=0,
     )
@@ -875,7 +861,6 @@ def test_pca_full_rotate2pca_off() -> None:
         maxiters=5,
         algorithm="vb",
         rotate2pca=0,
-        autosave=0,
         display=0,
         verbose=0,
     )
@@ -893,7 +878,6 @@ def test_pca_full_return_diagnostics_default_includes_arrays() -> None:
         n_components=2,
         maxiters=4,
         algorithm="vb",
-        autosave=0,
         display=0,
         verbose=0,
     )
@@ -912,7 +896,6 @@ def test_pca_full_return_diagnostics_disabled_skips_heavy_outputs() -> None:
         n_components=2,
         maxiters=4,
         algorithm="vb",
-        autosave=0,
         display=0,
         verbose=0,
         return_diagnostics=0,
@@ -938,7 +921,6 @@ def test_pca_full_bias_disabled_gives_zero_mean() -> None:
         maxiters=5,
         algorithm="vb",
         bias=0,
-        autosave=0,
         display=0,
         verbose=0,
     )
@@ -965,7 +947,6 @@ def test_pca_full_respects_provided_mu_when_bias_disabled() -> None:
         algorithm="vb",
         bias=0,
         init=init,
-        autosave=0,
         display=0,
         verbose=0,
     )
@@ -982,7 +963,6 @@ def test_pca_full_tiny_problem_smoke() -> None:
         n_components=1,
         maxiters=20,
         algorithm="vb",
-        autosave=0,
         display=0,
         verbose=0,
     )
@@ -1002,7 +982,6 @@ def test_pca_full_respects_maxiters_cap() -> None:
         n_components=2,
         maxiters=2,
         algorithm="vb",
-        autosave=0,
         display=0,
         verbose=0,
     )
@@ -1018,7 +997,6 @@ def test_pca_full_earlystop_with_no_probe_is_safe() -> None:
         maxiters=6,
         earlystop=1,
         algorithm="vb",
-        autosave=0,
         display=0,
         verbose=0,
     )
@@ -1036,7 +1014,6 @@ def test_pca_full_rmsstop_and_cfstop_both_provided() -> None:
         rmsstop=np.array([2, 1e-8, 1e-8]),
         cfstop=np.array([2, 1e-8, 1e-8]),
         algorithm="vb",
-        autosave=0,
         display=0,
         verbose=0,
     )
@@ -1057,7 +1034,6 @@ def test_pca_full_angle_every_option_smoke() -> None:
         maxiters=6,
         algorithm="vb",
         angle_every=2,
-        autosave=0,
         display=0,
         verbose=0,
     )
@@ -1100,7 +1076,6 @@ def test_pca_full_invalid_explained_var_solver_raises() -> None:
             x,
             n_components=2,
             maxiters=2,
-            autosave=0,
             display=0,
             verbose=0,
             explained_var_solver="bad_solver",
@@ -1147,7 +1122,6 @@ def test_pca_full_uniquesv_equivalence_when_fully_observed() -> None:
         uniquesv=0,
         init=init,
         rotate2pca=0,
-        autosave=0,
         display=0,
         verbose=0,
     )
@@ -1158,7 +1132,6 @@ def test_pca_full_uniquesv_equivalence_when_fully_observed() -> None:
         uniquesv=1,
         init=init,
         rotate2pca=0,
-        autosave=0,
         display=0,
         verbose=0,
     )
@@ -1181,7 +1154,6 @@ def test_pca_full_bias_toggle_mean_shift_effect() -> None:
         maxiters=5,
         bias=1,
         rotate2pca=0,
-        autosave=0,
         display=0,
         verbose=0,
         random_state=1200,
@@ -1192,7 +1164,6 @@ def test_pca_full_bias_toggle_mean_shift_effect() -> None:
         maxiters=5,
         bias=0,
         rotate2pca=0,
-        autosave=0,
         display=0,
         verbose=0,
         random_state=1200,
@@ -1233,7 +1204,6 @@ def test_pca_full_matches_matlab_dense_fixture() -> None:
         bias=int(getattr(mat_res, "bias", 1)),
         uniquesv=int(getattr(mat_res, "uniquesv", 0)),
         init=_python_indexed_mat_result(mat_res),
-        autosave=0,
         display=0,
         verbose=0,
     )
@@ -1282,7 +1252,6 @@ def test_pca_full_matches_matlab_missing_fixture() -> None:
         bias=int(getattr(mat_res, "bias", 1)),
         uniquesv=int(getattr(mat_res, "uniquesv", 0)),
         init=_python_indexed_mat_result(mat_res),
-        autosave=0,
         display=0,
         verbose=0,
         rotate2pca=1,
@@ -1332,7 +1301,6 @@ def test_pca_full_dense_fixture_smoke_map_and_ppca() -> None:
         n_components=k,
         algorithm="map",
         maxiters=30,
-        autosave=0,
         display=0,
         verbose=0,
     )
@@ -1341,7 +1309,6 @@ def test_pca_full_dense_fixture_smoke_map_and_ppca() -> None:
         n_components=k,
         algorithm="ppca",
         maxiters=30,
-        autosave=0,
         display=0,
         verbose=0,
     )
@@ -1369,7 +1336,6 @@ def test_pca_full_missing_fixture_option_surface_smoke() -> None:
         uniquesv=1,
         rotate2pca=1,
         cfstop=np.array([5, 1e-6, 1e-6]),
-        autosave=0,
         display=0,
         verbose=0,
     )
@@ -1400,7 +1366,6 @@ def test_pca_full_missing_fixture_matches_matlab_across_rotate_modes(
         uniquesv=int(getattr(mat_res, "uniquesv", 0)),
         init=_python_indexed_mat_result(mat_res),
         rotate2pca=rotate2pca,
-        autosave=0,
         display=0,
         verbose=0,
     )
