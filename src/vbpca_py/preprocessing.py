@@ -106,20 +106,40 @@ def _sparse_safe_max(mat: sp.csc_matrix, counts: np.ndarray) -> np.ndarray:
     return maxs
 
 
+def _observed_mean_var(values: npt.NDArray[np.float64]) -> tuple[float, float]:
+    """Compute centered moments, detecting exact constants before reduction.
+
+    Missing observations must be excluded by the caller. No absolute numerical
+    tolerance distinguishes constant from nonconstant observed values.
+
+    Returns:
+        Mean and population variance, or two NaNs for an empty column.
+    """
+    if values.size == 0:
+        return np.nan, np.nan
+    first = float(values[0])
+    if np.all(values == first):
+        return first, 0.0
+    return float(np.mean(values)), float(np.var(values))
+
+
 def _sparse_mean_var(mat: sp.csc_matrix) -> tuple[np.ndarray, np.ndarray]:
-    """Compute mean/var per column ignoring missing (unstored) entries.
+    """Compute centered moments of stored observations column by column.
+
+    Unstored entries are missing; stored numeric zeros remain observed. Avoid
+    subtracting raw second moments, which can erase variation around an offset.
+    Temporary storage is bounded by one observed column rather than the dense
+    matrix or a second sparse matrix.
 
     Returns:
         Tuple of ``(means, variances)`` per column.
     """
-    counts = _sparse_col_counts(mat)
-    sums = np.array(mat.sum(axis=0)).ravel()
-    sumsq = np.array(mat.power(2).sum(axis=0)).ravel()
-    means = np.full(mat.shape[1], np.nan, dtype=float)
-    vars_ = np.full(mat.shape[1], np.nan, dtype=float)
-    nonzero = counts > 0
-    means[nonzero] = sums[nonzero] / counts[nonzero]
-    vars_[nonzero] = sumsq[nonzero] / counts[nonzero] - means[nonzero] ** 2
+    means = np.empty(mat.shape[1], dtype=float)
+    vars_ = np.empty(mat.shape[1], dtype=float)
+    for j in range(mat.shape[1]):
+        start, end = mat.indptr[j : j + 2]
+        values = np.asarray(mat.data[start:end], dtype=np.float64)
+        means[j], vars_[j] = _observed_mean_var(values)
     return means, vars_
 
 
@@ -694,7 +714,13 @@ class MissingAwareSparseOneHotEncoder(BaseEstimator, TransformerMixin):
 
 
 class MissingAwareStandardScaler(_BaseScaler):
-    """Standardize continuous columns ignoring missing entries."""
+    """Standardize continuous columns ignoring missing entries.
+
+    Use every finite, nonzero computed standard deviation without an absolute
+    near-zero cutoff. Exactly constant observed columns have zero variance and
+    use a unit denominator. Zero or nonfinite computed deviations also use a
+    unit denominator; wholly missing columns retain NaN moments.
+    """
 
     def __init__(self) -> None:
         super().__init__()
@@ -723,11 +749,10 @@ class MissingAwareStandardScaler(_BaseScaler):
                     vars_[j] = np.nan
                     continue
                 col_vals = col[col_obs]
-                means[j] = float(np.mean(col_vals))
-                vars_[j] = float(np.var(col_vals))
+                means[j], vars_[j] = _observed_mean_var(col_vals)
         scales = np.sqrt(vars_)
         scales[~np.isfinite(scales)] = 1.0
-        zero_mask = np.isclose(scales, 0.0)
+        zero_mask = np.equal(scales, 0.0)
         scales[zero_mask] = 1.0
         self.mean_ = means
         self.var_ = vars_
@@ -774,7 +799,12 @@ class MissingAwareStandardScaler(_BaseScaler):
 
 
 class MissingAwareMinMaxScaler(_BaseScaler):
-    """Scale features to [0, 1] range while ignoring missing entries."""
+    """Scale features to [0, 1] range while ignoring missing entries.
+
+    Use every finite, nonzero observed range without an absolute near-zero
+    cutoff. Zero or nonfinite ranges use a unit denominator. Wholly missing
+    columns retain NaN extrema.
+    """
 
     def __init__(self) -> None:
         super().__init__()
@@ -807,7 +837,7 @@ class MissingAwareMinMaxScaler(_BaseScaler):
 
         data_range = data_max - data_min
         data_range[~np.isfinite(data_range)] = 1.0
-        zero_mask = np.isclose(data_range, 0.0)
+        zero_mask = np.equal(data_range, 0.0)
         data_range[zero_mask] = 1.0
         self.data_min_ = data_min
         self.data_max_ = data_max
