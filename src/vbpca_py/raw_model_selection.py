@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 import scipy.sparse as sp
 
+from ._types import BoolArray, Float64Array, InputArray  # noqa: TC001 - runtime annotation resolution
 from .model_selection import (
     CVConfig,
     _aggregate_cv_results,
@@ -26,7 +27,7 @@ if TYPE_CHECKING:
     from .encoding import EncodingSchema
 
 
-@dataclass
+@dataclass(slots=True)
 class PreprocessedFold:
     """One raw-table holdout and its training-fitted preprocessing.
 
@@ -40,11 +41,11 @@ class PreprocessedFold:
     """
 
     encoder: AutoEncoder
-    training_mask: np.ndarray
-    heldout_mask: np.ndarray
-    training: np.ndarray
-    held_out: np.ndarray
-    raw: np.ndarray
+    training_mask: BoolArray
+    heldout_mask: BoolArray
+    training: Float64Array
+    held_out: Float64Array
+    raw: InputArray
 
     @property
     def schema(self) -> EncodingSchema:
@@ -59,7 +60,7 @@ class PreprocessedFold:
             raise ValueError(msg)
         return schema
 
-    def numeric_scores(self, prediction: np.ndarray) -> dict[str, float]:
+    def numeric_scores(self, prediction: Float64Array) -> dict[str, float]:
         """Score each numeric variable in input or ordinal-index units.
 
         Args:
@@ -99,10 +100,10 @@ class PreprocessedFold:
 
 
 def prepare_raw_cv_folds(
-    x: np.ndarray,
+    x: InputArray,
     *,
     encoder_factory: Callable[[], AutoEncoder],
-    mask: np.ndarray | None = None,
+    mask: BoolArray | None = None,
     config: CVConfig | None = None,
 ) -> list[PreprocessedFold]:
     """Construct raw variable-cell folds and fit each encoder once.
@@ -195,10 +196,10 @@ def _validate_preprocessed_fold(
 
 
 def cross_validate_raw_components(
-    x: np.ndarray,
+    x: InputArray,
     *,
     encoder_factory: Callable[[], AutoEncoder],
-    mask: np.ndarray | None = None,
+    mask: BoolArray | None = None,
     components: Iterable[int] | None = None,
     config: CVConfig | None = None,
     **opts: object,
@@ -293,7 +294,7 @@ def _evaluate_fold(
     )
 
 
-def _validate_raw_config(x: np.ndarray, mask: np.ndarray | None, cfg: CVConfig) -> None:
+def _validate_raw_config(x: InputArray, mask: BoolArray | None, cfg: CVConfig) -> None:
     if sp.issparse(x) or sp.issparse(mask) or np.ndim(x) != 2:
         msg = "raw CV needs a dense samples-by-variables table and dense mask"
         raise ValueError(msg)

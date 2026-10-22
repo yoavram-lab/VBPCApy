@@ -3,6 +3,10 @@
 Execution settings are allocation-aware and workload-matched. Optional probes
 and persistent profiles affect execution only; statistical settings are supplied
 by the caller and remain outside this module's policy.
+
+Frozen runtime records hold scalar metadata or borrow their numerical inputs.
+They do not copy or freeze training arrays; tuning kernels must retain the
+existing non-mutating input contract.
 """
 
 from __future__ import annotations
@@ -12,9 +16,10 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from statistics import median
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, SupportsIndex, SupportsInt, cast
 
 import numpy as np
+import numpy.typing as npt
 
 from . import dense_update_kernels as duk
 from . import sparse_update_kernels as suk
@@ -25,13 +30,14 @@ from ._runtime_profiles import (
     load_profile,
     save_profile_rule,
 )
+from ._types import DenseMask, Float64Array  # noqa: TC001 - runtime annotation resolution
 from .options import AccessorMode, CovarianceWriteback, RuntimeTuning
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class RuntimeEnvKeys:
     """Environment variable keys used by runtime policy."""
 
@@ -43,7 +49,7 @@ class RuntimeEnvKeys:
     rms_threads: str = "VBPCA_RMS_THREADS"
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class RuntimePolicyConfig:
     """Normalized runtime policy configuration."""
 
@@ -51,7 +57,7 @@ class RuntimePolicyConfig:
     runtime_tuning: str
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class RuntimeThreadConfig:
     """Resolved per-kernel thread counts used during iteration updates."""
 
@@ -63,7 +69,7 @@ class RuntimeThreadConfig:
     rms: int
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class RuntimeWorkloadProfile:
     """Workload metadata used for conservative runtime autotuning."""
 
@@ -75,69 +81,69 @@ class RuntimeWorkloadProfile:
     execution: tuple[tuple[str, str], ...] = ()
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class DenseMaskedAutotuneInputs:
     """Inputs required to benchmark dense masked kernels."""
 
-    x_data: np.ndarray
-    mask: np.ndarray
-    loadings: np.ndarray
-    scores: np.ndarray
+    x_data: Float64Array
+    mask: DenseMask
+    loadings: Float64Array
+    scores: Float64Array
     noise_var: float
-    prior_prec: np.ndarray
-    loading_covariances: np.ndarray | None = None
-    score_covariances: np.ndarray | None = None
+    prior_prec: Float64Array
+    loading_covariances: Float64Array | None = None
+    score_covariances: Float64Array | None = None
     return_score_covariances: bool = True
     return_loading_covariances: bool = True
     score_use_complement: bool = False
     loading_use_complement: bool = False
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class SparseAutotuneInputs:
     """Inputs required to benchmark sparse no-pattern kernels."""
 
     n_features: int
     n_samples: int
-    x_csc_data: np.ndarray
-    x_csc_indices: np.ndarray
-    x_csc_indptr: np.ndarray
-    x_csr_data: np.ndarray
-    x_csr_indices: np.ndarray
-    x_csr_indptr: np.ndarray
-    loadings: np.ndarray
-    scores: np.ndarray
+    x_csc_data: Float64Array
+    x_csc_indices: npt.NDArray[np.int32]
+    x_csc_indptr: npt.NDArray[np.int32]
+    x_csr_data: Float64Array
+    x_csr_indices: npt.NDArray[np.int32]
+    x_csr_indptr: npt.NDArray[np.int32]
+    loadings: Float64Array
+    scores: Float64Array
     noise_var: float
-    prior_prec: np.ndarray
-    loading_covariances: np.ndarray | None = None
-    score_covariances: np.ndarray | None = None
+    prior_prec: Float64Array
+    loading_covariances: Float64Array | None = None
+    score_covariances: Float64Array | None = None
     return_score_covariances: bool = True
     return_loading_covariances: bool = True
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class _DenseBenchmarkArrays:
-    x: np.ndarray
-    mask: np.ndarray
-    loadings: np.ndarray
-    scores: np.ndarray
-    prior_prec: np.ndarray
+    x: Float64Array
+    mask: DenseMask
+    loadings: Float64Array
+    scores: Float64Array
+    prior_prec: Float64Array
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class _SparseBenchmarkArrays:
-    x_csc_data: np.ndarray
-    x_csc_indices: np.ndarray
-    x_csc_indptr: np.ndarray
-    x_csr_data: np.ndarray
-    x_csr_indices: np.ndarray
-    x_csr_indptr: np.ndarray
-    loadings: np.ndarray
-    scores: np.ndarray
-    prior_prec: np.ndarray
+    x_csc_data: Float64Array
+    x_csc_indices: npt.NDArray[np.int32]
+    x_csc_indptr: npt.NDArray[np.int32]
+    x_csr_data: Float64Array
+    x_csr_indices: npt.NDArray[np.int32]
+    x_csr_indptr: npt.NDArray[np.int32]
+    loadings: Float64Array
+    scores: Float64Array
+    prior_prec: Float64Array
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class _ThreadResolutionInputs:
     opts: dict[str, object]
     env_keys: RuntimeEnvKeys
@@ -312,7 +318,7 @@ def _resolve_profile_thread_overrides(
 
 
 def _coerce_int(value: object, default: int) -> int:
-    candidate: Any = value
+    candidate = cast("str | bytes | bytearray | SupportsInt | SupportsIndex", value)
     try:
         return int(candidate)
     except (TypeError, ValueError):
@@ -454,14 +460,14 @@ def read_env_thread_overrides(keys: RuntimeEnvKeys | None = None) -> dict[str, i
 def _parse_int_or_none(value: object | None) -> int | None:
     if value is None:
         return None
-    candidate: Any = value
+    candidate = cast("str | bytes | bytearray | SupportsInt | SupportsIndex", value)
     try:
         return int(candidate)
     except (TypeError, ValueError):
         return None
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class _ThreadResolveRequest:
     option_value: object | None
     use_global_opt: bool

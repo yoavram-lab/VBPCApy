@@ -27,9 +27,10 @@ import numpy as np
 import scipy.sparse as sp
 
 from ._sparsity import validate_mask_compatibility
+from ._types import DenseMask, Float64Array, MaskMatrix
 from .subtract_mu_from_sparse import subtract_mu_from_sparse
 
-Dense = np.ndarray
+Dense = Float64Array
 Sparse = sp.csr_matrix
 Matrix = Dense | Sparse
 
@@ -68,7 +69,7 @@ class ProbeMatrices:
     """
 
     x: Matrix
-    mask: Matrix | None
+    mask: MaskMatrix | None
 
 
 # ============================================================
@@ -76,7 +77,7 @@ class ProbeMatrices:
 # ============================================================
 
 
-def _normalize_mu_column(mu: np.ndarray, n_rows: int) -> np.ndarray:
+def _normalize_mu_column(mu: Float64Array, n_rows: int) -> Float64Array:
     """Return mu as a column vector of shape (n_rows, 1).
 
     Raises:
@@ -95,7 +96,7 @@ def _normalize_mu_column(mu: np.ndarray, n_rows: int) -> np.ndarray:
     raise ValueError(ERR_MU_SHAPE)
 
 
-def _ensure_dense_mask(mask: Matrix, shape: tuple[int, int]) -> np.ndarray:
+def _ensure_dense_mask(mask: MaskMatrix, shape: tuple[int, int]) -> DenseMask:
     """Return a dense mask of the requested shape.
 
     Raises:
@@ -116,16 +117,18 @@ def _ensure_dense_mask(mask: Matrix, shape: tuple[int, int]) -> np.ndarray:
     return mask_arr
 
 
-def _subtract_dense(mu_col: np.ndarray, x: np.ndarray, mask: np.ndarray) -> np.ndarray:
+def _subtract_dense(
+    mu_col: Float64Array, x: Float64Array, mask: DenseMask
+) -> Float64Array:
     """Subtract row-wise mu from dense x with a dense mask.
 
     Returns:
         Dense matrix with mean subtracted on observed entries.
     """
-    return x - mu_col * mask  # type: ignore[no-any-return]
+    return x - mu_col * mask
 
 
-def _subtract_sparse(mu_col: np.ndarray, x: Sparse) -> Sparse:
+def _subtract_sparse(mu_col: Float64Array, x: Sparse) -> Sparse:
     """Subtract row-wise mu from sparse CSR x using the C++ helper.
 
     Returns:
@@ -162,7 +165,7 @@ def _is_matlab_empty_matrix(mat: Matrix) -> bool:
 
 
 def _subtract_sparse_branch(
-    mu_col: np.ndarray,
+    mu_col: Float64Array,
     x: Matrix,
     probe: ProbeMatrices | None,
     n_rows: int,
@@ -197,12 +200,12 @@ def _subtract_sparse_branch(
 
 
 def _subtract_dense_branch(
-    mu_col: np.ndarray,
-    x: np.ndarray,
-    mask: Matrix,
+    mu_col: Float64Array,
+    x: Float64Array,
+    mask: MaskMatrix,
     probe: ProbeMatrices | None,
     shape: tuple[int, int],
-) -> tuple[np.ndarray, Matrix | None]:
+) -> tuple[Float64Array, Matrix | None]:
     """Handle dense subtraction branch.
 
     Returns:
@@ -233,9 +236,9 @@ def _subtract_dense_branch(
 
 
 def subtract_mu(
-    mu: np.ndarray,
+    mu: Float64Array,
     x: Matrix,
-    mask: Matrix,
+    mask: MaskMatrix,
     probe: ProbeMatrices | None = None,
     *,
     update_bias: bool = True,

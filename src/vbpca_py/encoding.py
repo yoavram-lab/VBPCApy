@@ -7,8 +7,10 @@ from typing import Literal
 
 import numpy as np
 
+from ._types import Float64Array  # noqa: TC001 - runtime annotation resolution
 
-@dataclass(frozen=True)
+
+@dataclass(frozen=True, slots=True)
 class EncodedVariable:
     """Describe one original variable in an encoded feature matrix.
 
@@ -30,7 +32,13 @@ class EncodedVariable:
     offset: tuple[float, ...] = ()
     weight: float = 1.0
 
-    def decode(self, block: np.ndarray) -> np.ndarray:
+    def __post_init__(self) -> None:
+        """Own sequence membership while borrowing category label objects."""
+        object.__setattr__(self, "columns", tuple(self.columns))
+        object.__setattr__(self, "categories", tuple(self.categories))
+        object.__setattr__(self, "offset", tuple(self.offset))
+
+    def decode(self, block: Float64Array) -> Float64Array:
         """Undo a categorical block's affine encoding and reference drop.
 
         Args:
@@ -56,7 +64,7 @@ class EncodedVariable:
             decoded = np.insert(decoded, self.reference, reference, axis=0)
         return decoded
 
-    def decode_numeric(self, block: np.ndarray) -> np.ndarray:
+    def decode_numeric(self, block: Float64Array) -> Float64Array:
         """Restore continuous values or unrounded ordinal level-index scores.
 
         Args:
@@ -79,13 +87,13 @@ class EncodedVariable:
         ):
             msg = "numeric decoding needs matching columns and fitted affine metadata"
             raise ValueError(msg)
-        decoded: np.ndarray = (
+        decoded: Float64Array = (
             block / self.weight + np.asarray(self.offset)[:, np.newaxis]
         )
         return decoded
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class EncodingSchema:
     """Snapshot of dense encoding metadata, in original variable order.
 
@@ -99,6 +107,10 @@ class EncodingSchema:
     """
 
     variables: tuple[EncodedVariable, ...]
+
+    def __post_init__(self) -> None:
+        """Snapshot the ordered immutable variable descriptors."""
+        object.__setattr__(self, "variables", tuple(self.variables))
 
     @property
     def feature_groups(self) -> tuple[int, ...]:

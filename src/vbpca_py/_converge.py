@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, SupportsFloat, SupportsIndex, SupportsInt, cast
+from typing import TYPE_CHECKING, SupportsFloat, SupportsIndex, SupportsInt, cast
 
 if TYPE_CHECKING:
     from collections.abc import MutableMapping, Sequence
@@ -20,9 +20,10 @@ from scipy.sparse import spmatrix
 from ._cost import CostParams, compute_full_cost
 from ._monitoring import display_progress, log_step
 from ._sparsity import validate_mask_compatibility
+from ._types import Float64Array, IndexArray, MaskMatrix
 from .options import Criterion
 
-Array = np.ndarray
+Array = Float64Array
 Sparse = spmatrix
 Matrix = Array | Sparse
 
@@ -60,7 +61,7 @@ def _coerce_int(
         return default
 
 
-@dataclass
+@dataclass(slots=True)
 class ConvergenceState:
     """State used when logging and checking convergence criteria.
 
@@ -77,22 +78,22 @@ class ConvergenceState:
 
     opts: MutableMapping[str, object]
     x_data: Matrix
-    loadings: np.ndarray
-    scores: np.ndarray
-    mu: np.ndarray
+    loadings: Float64Array
+    scores: Float64Array
+    mu: Float64Array
     noise_var: float
-    va: np.ndarray
-    loading_covariances: list[np.ndarray]
+    va: Float64Array
+    loading_covariances: list[Float64Array]
     vmu: float
-    mu_variances: np.ndarray
-    score_covariances: list[np.ndarray]
-    pattern_index: np.ndarray | None
-    mask: Matrix
+    mu_variances: Float64Array
+    score_covariances: list[Float64Array]
+    pattern_index: IndexArray | None
+    mask: MaskMatrix
     s_xv: float
     n_data: float
     time_start: float
     lc: LearningCurve
-    loadings_old: np.ndarray
+    loadings_old: Float64Array
     dsph: dict[str, object]
 
 
@@ -119,7 +120,7 @@ def _angle_stop_message(opts: Mapping[str, object], angle_a: float) -> str | Non
 
 def _early_stop_message(
     opts: Mapping[str, object],
-    prms: np.ndarray,
+    prms: Float64Array,
 ) -> str | None:
     """Return an early-stopping message based on probe RMS, or None."""
     if not opts.get("earlystop"):
@@ -136,8 +137,8 @@ def _early_stop_message(
 
 
 def _plateau_stop(
-    series: np.ndarray,
-    stop_cfg: Sequence[float] | np.ndarray | None,
+    series: Float64Array,
+    stop_cfg: Sequence[float] | Float64Array | None,
     label: str,
 ) -> str | None:
     """Generic plateau stop for RMS / cost series.
@@ -186,7 +187,7 @@ def _plateau_stop(
 
 
 def _relative_elbo_stop(
-    cost: np.ndarray,
+    cost: Float64Array,
     threshold: float | None,
 ) -> str | None:
     """Return a message if relative free-energy improvement is below threshold.
@@ -217,7 +218,7 @@ def _relative_elbo_stop(
 
 
 def _elbo_curvature_stop(
-    cost: np.ndarray,
+    cost: Float64Array,
     threshold: float | None,
 ) -> str | None:
     """Return a message if free-energy slope and curvature are both small.
@@ -269,7 +270,7 @@ def _slowing_down_message(sd_iter: int | None) -> str | None:
 
 def _cost_criteria(
     opts: Mapping[str, object],
-    cost: np.ndarray,
+    cost: Float64Array,
 ) -> str | None:
     """Evaluate all cost/ELBO-based stopping criteria in priority order.
 
@@ -282,7 +283,7 @@ def _cost_criteria(
 
 def _cost_criteria_tagged(
     opts: Mapping[str, object],
-    cost: np.ndarray,
+    cost: Float64Array,
 ) -> tuple[str | None, str | None]:
     """Like :func:`_cost_criteria` but also returns a reason tag.
 
@@ -299,7 +300,7 @@ def _cost_criteria_tagged(
 
 def _cost_subcriteria(
     opts: Mapping[str, object],
-    cost: np.ndarray,
+    cost: Float64Array,
 ) -> dict[str, str | None]:
     """Evaluate every cost subcriterion without applying winner priority.
 
@@ -308,7 +309,7 @@ def _cost_subcriteria(
     """
     cfstop = opts.get("cfstop")
     plateau_msg = (
-        _plateau_stop(cost, cast("Sequence[float] | np.ndarray", cfstop), "cost")
+        _plateau_stop(cost, cast("Sequence[float] | Float64Array", cfstop), "cost")
         if cost.size >= 2 and cfstop is not None
         else None
     )
@@ -341,8 +342,8 @@ def _check_sub_criterion(
     key: str,
     threshold: float,
     angle_a: float,
-    rms: np.ndarray,
-    cost: np.ndarray,
+    rms: Float64Array,
+    cost: Float64Array,
 ) -> str | None:
     """Evaluate a single composite sub-criterion.
 
@@ -372,7 +373,7 @@ def _check_sub_criterion(
 
 def _rel_change_check(
     label: str,
-    series: np.ndarray,
+    series: Float64Array,
     threshold: float,
     eps: float,
 ) -> str | None:
@@ -397,8 +398,8 @@ def _rel_change_check(
 def _composite_stop(
     composite_cfg: Mapping[str, float],
     angle_a: float,
-    rms: np.ndarray,
-    cost: np.ndarray,
+    rms: Float64Array,
+    cost: Float64Array,
 ) -> str | None:
     """Check whether **all** sub-criteria in *composite_cfg* are satisfied.
 
@@ -536,7 +537,7 @@ def convergence_check(
         "earlystop": ("earlystop", _early_stop_message(opts, prms)),
         "rms_plateau": (
             "rms_plateau",
-            _plateau_stop(rms, cast("Sequence[float] | np.ndarray", rmsstop), "RMS")
+            _plateau_stop(rms, cast("Sequence[float] | Float64Array", rmsstop), "RMS")
             if rms.size >= 2 and rmsstop is not None
             else None,
         ),
@@ -605,7 +606,7 @@ def _log_and_check_convergence(
     state: ConvergenceState,
     rms: float,
     prms: float,
-) -> tuple[LearningCurve, float, str, np.ndarray]:
+) -> tuple[LearningCurve, float, str, Float64Array]:
     """Update learning curves, compute cost (if requested), and check convergence.
 
     Returns:
@@ -686,7 +687,7 @@ def _append_cost_value(state: ConvergenceState) -> None:
     )
 
     if sp.issparse(state.mask):
-        mask_csr = sp.csr_matrix(cast("Any", state.mask))
+        mask_csr = sp.csr_matrix(state.mask)
         mask_csr.data = np.asarray(mask_csr.data, dtype=bool)
         mask_arg: Matrix = mask_csr
     else:
@@ -771,7 +772,7 @@ def _angle_for_iteration(state: ConvergenceState) -> tuple[float, float | None]:
     return angle_a, angle_a
 
 
-def _max_subspace_angle(loadings: np.ndarray, loadings_old: np.ndarray) -> float:
+def _max_subspace_angle(loadings: Float64Array, loadings_old: Float64Array) -> float:
     """Return a convergence-safe maximum principal angle.
 
     SciPy returns no principal angles when either loading matrix has zero

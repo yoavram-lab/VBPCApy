@@ -3,16 +3,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import cast
 
 import numpy as np
 import scipy.sparse as sp
 
 from ._sparse_error import sparse_reconstruction_error
 from ._sparsity import _as_dense_mask, validate_mask_compatibility
+from ._types import DenseMask, Float64Array  # noqa: TC001 - runtime annotation resolution
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class RmsConfig:
     # If provided, we validate it; for sparse we primarily derive from data.nnz
     n_observed: int | None = None
@@ -23,12 +24,12 @@ class RmsConfig:
 
 
 def compute_rms(
-    data: np.ndarray | sp.spmatrix,
-    loadings: np.ndarray,
-    scores: np.ndarray,
-    mask: np.ndarray | sp.spmatrix | None,
+    data: Float64Array | sp.spmatrix,
+    loadings: Float64Array,
+    scores: Float64Array,
+    mask: DenseMask | sp.spmatrix | None,
     config: RmsConfig,
-) -> tuple[float, np.ndarray | sp.spmatrix]:
+) -> tuple[float, Float64Array | sp.csr_matrix]:
     """MATLAB-compatible compute_rms.
 
     Dense:
@@ -53,7 +54,7 @@ def compute_rms(
         if isinstance(data, sp.csr_matrix):
             data_csr = data
         else:
-            data_csr = sp.csr_matrix(cast("Any", data))
+            data_csr = sp.csr_matrix(cast("sp.csr_matrix", data))
         if data_csr.size == 0:
             return float("nan"), np.array([])
         _validate_shapes(data_csr, loadings, scores)
@@ -97,9 +98,9 @@ def compute_rms(
 def _compute_rms_sparse(
     *,
     data_csr: sp.csr_matrix,
-    loadings: np.ndarray,
-    scores: np.ndarray,
-    mask: np.ndarray | sp.spmatrix | None,
+    loadings: Float64Array,
+    scores: Float64Array,
+    mask: DenseMask | sp.spmatrix | None,
     config: RmsConfig,
 ) -> tuple[float, sp.csr_matrix]:
     """Compute RMS for sparse data.
@@ -131,12 +132,12 @@ def _compute_rms_sparse(
 
 def _compute_rms_dense(
     *,
-    data_arr: np.ndarray,
-    loadings: np.ndarray,
-    scores: np.ndarray,
-    mask: np.ndarray | sp.spmatrix | None,
+    data_arr: Float64Array,
+    loadings: Float64Array,
+    scores: Float64Array,
+    mask: DenseMask | sp.spmatrix | None,
     config: RmsConfig,
-) -> tuple[float, np.ndarray]:
+) -> tuple[float, Float64Array]:
     """Compute RMS for dense data with mask application.
 
     Returns:
@@ -177,9 +178,9 @@ def _compute_rms_dense(
 
 
 def _validate_shapes(
-    data: np.ndarray | sp.spmatrix,
-    loadings: np.ndarray,
-    scores: np.ndarray,
+    data: Float64Array | sp.spmatrix,
+    loadings: Float64Array,
+    scores: Float64Array,
 ) -> None:
     """Validate matrix shapes for RMS computation.
 
@@ -208,7 +209,7 @@ def _validate_shapes(
 
 def _validate_sparse_mask_matches_structure(
     x: sp.csr_matrix,
-    mask: np.ndarray | sp.spmatrix,
+    mask: DenseMask | sp.spmatrix,
 ) -> None:
     """Enforce MATLAB-legacy sparse semantics.
 
@@ -222,7 +223,7 @@ def _validate_sparse_mask_matches_structure(
         mask_csr = (
             mask
             if isinstance(mask, sp.csr_matrix)
-            else sp.csr_matrix(cast("Any", mask))
+            else sp.csr_matrix(cast("sp.csr_matrix", mask))
         )
         # Compare structure (indptr/indices); mask values are irrelevant beyond
         # nonzero-ness.

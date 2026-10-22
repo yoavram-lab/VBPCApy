@@ -10,9 +10,9 @@ lists so that static analysis tools remain happy.
 from __future__ import annotations
 
 import logging
-from collections.abc import MutableSequence
+from collections.abc import Callable, Mapping, MutableMapping, MutableSequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, cast
 
 import numpy as np
 import scipy.sparse as sp
@@ -27,6 +27,16 @@ from ._remove_empty import remove_empty_entries
 from ._rms import RmsConfig, compute_rms
 from ._rotate import RotateParams, rotate_to_pca
 from ._sparsity import _as_dense_mask
+from ._types import (
+    BoolArray,
+    CountArray,
+    DenseMask,
+    Float64Array,
+    IndexArray,
+    InputMask,
+    InputMatrix,
+    MaskMatrix,
+)
 from .dense_update_kernels import (
     loadings_update_dense_masked_nopattern as _loadings_update_dense_masked_ext,
 )
@@ -46,27 +56,25 @@ from .sparse_update_kernels import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping, MutableMapping
-
     import numpy.typing as npt
 
 logger = logging.getLogger(__name__)
 
 _EPS_VAR = 1e-15  # minimum variance for numerical safety
 _MAX_VA_SHRINK = 0.1  # maximum per-iteration shrinkage factor for Va
-ChoFactor = tuple[np.ndarray, bool]
-CovarianceStore = MutableSequence[np.ndarray] | np.ndarray
+ChoFactor = tuple[Float64Array, bool]
+CovarianceStore = MutableSequence[Float64Array] | Float64Array
 
 
 def _has_covariances(covariances: CovarianceStore) -> bool:
     return len(covariances) > 0
 
 
-def _covariance_at(covariances: CovarianceStore, idx: int) -> np.ndarray:
+def _covariance_at(covariances: CovarianceStore, idx: int) -> Float64Array:
     return np.asarray(covariances[idx], dtype=float)
 
 
-def _covariances_stack(covariances: CovarianceStore) -> np.ndarray:
+def _covariances_stack(covariances: CovarianceStore) -> Float64Array:
     if isinstance(covariances, np.ndarray):
         if covariances.ndim != 3:
             msg = "covariances array must be 3-D when provided as ndarray"
@@ -78,11 +86,11 @@ def _covariances_stack(covariances: CovarianceStore) -> np.ndarray:
 
 def _covariances_stack_cached(
     covariances: CovarianceStore,
-    cache: dict[str, np.ndarray],
+    cache: dict[str, Float64Array],
     key: str,
-) -> np.ndarray:
+) -> Float64Array:
     if isinstance(covariances, np.ndarray):
-        return np.asarray(covariances, dtype=np.float64)
+        return _covariances_stack(covariances)
 
     cached = cache.get(key)
     if cached is not None:
@@ -93,7 +101,7 @@ def _covariances_stack_cached(
     return stacked
 
 
-def _covariances_list(covariances: CovarianceStore) -> list[np.ndarray]:
+def _covariances_list(covariances: CovarianceStore) -> list[Float64Array]:
     if isinstance(covariances, np.ndarray):
         if covariances.ndim != 3:
             msg = "covariances array must be 3-D when provided as ndarray"
@@ -128,41 +136,41 @@ def _log_progress_if_needed(
 # ---------------------------------------------------------------------------
 
 
-@dataclass
+@dataclass(slots=True)
 class BiasState:
     """State required for updating the bias/mean parameter."""
 
-    mu: np.ndarray
-    muv: np.ndarray
+    mu: Float64Array
+    muv: Float64Array
     noise_var: float
     vmu: float
-    n_obs_row: np.ndarray
+    n_obs_row: CountArray
 
 
-@dataclass
+@dataclass(slots=True)
 class CenteringState:
     """State needed when (re)centering the data and probe matrices."""
 
     x_data: Matrix
     x_probe: Matrix | None
-    mask: Matrix
-    mask_probe: Matrix | None
+    mask: MaskMatrix
+    mask_probe: MaskMatrix | None
 
 
-@dataclass
+@dataclass(slots=True)
 class ScoreState:
     """State required for updating scores and their covariances."""
 
     x_data: Matrix
-    mask: Matrix
-    loadings: np.ndarray  # A
-    scores: np.ndarray  # S
+    mask: MaskMatrix
+    loadings: Float64Array  # A
+    scores: Float64Array  # S
     loading_covariances: CovarianceStore  # Av
     score_covariances: CovarianceStore  # Sv
-    pattern_index: np.ndarray | None
+    pattern_index: IndexArray | None
     obs_patterns: list[list[int]]
     noise_var: float
-    eye_components: np.ndarray
+    eye_components: Float64Array
     verbose: int
     pattern_batch_size: int = 0
     sparse_num_cpu: int = 0
@@ -176,16 +184,16 @@ class ScoreState:
     accessor_mode: str = "legacy"
 
 
-@dataclass
+@dataclass(slots=True)
 class NoiseState:
     """State required for updating the noise variance."""
 
-    loadings: np.ndarray
-    scores: np.ndarray
+    loadings: Float64Array
+    scores: Float64Array
     loading_covariances: CovarianceStore
     score_covariances: CovarianceStore
-    mu_variances: np.ndarray
-    pattern_index: np.ndarray | None
+    mu_variances: Float64Array
+    pattern_index: IndexArray | None
     n_data: float
     noise_var: float
     sparse_num_cpu: int = 0
@@ -193,23 +201,23 @@ class NoiseState:
     statistics_mode: str = "observed"
 
 
-@dataclass
+@dataclass(slots=True)
 class InitContext:
     """Context needed for initial parameter setup and centering."""
 
     x_data: Matrix
     x_probe: Matrix | None
-    mask: Matrix
-    mask_probe: Matrix | None
+    mask: MaskMatrix
+    mask_probe: MaskMatrix | None
     shapes: InitShapes
-    pattern_index: np.ndarray | None
-    n_obs_row: np.ndarray
+    pattern_index: IndexArray | None
+    n_obs_row: CountArray
     use_prior: bool
     use_postvar: bool
     opts: MutableMapping[str, object]
 
 
-@dataclass
+@dataclass(slots=True)
 class HyperpriorContext:
     """Context for updating hyperpriors Va and Vmu."""
 
@@ -217,29 +225,29 @@ class HyperpriorContext:
     use_prior: bool
     niter_broadprior: int
     bias_enabled: bool
-    mu: np.ndarray
-    mu_variances: np.ndarray
-    loadings: np.ndarray
+    mu: Float64Array
+    mu_variances: Float64Array
+    loadings: Float64Array
     loading_covariances: CovarianceStore
     n_features: int
     hp_va: float
     hp_vb: float
-    va: np.ndarray
+    va: Float64Array
     vmu: float
     obs_fraction: float = 1.0
 
 
-@dataclass
+@dataclass(slots=True)
 class LoadingsUpdateState:
     """State for updating loadings and their covariances."""
 
     x_data: Matrix
-    mask: Matrix
-    scores: np.ndarray
+    mask: MaskMatrix
+    scores: Float64Array
     loading_covariances: CovarianceStore
     score_covariances: CovarianceStore
-    pattern_index: np.ndarray | None
-    va: np.ndarray
+    pattern_index: IndexArray | None
+    va: Float64Array
     noise_var: float
     verbose: int
     sparse_num_cpu: int = 0
@@ -252,31 +260,31 @@ class LoadingsUpdateState:
     accessor_mode: str = "legacy"
 
 
-@dataclass
+@dataclass(slots=True)
 class RmsContext:
     """Context for recomputing RMS and (optional) probe RMS."""
 
     x_data: Matrix
     x_probe: Matrix | None
-    mask: Matrix
-    mask_probe: Matrix | None
+    mask: MaskMatrix
+    mask_probe: MaskMatrix | None
     n_data: float
     n_probe: int
-    loadings: np.ndarray
-    scores: np.ndarray
+    loadings: Float64Array
+    scores: Float64Array
     num_cpu: int
 
 
-@dataclass
+@dataclass(slots=True)
 class RotationContext:
     """Context for final PCA-style rotation."""
 
-    loadings: np.ndarray
+    loadings: Float64Array
     loading_covariances: CovarianceStore
-    scores: np.ndarray
+    scores: Float64Array
     score_covariances: CovarianceStore
-    mu: np.ndarray
-    pattern_index: np.ndarray | None
+    mu: Float64Array
+    pattern_index: IndexArray | None
     obs_patterns: list[list[int]]
     bias_enabled: bool
 
@@ -287,11 +295,11 @@ class RotationContext:
 
 
 def _prepare_data(
-    x: Matrix,
+    x: InputMatrix,
     opts: MutableMapping[str, object],
     *,
-    mask_override: Matrix | None = None,
-) -> tuple[Matrix, Matrix | None, Matrix | None, int, int, np.ndarray, np.ndarray]:
+    mask_override: InputMask | None = None,
+) -> tuple[Matrix, Matrix | None, MaskMatrix | None, int, int, IndexArray, IndexArray]:
     """Copy input, apply probe handling, and remove empty rows/cols.
 
     Returns:
@@ -301,7 +309,7 @@ def _prepare_data(
     x_probe_opt = opts.get("xprobe", None)
 
     if sp.issparse(x):
-        x_data: Matrix = sp.csr_matrix(cast("Any", x))
+        x_data: Matrix = sp.csr_matrix(x)
     else:
         # The previous array(...).copy() ended in C order. Retain that layout
         # and input ownership with one allocation, including dtype conversion.
@@ -311,7 +319,7 @@ def _prepare_data(
 
     n_features_original, n_samples_original = x_data.shape
 
-    mask_clean: Matrix | None = None
+    mask_clean: MaskMatrix | None = None
     if mask_override is not None:
         mask_clean = (
             mask_override
@@ -340,7 +348,9 @@ def _prepare_data(
         if sp.isspmatrix(mask_clean):
             mask_clean = sp.csr_matrix(mask_clean)[row_idx[:, None], col_idx]
         else:
-            mask_clean = np.asarray(mask_clean)[np.ix_(row_idx, col_idx)]
+            mask_clean = cast(
+                "DenseMask", np.asarray(mask_clean)[np.ix_(row_idx, col_idx)]
+            )
 
     return (
         x_data,
@@ -368,7 +378,7 @@ def _coerce_probe(probe: object, *, sparse_input: bool) -> Matrix | None:
         if not sparse_input:
             msg = "x_probe must be dense when x is dense"
             raise ValueError(msg)
-        probe_sparse = sp.csr_matrix(cast("Any", probe), copy=True)
+        probe_sparse = sp.csr_matrix(cast("sp.csr_matrix", probe), copy=True)
         return probe_sparse if probe_sparse.nnz else None
     if sparse_input:
         msg = "x_probe must be sparse when x is sparse"
@@ -377,7 +387,7 @@ def _coerce_probe(probe: object, *, sparse_input: bool) -> Matrix | None:
     return probe_array.copy() if probe_array.size else None
 
 
-def _probe_mask(x_probe: Matrix) -> Matrix:
+def _probe_mask(x_probe: Matrix) -> MaskMatrix:
     """Return an observation mask for a dense or sparse probe matrix."""
     if sp.issparse(x_probe):
         mask_probe = sp.csr_matrix(x_probe, copy=True)
@@ -390,10 +400,10 @@ def _probe_mask(x_probe: Matrix) -> Matrix:
 def _exclude_probe_from_training(
     x_data: Matrix,
     x_probe: Matrix | None,
-    mask: Matrix | None,
+    mask: MaskMatrix | None,
     *,
     compat_mode: str = "strict_legacy",
-) -> tuple[Matrix, Matrix | None]:
+) -> tuple[Matrix, MaskMatrix | None]:
     """Remove probe positions from training data and an optional mask.
 
     An explicit probe is authoritative: even when the caller passes the
@@ -425,10 +435,10 @@ def _exclude_probe_from_training(
 def _exclude_sparse_probe(
     x_data: Matrix,
     x_probe: Matrix,
-    mask: Matrix | None,
+    mask: MaskMatrix | None,
     *,
     preserve_zeros: bool = False,
-) -> tuple[sp.csr_matrix, Matrix | None]:
+) -> tuple[sp.csr_matrix, MaskMatrix | None]:
     """Remove sparse probe coordinates from sparse training inputs.
 
     Returns:
@@ -471,8 +481,8 @@ def _exclude_sparse_probe(
 def _exclude_dense_probe(
     x_data: Matrix,
     x_probe: Matrix,
-    mask: Matrix | None,
-) -> tuple[np.ndarray, np.ndarray | None]:
+    mask: MaskMatrix | None,
+) -> tuple[Float64Array, BoolArray | None]:
     """Remove dense probe coordinates from dense training inputs.
 
     Returns:
@@ -498,7 +508,7 @@ def _exclude_dense_probe(
     return data_arr, mask_arr
 
 
-def _validate_mask_shape(mask: Matrix, x_data: Matrix) -> None:
+def _validate_mask_shape(mask: MaskMatrix, x_data: Matrix) -> None:
     """Raise when an observation mask does not match its data matrix.
 
     Raises:
@@ -558,7 +568,7 @@ def _build_masks_sparse(
     x_data: Matrix,
     x_probe: Matrix | None,
     compat_mode: str,
-) -> tuple[Matrix, Matrix | None, Matrix, Matrix | None]:
+) -> tuple[Matrix, Matrix | None, MaskMatrix, MaskMatrix | None]:
     """Build masks and normalized data for sparse inputs.
 
     Returns:
@@ -567,7 +577,7 @@ def _build_masks_sparse(
     x_csr = _normalize_sparse_data(sp.csr_matrix(x_data), compat_mode)
     mask_csr = x_csr.copy()
     mask_csr.data[:] = 1.0
-    mask: Matrix = mask_csr
+    mask: MaskMatrix = mask_csr
 
     if x_probe is not None:
         if sp.issparse(x_probe):
@@ -579,7 +589,7 @@ def _build_masks_sparse(
         else:
             x_probe_arr = np.asarray(x_probe, dtype=float)
             x_probe = x_probe_arr
-            mask_probe = (x_probe_arr != 0).astype(float)
+            mask_probe = (x_probe_arr != 0).astype(np.float64)
     else:
         mask_probe = None
 
@@ -590,7 +600,7 @@ def _build_masks_dense(
     x_data: Matrix,
     x_probe: Matrix | None,
     compat_mode: str,
-) -> tuple[Matrix, Matrix | None, Matrix, Matrix | None]:
+) -> tuple[Matrix, Matrix | None, MaskMatrix, MaskMatrix | None]:
     """Build masks and normalized data for dense inputs.
 
     Returns:
@@ -625,9 +635,9 @@ def _build_masks_dense(
 def _prepare_sparse_with_optional_mask(
     x_data: Matrix,
     x_probe: Matrix | None,
-    mask_override: Matrix | None,
+    mask_override: MaskMatrix | None,
     compat_mode: str,
-) -> tuple[Matrix, Matrix | None, Matrix, Matrix | None]:
+) -> tuple[Matrix, Matrix | None, MaskMatrix, MaskMatrix | None]:
     if x_probe is not None and not sp.issparse(x_probe):
         msg = "x_probe must be sparse when x is sparse"
         raise ValueError(msg)
@@ -649,9 +659,9 @@ def _prepare_sparse_with_optional_mask(
 def _prepare_dense_with_mask_override(
     x_data: Matrix,
     x_probe: Matrix | None,
-    mask_override: Matrix,
+    mask_override: MaskMatrix,
     compat_mode: str,
-) -> tuple[Matrix, Matrix | None, Matrix, Matrix | None]:
+) -> tuple[Matrix, Matrix | None, MaskMatrix, MaskMatrix | None]:
     if sp.issparse(mask_override):
         msg = "mask must be dense when x is dense"
         raise ValueError(msg)
@@ -664,7 +674,7 @@ def _prepare_dense_with_mask_override(
     x_arr[np.isnan(x_arr)] = 0.0
 
     x_probe_out: Matrix | None = None
-    mask_probe: Matrix | None = None
+    mask_probe: MaskMatrix | None = None
     if x_probe is not None:
         x_probe_arr = np.asarray(x_probe, dtype=float)
         mask_probe = ~np.isnan(x_probe_arr)
@@ -681,15 +691,17 @@ def _build_masks_and_counts(
     x_probe: Matrix | None,
     opts: MutableMapping[str, object],
     *,
-    mask_override: Matrix | None = None,
-) -> tuple[Matrix, Matrix | None, Matrix, Matrix | None, np.ndarray, float, int]:
+    mask_override: MaskMatrix | None = None,
+) -> tuple[
+    Matrix, Matrix | None, MaskMatrix, MaskMatrix | None, CountArray, float, int
+]:
     """Build missingness masks, handle NaNs/zeros, and count observations.
 
     Returns:
         Data, probe, masks, per-row counts, total data count, probe count.
     """
-    mask: Matrix
-    mask_probe: Matrix | None
+    mask: MaskMatrix
+    mask_probe: MaskMatrix | None
     compat_mode = str(opts.get("compat_mode", "strict_legacy")).strip().lower()
 
     if sp.issparse(x_data):
@@ -722,7 +734,7 @@ def _build_masks_and_counts(
         n_probe = int(mask_probe_csr.count_nonzero())
     else:
         mask_probe_arr = np.asarray(mask_probe)
-        mask_probe = mask_probe_arr
+        mask_probe = cast("DenseMask", mask_probe_arr)
         n_probe = int(np.count_nonzero(mask_probe_arr))
 
     if n_probe == 0:
@@ -734,7 +746,7 @@ def _build_masks_and_counts(
     return x_data, x_probe, mask, mask_probe, n_obs_row, n_data, n_probe
 
 
-def _observed_indices(x_data: Matrix) -> tuple[np.ndarray, np.ndarray]:
+def _observed_indices(x_data: Matrix) -> tuple[IndexArray, IndexArray]:
     """Return indices of observed entries in ``x_data``."""
     if isinstance(x_data, sp.csr_matrix):
         i_idx_sparse, j_idx_sparse = x_data.nonzero()
@@ -751,9 +763,9 @@ def _observed_indices(x_data: Matrix) -> tuple[np.ndarray, np.ndarray]:
 
 def _observed_indices_with_mode(
     x_data: Matrix,
-    mask: Matrix,
+    mask: MaskMatrix,
     compat_mode: str,
-) -> tuple[np.ndarray, np.ndarray]:
+) -> tuple[IndexArray, IndexArray]:
     """Return observed indices according to compatibility mode.
 
     In ``strict_legacy`` mode this matches historical nonzero semantics.
@@ -775,7 +787,7 @@ def _observed_indices_with_mode(
 
 def _patterns_from_csc(
     mask_csc: sp.csc_matrix,
-) -> tuple[int, list[list[int]], np.ndarray]:
+) -> tuple[int, list[list[int]], IndexArray]:
     """Group sample columns with matching observed rows without densifying.
 
     Returns:
@@ -800,10 +812,10 @@ def _patterns_from_csc(
 
 
 def _missing_patterns_info(
-    mask: Matrix,
+    mask: MaskMatrix,
     opts: MutableMapping[str, object],
     n_samples: int,
-) -> tuple[int, list[list[int]], np.ndarray | None]:
+) -> tuple[int, list[list[int]], IndexArray | None]:
     """Compute missingness-pattern information and Isv mapping.
 
     Returns:
@@ -834,17 +846,17 @@ def _missing_patterns_info(
 # ---------------------------------------------------------------------------
 
 
-def _initialize_parameters(  # noqa: PLR0914
+def _initialize_parameters(
     ctx: InitContext,
 ) -> tuple[
-    np.ndarray,
-    np.ndarray,
-    np.ndarray,
+    Float64Array,
+    Float64Array,
+    Float64Array,
     float,
-    list[np.ndarray],
-    list[np.ndarray],
-    np.ndarray,
-    np.ndarray,
+    list[Float64Array],
+    list[Float64Array],
+    Float64Array,
+    Float64Array,
     float,
     Matrix,
     Matrix | None,
@@ -860,7 +872,7 @@ def _initialize_parameters(  # noqa: PLR0914
     # draw from this rng for any field a real fixture (mapping or .mat
     # path) doesn't supply. random_state=None (default) yields fresh
     # entropy each call, matching sklearn's random_state convention.
-    init_value = cast("str | Mapping[str, Any] | None", ctx.opts.get("init"))
+    init_value = cast("str | Mapping[str, object] | None", ctx.opts.get("init"))
     random_state = cast(
         "int | np.random.Generator | None", ctx.opts.get("random_state")
     )
@@ -896,26 +908,7 @@ def _initialize_parameters(  # noqa: PLR0914
         mu_variances = np.array([], dtype=float)
         vmu = 0.0
 
-    # Initialize mu from data if empty
-    if mu.size == 0:
-        if bool(ctx.opts.get("bias", 1)):
-            if sp.issparse(ctx.x_data):
-                mu_num = np.array(ctx.x_data.sum(axis=1)).ravel()
-            else:
-                x_dense = np.asarray(ctx.x_data, dtype=float)
-                mask_dense = np.asarray(ctx.mask, dtype=bool)
-                mu_num = np.sum(np.where(mask_dense, x_dense, 0.0), axis=1)
-            # Avoid division by zero: rows with no observations get zero mean.
-            with np.errstate(divide="ignore", invalid="ignore"):
-                mu_vec = np.divide(
-                    mu_num,
-                    ctx.n_obs_row,
-                    out=np.zeros_like(mu_num, dtype=float),
-                    where=ctx.n_obs_row > 0,
-                )
-            mu = mu_vec.reshape(-1, 1)
-        else:
-            mu = np.zeros((ctx.shapes.n_features, 1), dtype=float)
+    mu = _initial_mean(ctx, mu)
 
     # Initial centering using subtract_mu helper.
     x_data_centered, x_probe_centered = subtract_mu(
@@ -945,7 +938,37 @@ def _initialize_parameters(  # noqa: PLR0914
     )
 
 
-def _update_hyperpriors(ctx: HyperpriorContext) -> tuple[np.ndarray, float]:
+def _initial_mean(ctx: InitContext, mu: Float64Array) -> Float64Array:
+    """Resolve an omitted feature mean before the first centering operation.
+
+    Returns:
+        The supplied mean or the existing observed-row-mean initialization.
+    """
+    # Initialize mu from data if empty
+    if mu.size == 0:
+        if bool(ctx.opts.get("bias", 1)):
+            if sp.issparse(ctx.x_data):
+                mu_num = np.array(ctx.x_data.sum(axis=1)).ravel()
+            else:
+                x_dense = np.asarray(ctx.x_data, dtype=float)
+                mask_dense = np.asarray(ctx.mask, dtype=bool)
+                mu_num = np.sum(np.where(mask_dense, x_dense, 0.0), axis=1)
+            # Avoid division by zero: rows with no observations get zero mean.
+            with np.errstate(divide="ignore", invalid="ignore"):
+                mu_vec = np.divide(
+                    mu_num,
+                    ctx.n_obs_row,
+                    out=np.zeros_like(mu_num, dtype=float),
+                    where=ctx.n_obs_row > 0,
+                )
+            mu = mu_vec.reshape(-1, 1)
+        else:
+            mu = np.zeros((ctx.shapes.n_features, 1), dtype=float)
+
+    return mu
+
+
+def _update_hyperpriors(ctx: HyperpriorContext) -> tuple[Float64Array, float]:
     """Update Va and Vmu after a broad-prior warmup period.
 
     When data are missing the effective evidence for each loading column is
@@ -980,14 +1003,14 @@ def _update_hyperpriors(ctx: HyperpriorContext) -> tuple[np.ndarray, float]:
     return va_new, vmu
 
 
-def _row_sums(err_mx: np.ndarray | sp.spmatrix) -> np.ndarray:
+def _row_sums(err_mx: Float64Array | sp.spmatrix) -> Float64Array:
     if sp.issparse(err_mx):
         err_sparse = (
             err_mx
             if isinstance(err_mx, sp.csr_matrix)
-            else sp.csr_matrix(cast("Any", err_mx))
+            else sp.csr_matrix(cast("sp.csr_matrix", err_mx))
         )
-        return np.asarray(err_sparse.sum(axis=1)).ravel()
+        return np.asarray(err_sparse.sum(axis=1), dtype=np.float64).ravel()
     dense_sums: npt.NDArray[np.float64] = np.sum(
         np.asarray(err_mx, dtype=float), axis=1
     )
@@ -1003,7 +1026,7 @@ def _update_bias(
     *,
     bias_enabled: bool,
     bias_state: BiasState,
-    err_mx: np.ndarray | sp.spmatrix,
+    err_mx: Float64Array | sp.spmatrix,
     centering: CenteringState,
 ) -> tuple[BiasState, CenteringState]:
     """Bias / mean update, including in-place centering of x / x_probe.
@@ -1138,24 +1161,26 @@ def _score_update_fast_dense_no_av(state: ScoreState) -> ScoreState:
     return state
 
 
-def _symmetrize(mat: np.ndarray) -> np.ndarray:
-    return 0.5 * (mat + mat.T)  # type: ignore[no-any-return]
+def _symmetrize(mat: Float64Array) -> Float64Array:
+    return 0.5 * (mat + mat.T)
 
 
-def _safe_cholesky(mat: np.ndarray, eye: np.ndarray) -> ChoFactor:
+def _safe_cholesky(mat: Float64Array, eye: Float64Array) -> ChoFactor:
     mat_sym = _symmetrize(mat)
     try:
         factor = cho_factor(mat_sym, lower=True, check_finite=False)
     except LinAlgError:
         factor = cho_factor(mat_sym + _EPS_VAR * eye, lower=True, check_finite=False)
-    return cast("ChoFactor", factor)
+    # SciPy stub releases differ in the precision of this return annotation.
+    factor_boundary: object = factor
+    return cast("ChoFactor", factor_boundary)
 
 
 def _csc_column_accessor(
     matrix: sp.csc_matrix,
     *,
     use_buffered: bool,
-) -> Callable[[int], np.ndarray]:
+) -> Callable[[int], Float64Array]:
     data = matrix.data
     indices = matrix.indices
     indptr = matrix.indptr
@@ -1164,7 +1189,7 @@ def _csc_column_accessor(
     if use_buffered:
         buf = np.zeros(n_rows, dtype=float)
 
-        def col_buffered(j: int) -> np.ndarray:
+        def col_buffered(j: int) -> Float64Array:
             buf.fill(0.0)
             start = int(indptr[j])
             end = int(indptr[j + 1])
@@ -1174,7 +1199,7 @@ def _csc_column_accessor(
 
         return col_buffered
 
-    def col_allocating(j: int) -> np.ndarray:
+    def col_allocating(j: int) -> Float64Array:
         out = np.zeros(n_rows, dtype=float)
         start = int(indptr[j])
         end = int(indptr[j + 1])
@@ -1189,7 +1214,7 @@ def _csc_mask_column_accessor(
     matrix: sp.csc_matrix,
     *,
     use_buffered: bool,
-) -> Callable[[int], np.ndarray]:
+) -> Callable[[int], Float64Array]:
     indices = matrix.indices
     indptr = matrix.indptr
     n_rows = matrix.shape[0]
@@ -1197,7 +1222,7 @@ def _csc_mask_column_accessor(
     if use_buffered:
         buf = np.zeros(n_rows, dtype=float)
 
-        def col_buffered(j: int) -> np.ndarray:
+        def col_buffered(j: int) -> Float64Array:
             buf.fill(0.0)
             start = int(indptr[j])
             end = int(indptr[j + 1])
@@ -1207,7 +1232,7 @@ def _csc_mask_column_accessor(
 
         return col_buffered
 
-    def col_allocating(j: int) -> np.ndarray:
+    def col_allocating(j: int) -> Float64Array:
         out = np.zeros(n_rows, dtype=float)
         start = int(indptr[j])
         end = int(indptr[j + 1])
@@ -1222,7 +1247,7 @@ def _csr_row_accessor(
     matrix: sp.csr_matrix,
     *,
     use_buffered: bool,
-) -> Callable[[int], np.ndarray]:
+) -> Callable[[int], Float64Array]:
     data = matrix.data
     indices = matrix.indices
     indptr = matrix.indptr
@@ -1231,7 +1256,7 @@ def _csr_row_accessor(
     if use_buffered:
         buf = np.zeros(n_cols, dtype=float)
 
-        def row_buffered(i: int) -> np.ndarray:
+        def row_buffered(i: int) -> Float64Array:
             buf.fill(0.0)
             start = int(indptr[i])
             end = int(indptr[i + 1])
@@ -1241,7 +1266,7 @@ def _csr_row_accessor(
 
         return row_buffered
 
-    def row_allocating(i: int) -> np.ndarray:
+    def row_allocating(i: int) -> Float64Array:
         out = np.zeros(n_cols, dtype=float)
         start = int(indptr[i])
         end = int(indptr[i + 1])
@@ -1256,7 +1281,7 @@ def _csr_mask_row_accessor(
     matrix: sp.csr_matrix,
     *,
     use_buffered: bool,
-) -> Callable[[int], np.ndarray]:
+) -> Callable[[int], Float64Array]:
     indices = matrix.indices
     indptr = matrix.indptr
     n_cols = matrix.shape[1]
@@ -1264,7 +1289,7 @@ def _csr_mask_row_accessor(
     if use_buffered:
         buf = np.zeros(n_cols, dtype=float)
 
-        def row_buffered(i: int) -> np.ndarray:
+        def row_buffered(i: int) -> Float64Array:
             buf.fill(0.0)
             start = int(indptr[i])
             end = int(indptr[i + 1])
@@ -1274,7 +1299,7 @@ def _csr_mask_row_accessor(
 
         return row_buffered
 
-    def row_allocating(i: int) -> np.ndarray:
+    def row_allocating(i: int) -> Float64Array:
         out = np.zeros(n_cols, dtype=float)
         start = int(indptr[i])
         end = int(indptr[i + 1])
@@ -1285,29 +1310,29 @@ def _csr_mask_row_accessor(
     return row_allocating
 
 
-def _dense_column_accessor(arr: np.ndarray) -> Callable[[int], np.ndarray]:
-    def _col(j: int) -> np.ndarray:
+def _dense_column_accessor(arr: Float64Array) -> Callable[[int], Float64Array]:
+    def _col(j: int) -> Float64Array:
         return np.asarray(arr[:, j], dtype=float)
 
     return _col
 
 
-def _dense_mask_column_accessor(arr: np.ndarray) -> Callable[[int], np.ndarray]:
-    def _col(j: int) -> np.ndarray:
+def _dense_mask_column_accessor(arr: DenseMask) -> Callable[[int], DenseMask]:
+    def _col(j: int) -> DenseMask:
         return arr[:, j]
 
     return _col
 
 
-def _dense_row_accessor(arr: np.ndarray) -> Callable[[int], np.ndarray]:
-    def _row(i: int) -> np.ndarray:
+def _dense_row_accessor(arr: Float64Array) -> Callable[[int], Float64Array]:
+    def _row(i: int) -> Float64Array:
         return np.asarray(arr[i, :], dtype=float)
 
     return _row
 
 
-def _dense_mask_row_accessor(arr: np.ndarray) -> Callable[[int], np.ndarray]:
-    def _row(i: int) -> np.ndarray:
+def _dense_mask_row_accessor(arr: DenseMask) -> Callable[[int], DenseMask]:
+    def _row(i: int) -> DenseMask:
         return arr[i, :]
 
     return _row
@@ -1315,7 +1340,7 @@ def _dense_mask_row_accessor(arr: np.ndarray) -> Callable[[int], np.ndarray]:
 
 def _score_accessors(
     state: ScoreState,
-) -> tuple[Callable[[int], np.ndarray], Callable[[int], np.ndarray], int]:
+) -> tuple[Callable[[int], Float64Array], Callable[[int], DenseMask], int]:
     accessor_mode = str(getattr(state, "accessor_mode", "legacy"))
     use_buffered = (
         accessor_mode == "buffered"
@@ -1332,7 +1357,9 @@ def _score_accessors(
 
     if sp.issparse(state.mask):
         mask_csc = sp.csc_matrix(state.mask)
-        mask_col = _csc_mask_column_accessor(mask_csc, use_buffered=use_buffered)
+        mask_col: Callable[[int], DenseMask] = _csc_mask_column_accessor(
+            mask_csc, use_buffered=use_buffered
+        )
 
     else:
         mask_arr = _as_dense_mask(state.mask)
@@ -1342,8 +1369,8 @@ def _score_accessors(
 
 
 def _score_cholesky(
-    state: ScoreState, mask_col: np.ndarray
-) -> tuple[ChoFactor, np.ndarray, np.ndarray]:
+    state: ScoreState, mask_col: DenseMask
+) -> tuple[ChoFactor, Float64Array, Float64Array]:
     loadings_masked = mask_col[:, None] * state.loadings
     psi = loadings_masked.T @ loadings_masked + state.noise_var * state.eye_components
 
@@ -1364,8 +1391,8 @@ def _score_cholesky(
 def _update_scores_for_columns(  # noqa: PLR0913
     state: ScoreState,
     cols: list[int],
-    x_col: Callable[[int], np.ndarray],
-    mask_col: Callable[[int], np.ndarray],
+    x_col: Callable[[int], Float64Array],
+    mask_col: Callable[[int], DenseMask],
     cov_index: int,
     *,
     batch_size: int = 0,
@@ -1406,7 +1433,7 @@ def _score_update_general_no_patterns(state: ScoreState) -> ScoreState:
     x_col, mask_col, n_samples = _score_accessors(state)
     has_cov = _has_covariances(state.score_covariances)
     log_stride = int(getattr(state, "log_progress_stride", 1))
-    cho_cache: dict[bytes, tuple[ChoFactor, np.ndarray, np.ndarray]] = {}
+    cho_cache: dict[bytes, tuple[ChoFactor, Float64Array, Float64Array]] = {}
 
     for j in range(n_samples):
         mask_vec = mask_col(j)
@@ -1496,7 +1523,7 @@ def _score_update_with_patterns(state: ScoreState) -> ScoreState:
     return state
 
 
-def _dense_mask_is_fully_observed(mask: Matrix) -> bool:
+def _dense_mask_is_fully_observed(mask: MaskMatrix) -> bool:
     """Inspect a dense mask without expanding boolean storage.
 
     Returns:
@@ -1541,7 +1568,7 @@ def _update_scores(state: ScoreState) -> ScoreState:
 
 def _loadings_accessors(
     state: LoadingsUpdateState,
-) -> tuple[Callable[[int], np.ndarray], Callable[[int], np.ndarray], int]:
+) -> tuple[Callable[[int], Float64Array], Callable[[int], DenseMask], int]:
     accessor_mode = str(getattr(state, "accessor_mode", "legacy"))
     use_buffered = accessor_mode == "buffered"
 
@@ -1555,7 +1582,9 @@ def _loadings_accessors(
 
     if sp.issparse(state.mask):
         mask_csr = sp.csr_matrix(state.mask)
-        mask_row = _csr_mask_row_accessor(mask_csr, use_buffered=use_buffered)
+        mask_row: Callable[[int], DenseMask] = _csr_mask_row_accessor(
+            mask_csr, use_buffered=use_buffered
+        )
 
     else:
         mask_arr = _as_dense_mask(state.mask)
@@ -1564,24 +1593,26 @@ def _loadings_accessors(
     return x_row, mask_row, int(state.x_data.shape[0])
 
 
-def _prior_precision_matrix(va: np.ndarray, noise_var: float) -> np.ndarray:
+def _prior_precision_matrix(va: Float64Array, noise_var: float) -> Float64Array:
     prior_prec_diag = np.zeros_like(va, dtype=float)
     finite_mask = np.isfinite(va) & (va > 0)
     prior_prec_diag[finite_mask] = noise_var / va[finite_mask]
     return np.diag(prior_prec_diag)
 
 
-def _score_covariance_for_column(state: LoadingsUpdateState, j_idx: int) -> np.ndarray:
+def _score_covariance_for_column(
+    state: LoadingsUpdateState, j_idx: int
+) -> Float64Array:
     if state.pattern_index is None:
         return _covariance_at(state.score_covariances, j_idx)
     return _covariance_at(state.score_covariances, int(state.pattern_index[j_idx]))
 
 
 def _phi_for_row(
-    mask_vec: np.ndarray,
+    mask_vec: DenseMask,
     state: LoadingsUpdateState,
-    prior_prec: np.ndarray,
-) -> tuple[np.ndarray, np.ndarray]:
+    prior_prec: Float64Array,
+) -> tuple[Float64Array, Float64Array]:
     scores_masked = mask_vec[None, :] * state.scores
     phi = scores_masked @ scores_masked.T + prior_prec
 
@@ -1595,7 +1626,7 @@ def _phi_for_row(
 def _loadings_update_fast_dense_no_sv(
     state: LoadingsUpdateState,
 ) -> tuple[
-    np.ndarray,
+    Float64Array,
     CovarianceStore,
 ]:
     """Fast path: fully observed dense data, no score covariances.
@@ -1632,10 +1663,10 @@ def _loadings_update_fast_dense_no_sv(
 
 def _loadings_update_fast_dense_ext(
     state: LoadingsUpdateState,
-    x_arr: np.ndarray,
-    prior_prec: np.ndarray,
+    x_arr: Float64Array,
+    prior_prec: Float64Array,
     n_features: int,
-) -> tuple[np.ndarray, CovarianceStore]:
+) -> tuple[Float64Array, CovarianceStore]:
     result = _loadings_update_dense_ext(
         x_data=np.asarray(x_arr, dtype=np.float64),
         scores=np.asarray(state.scores, dtype=np.float64),
@@ -1691,7 +1722,7 @@ def _loadings_update_fast_dense_ext(
 def _loadings_update_general(
     state: LoadingsUpdateState,
 ) -> tuple[
-    np.ndarray,
+    Float64Array,
     CovarianceStore,
 ]:
     """General loading update, including masks and score covariances.
@@ -1724,7 +1755,7 @@ def _loadings_update_general(
     loadings = np.empty((n_features, eye_components.shape[0]), dtype=float)
 
     # Cache factorizations for repeated mask patterns to avoid recomputing Phi.
-    cho_cache: dict[bytes, tuple[ChoFactor, np.ndarray, np.ndarray | None]] = {}
+    cho_cache: dict[bytes, tuple[ChoFactor, Float64Array, Float64Array | None]] = {}
 
     for i in range(n_features):
         mask_vec = mask_row(i)
@@ -1734,7 +1765,7 @@ def _loadings_update_general(
             phi, scores_masked = _phi_for_row(mask_vec, state, prior_prec)
             cho = _safe_cholesky(phi, eye_components)
 
-            cov_template: np.ndarray | None = None
+            cov_template: Float64Array | None = None
             if has_cov:
                 cov_template = state.noise_var * cho_solve(
                     cho,
@@ -1790,7 +1821,7 @@ def _loadings_update_general(
 def _loadings_update_sparse_no_patterns(
     state: LoadingsUpdateState,
 ) -> tuple[
-    np.ndarray,
+    Float64Array,
     CovarianceStore,
 ]:
     """Sparse-native loadings update for pattern-free branch.
@@ -1825,9 +1856,9 @@ def _score_update_sparse_ext_apply(state: ScoreState, x_csc: sp.csc_matrix) -> N
     return_score_covariances = _has_covariances(state.score_covariances)
     cov_mode = str(getattr(state, "cov_writeback_mode", "python"))
 
-    cov_cache: dict[str, np.ndarray] = {}
+    cov_cache: dict[str, Float64Array] = {}
 
-    av_arg: np.ndarray | None
+    av_arg: Float64Array | None
     if has_loading_covariances:
         av_arg = _covariances_stack_cached(state.loading_covariances, cov_cache, "av")
     else:
@@ -1868,9 +1899,9 @@ def _score_update_general_dense_ext(state: ScoreState) -> ScoreState:
     return_score_covariances = _has_covariances(state.score_covariances)
     cov_mode = str(getattr(state, "cov_writeback_mode", "python"))
 
-    cov_cache: dict[str, np.ndarray] = {}
+    cov_cache: dict[str, Float64Array] = {}
 
-    av_arg: np.ndarray | None
+    av_arg: Float64Array | None
     if has_loading_covariances:
         av_arg = _covariances_stack_cached(state.loading_covariances, cov_cache, "av")
     else:
@@ -1924,7 +1955,7 @@ def _score_update_general_dense_ext(state: ScoreState) -> ScoreState:
 
 def _loadings_update_general_dense_ext(
     state: LoadingsUpdateState,
-) -> tuple[np.ndarray, CovarianceStore]:
+) -> tuple[Float64Array, CovarianceStore]:
     x_arr = np.asarray(state.x_data, dtype=np.float64)
     mask_arr = np.asarray(state.mask, dtype=np.bool_)
     prior_prec = _prior_precision_matrix(state.va, state.noise_var)
@@ -1932,9 +1963,9 @@ def _loadings_update_general_dense_ext(
     return_loading_covariances = _has_covariances(state.loading_covariances)
     cov_mode = str(getattr(state, "cov_writeback_mode", "python"))
 
-    cov_cache: dict[str, np.ndarray] = {}
+    cov_cache: dict[str, Float64Array] = {}
 
-    sv_arg: np.ndarray | None
+    sv_arg: Float64Array | None
     if has_score_covariances:
         sv_arg = _covariances_stack_cached(state.score_covariances, cov_cache, "sv")
     else:
@@ -1990,14 +2021,14 @@ def _loadings_update_general_dense_ext(
 def _loadings_update_sparse_ext_apply(
     state: LoadingsUpdateState,
     x_csr: sp.csr_matrix,
-) -> np.ndarray:
+) -> Float64Array:
     has_score_covariances = _has_covariances(state.score_covariances)
     return_loading_covariances = _has_covariances(state.loading_covariances)
     cov_mode = str(getattr(state, "cov_writeback_mode", "python"))
 
-    cov_cache: dict[str, np.ndarray] = {}
+    cov_cache: dict[str, Float64Array] = {}
 
-    sv_arg: np.ndarray | None
+    sv_arg: Float64Array | None
     if has_score_covariances:
         sv_arg = _covariances_stack_cached(state.score_covariances, cov_cache, "sv")
     else:
@@ -2041,7 +2072,7 @@ def _loadings_update_sparse_ext_apply(
 def _update_loadings(
     state: LoadingsUpdateState,
 ) -> tuple[
-    np.ndarray,
+    Float64Array,
     CovarianceStore,
 ]:
     """Update loadings and loading covariances.
@@ -2063,7 +2094,7 @@ def _update_loadings(
             and _has_covariances(covariances)
             and not isinstance(covariances, np.ndarray)
         ):
-            cov_cache: dict[str, np.ndarray] = {}
+            cov_cache: dict[str, Float64Array] = {}
             covariances = _covariances_stack_cached(covariances, cov_cache, "av")
         return loadings, covariances
 
@@ -2120,7 +2151,7 @@ def _recompute_rms(ctx: RmsContext) -> tuple[float, float, Matrix, Matrix | None
         ctx.mask,
         cfg_data,
     )
-    err_mx = _coerce_residual_matrix(cast("Matrix", err_mx_raw))
+    err_mx = _coerce_residual_matrix(err_mx_raw)
 
     probe_err_mx: Matrix | None = None
     if ctx.n_probe > 0 and ctx.x_probe is not None and ctx.mask_probe is not None:
@@ -2132,7 +2163,7 @@ def _recompute_rms(ctx: RmsContext) -> tuple[float, float, Matrix, Matrix | None
             ctx.mask_probe,
             cfg_probe,
         )
-        probe_err_mx = _coerce_residual_matrix(cast("Matrix", probe_err_raw))
+        probe_err_mx = _coerce_residual_matrix(probe_err_raw)
     else:
         prms = float("nan")
 
@@ -2147,8 +2178,8 @@ def _recompute_rms(ctx: RmsContext) -> tuple[float, float, Matrix, Matrix | None
 def _update_noise_variance(
     noise_state: NoiseState,
     rms: float,
-    ix: np.ndarray,
-    jx: np.ndarray,
+    ix: IndexArray,
+    jx: IndexArray,
     hp_v: float = 0.001,
 ) -> tuple[NoiseState, float]:
     """Update noise variance using current posterior covariances.
@@ -2160,12 +2191,12 @@ def _update_noise_variance(
     scores = noise_state.scores
     loading_covariances = noise_state.loading_covariances
     score_covariances = noise_state.score_covariances
-    cov_cache: dict[str, np.ndarray] = {}
+    cov_cache: dict[str, Float64Array] = {}
 
     n_samples = int(scores.shape[1])
     fully_observed = int(ix.size) == (int(loadings.shape[0]) * n_samples)
 
-    av_stack: np.ndarray | None = None
+    av_stack: Float64Array | None = None
 
     if fully_observed and _has_covariances(score_covariances):
         sv_by_col = _score_covariances_by_column(
@@ -2227,9 +2258,9 @@ def _update_noise_variance(
 
 def _score_covariances_by_column(
     score_covariances: CovarianceStore,
-    pattern_index: np.ndarray | None,
+    pattern_index: IndexArray | None,
     n_samples: int,
-) -> list[np.ndarray]:
+) -> list[Float64Array]:
     if pattern_index is None:
         return _covariances_list(score_covariances)
     return [
@@ -2241,9 +2272,9 @@ def _score_covariances_by_column(
 def _fully_observed_s_xv(
     *,
     noise_state: NoiseState,
-    sv_by_col: list[np.ndarray],
+    sv_by_col: list[Float64Array],
     n_samples: int,
-    av_stack: np.ndarray | None = None,
+    av_stack: Float64Array | None = None,
 ) -> float:
     loadings = noise_state.loadings
     scores = noise_state.scores
@@ -2305,11 +2336,11 @@ def _finalize_noise_state(
 def _final_rotation(
     ctx: RotationContext,
 ) -> tuple[
-    np.ndarray,
-    list[np.ndarray],
-    np.ndarray,
-    list[np.ndarray],
-    np.ndarray,
+    Float64Array,
+    list[Float64Array],
+    Float64Array,
+    list[Float64Array],
+    Float64Array,
 ]:
     """Final PCA rotation if no iterative rotation was applied.
 
@@ -2338,7 +2369,7 @@ def _final_rotation(
     )
 
     # Ensure we always return a list for av, even if rotation used None.
-    av_out: list[np.ndarray] = av_rot if av_rot is not None else []
+    av_out: list[Float64Array] = av_rot if av_rot is not None else []
 
     mu_out = ctx.mu
     if ctx.bias_enabled:

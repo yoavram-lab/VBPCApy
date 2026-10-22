@@ -15,6 +15,8 @@ import scipy.sparse as sp
 
 from vbpca_py.errpca_pt import errpca_pt as _errpca_pt_ext
 
+from ._types import Float64Array  # noqa: TC001 - runtime annotation resolution
+
 
 def _resolve_num_cpu(num_cpu: int) -> int:
     """Resolve worker count for sparse kernels.
@@ -44,8 +46,8 @@ def _resolve_num_cpu(num_cpu: int) -> int:
 
 def sparse_reconstruction_error(
     x_csr: sp.csr_matrix,
-    loadings: np.ndarray,
-    scores: np.ndarray,
+    loadings: Float64Array,
+    scores: Float64Array,
     num_cpu: int = 1,
 ) -> sp.csr_matrix:
     """Compute sparse reconstruction error matrix (X - A @ S) on stored entries of X.

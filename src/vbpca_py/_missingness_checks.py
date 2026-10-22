@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import numpy as np
 from scipy import stats
 
 from ._encoding_checks import _is_indicator
+from ._types import BoolArray, Float64Array, IndexArray  # noqa: TC001 - runtime annotation resolution
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -23,8 +24,8 @@ def _name(names: Sequence[str] | None, j: int) -> str:
 
 
 def missingness_summary(
-    observed: np.ndarray, row_threshold: float
-) -> tuple[dict[str, Any], list[str]]:
+    observed: BoolArray, row_threshold: float
+) -> tuple[dict[str, object], list[str]]:
     """Summarize where values are missing.
 
     Returns:
@@ -36,7 +37,7 @@ def missingness_summary(
     row_missing = 1.0 - observed.mean(axis=1) if n_features else np.zeros(n_samples)
     above = int(np.sum(row_missing > row_threshold))
     patterns = np.unique(observed, axis=0).shape[0] if n_samples else 0
-    summary: dict[str, Any] = {
+    summary: dict[str, object] = {
         "fraction_missing": float(1.0 - observed.mean()) if observed.size else 0.0,
         "complete_rows": int(np.sum(observed.all(axis=1))),
         "n_patterns": int(patterns),
@@ -54,7 +55,7 @@ def missingness_summary(
 
 
 def _continuous_columns(
-    x: np.ndarray, observed: np.ndarray, groups: np.ndarray
+    x: Float64Array, observed: BoolArray, groups: IndexArray
 ) -> list[int]:
     """Return columns that are not indicators and not part of a one-hot block."""
     sizes = np.bincount(groups)
@@ -68,9 +69,9 @@ def _continuous_columns(
 
 
 def scale_warnings(
-    x: np.ndarray,
-    observed: np.ndarray,
-    groups: np.ndarray,
+    x: Float64Array,
+    observed: BoolArray,
+    groups: IndexArray,
     names: Sequence[str] | None,
 ) -> list[str]:
     """Flag continuous columns on very different or far-from-unit scales.
@@ -109,13 +110,13 @@ def scale_warnings(
 
 
 def mcar_screen(
-    x: np.ndarray,
-    observed: np.ndarray,
-    groups: np.ndarray,
+    x: Float64Array,
+    observed: BoolArray,
+    groups: IndexArray,
     names: Sequence[str] | None,
     *,
     alpha: float = 0.05,
-) -> tuple[dict[str, Any], list[str]]:
+) -> tuple[dict[str, object], list[str]]:
     """Screen for missingness that depends on observed values.
 
     For every column with between 5% and 95% missing, compare each other
@@ -150,7 +151,10 @@ def mcar_screen(
                 results.append((p_value, j, k))
     tested = len(results)
     flagged = [r for r in results if r[0] < alpha / max(tested, 1)]
-    summary = {"mcar_pairs_tested": tested, "mcar_pairs_flagged": len(flagged)}
+    summary: dict[str, object] = {
+        "mcar_pairs_tested": tested,
+        "mcar_pairs_flagged": len(flagged),
+    }
     messages = []
     if flagged:
         p_value, j, k = min(flagged)

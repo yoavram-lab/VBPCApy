@@ -12,6 +12,8 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from ._types import BoolArray, Float64Array, IndexArray  # noqa: TC001 - runtime annotation resolution
+
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
@@ -21,11 +23,11 @@ MAX_ORDINAL_LEVELS = 10
 _TOLERANCE = 1e-9
 
 
-def _is_indicator(values: np.ndarray) -> bool:
+def _is_indicator(values: Float64Array) -> bool:
     return values.size > 0 and bool(np.all(np.isin(values, (0.0, 1.0))))
 
 
-def detect_one_hot_blocks(x: np.ndarray, observed: np.ndarray) -> np.ndarray:
+def detect_one_hot_blocks(x: Float64Array, observed: BoolArray) -> IndexArray:
     """Group contiguous indicator columns that form one-hot blocks.
 
     A block is a run of two or more 0/1 columns with identical missingness
@@ -51,7 +53,7 @@ def detect_one_hot_blocks(x: np.ndarray, observed: np.ndarray) -> np.ndarray:
     return groups
 
 
-def _block_end(x: np.ndarray, observed: np.ndarray, start: int) -> int:
+def _block_end(x: Float64Array, observed: BoolArray, start: int) -> int:
     """Return one past the last column of the block starting at ``start``."""
     rows = observed[:, start]
     if not _is_indicator(x[rows, start]):
@@ -69,9 +71,9 @@ def _block_end(x: np.ndarray, observed: np.ndarray, start: int) -> int:
 
 
 def encoding_warnings(
-    x: np.ndarray,
-    observed: np.ndarray,
-    groups: np.ndarray,
+    x: Float64Array,
+    observed: BoolArray,
+    groups: IndexArray,
     column_names: Sequence[str] | None = None,
 ) -> list[str]:
     """Describe the categorical encodings found in ``x``.
@@ -119,7 +121,7 @@ def encoding_warnings(
     return messages
 
 
-def _looks_ordinal(values: np.ndarray) -> bool:
+def _looks_ordinal(values: Float64Array) -> bool:
     if values.size == 0 or not np.all(values == np.round(values)):
         return False
     levels = np.unique(values)

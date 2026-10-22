@@ -23,11 +23,20 @@ from typing import TYPE_CHECKING, SupportsFloat, SupportsIndex, SupportsInt, cas
 import numpy as np
 import scipy.sparse as sp
 
+from ._types import (
+    CountArray,
+    Float64Array,
+    IndexArray,
+    InputMask,
+    InputMatrix,
+    MaskMatrix,
+)
+
 if TYPE_CHECKING:
     from collections.abc import MutableMapping
     from pathlib import Path
 
-    from .results import LearningCurve, NumericTraceKey, PhaseTimingKey
+    from .results import NumericTraceKey, PhaseTimingKey
 
 from ._converge import (
     _VALID_CRITERION_NAMES,
@@ -116,11 +125,11 @@ from .options import (
     StatisticsMode,
     VarianceUpdateOrder,
 )
-from .results import PCAResult  # noqa: TC001  # Public runtime type-hint resolution.
+from .results import LearningCurve, PCAResult  # noqa: TC001 - runtime annotation resolution
 
 logger = logging.getLogger(__name__)
 
-Array = np.ndarray
+Array = Float64Array
 Sparse = sp.csr_matrix
 Matrix = Array | Sparse
 _ALLOWED_COMPAT_MODES = {mode.value for mode in CompatMode}
@@ -179,10 +188,10 @@ def _float_opt(val: object, default: float = 0.0) -> float:
 
 
 def pca_full(
-    x: Matrix,
+    x: InputMatrix,
     n_components: int,
     *,
-    mask: Matrix | None = None,
+    mask: InputMask | None = None,
     options: PCAOptions | None = None,
     **kwargs: object,
 ) -> PCAResult:
@@ -313,7 +322,7 @@ def pca_full(
 # ---------------------------------------------------------------------------
 
 
-@dataclass
+@dataclass(slots=True)
 class PreparedProblem:
     """Prepared data and masks for a PCA_FULL run.
 
@@ -324,48 +333,48 @@ class PreparedProblem:
 
     x_data: Matrix
     x_probe: Matrix | None
-    mask: Matrix
-    mask_probe: Matrix | None
-    n_obs_row: np.ndarray
+    mask: MaskMatrix
+    mask_probe: MaskMatrix | None
+    n_obs_row: CountArray
     n_data: float
     n_probe: int
-    ix_obs: np.ndarray
-    jx_obs: np.ndarray
+    ix_obs: IndexArray
+    jx_obs: IndexArray
     n_features: int
     n_samples: int
     n1x: int
     n2x: int
-    row_idx: np.ndarray | None
-    col_idx: np.ndarray | None
+    row_idx: IndexArray | None
+    col_idx: IndexArray | None
     n_patterns: int
     obs_patterns: list[list[int]]
-    pattern_index: np.ndarray | None
+    pattern_index: IndexArray | None
 
 
-@dataclass
+@dataclass(slots=True)
 class ModelState:
-    """Current model parameters during training."""
+    """Mutable float64 parameters; the fit owns these working arrays."""
 
-    a: np.ndarray
-    s: np.ndarray
-    mu: np.ndarray
+    a: Float64Array
+    s: Float64Array
+    mu: Float64Array
     noise_var: float
     av: CovarianceStore
     sv: CovarianceStore
-    muv: np.ndarray
-    va: np.ndarray
+    muv: Float64Array
+    va: Float64Array
     vmu: float
 
 
-@dataclass
+@dataclass(slots=True)
 class TrainingState:
     """Mutable training state that evolves over iterations."""
 
     model: ModelState
     lc: LearningCurve
     dsph: dict[str, object]
-    err_mx: np.ndarray | sp.spmatrix | None
-    a_old: np.ndarray
+    err_mx: Float64Array | sp.spmatrix | None
+    a_old: Float64Array
     time_start: float
     runtime_report: dict[str, object] | None
     sparse_view_source: Matrix | None = None
@@ -373,7 +382,7 @@ class TrainingState:
     endpoint_s_xv: float | None = None
 
 
-@dataclass
+@dataclass(slots=True)
 class _ProbeBestState:
     """Best validation state observed during a probe-monitored fit."""
 
@@ -384,32 +393,36 @@ class _ProbeBestState:
     s_xv: float | None = None
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class FinalState:
-    """Final objects after shape restoration, ready for packing."""
+    """Shallow immutable packaging of the final working parameters.
 
-    a: np.ndarray
-    s: np.ndarray
-    mu: np.ndarray
+    Array payloads are borrowed from the completed training state. Their
+    mutability is unchanged; slots/frozen fields do not imply read-only arrays.
+    """
+
+    a: Float64Array
+    s: Float64Array
+    mu: Float64Array
     noise_var: float
     av: CovarianceStore
     sv: CovarianceStore
-    pattern_index: np.ndarray | None
-    muv: np.ndarray
-    va: np.ndarray
+    pattern_index: IndexArray | None
+    muv: Float64Array
+    va: Float64Array
     vmu: float
     lc: LearningCurve
     runtime_report: dict[str, object] | None
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class IterationConfig:
     """Constant configuration used within the training loop."""
 
     hp_va: float
     hp_vb: float
     hp_v: float
-    eye_components: np.ndarray
+    eye_components: Float64Array
     use_prior: bool
     rotate_each_iter: bool
     verbose: int
@@ -422,7 +435,7 @@ class IterationConfig:
             object.__setattr__(self, "opts", _solver_options_from_raw(self.opts))
 
 
-@dataclass
+@dataclass(slots=True)
 class IterationContext:
     """Inputs for a single training iteration."""
 
@@ -434,7 +447,7 @@ class IterationContext:
     cfg: IterationConfig
 
 
-@dataclass
+@dataclass(slots=True)
 class _AutotuneContext:
     prepared: PreparedProblem
     training: TrainingState
@@ -451,13 +464,13 @@ class _AutotuneContext:
             self.opts = _solver_options_from_raw(self.opts)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class _PatternAutotuneSubset:
     x_data: Matrix
-    mask: Matrix
+    mask: MaskMatrix
     obs_patterns: list[list[int]]
-    pattern_index: np.ndarray
-    columns: np.ndarray
+    pattern_index: IndexArray
+    columns: IndexArray
 
 
 # ---------------------------------------------------------------------------
@@ -466,7 +479,7 @@ class _PatternAutotuneSubset:
 
 
 def _validate_dense_mask_budget(
-    x: Matrix, mask_override: Matrix | None, opts: MutableMapping[str, object]
+    x: InputMatrix, mask_override: InputMask | None, opts: MutableMapping[str, object]
 ) -> None:
     """Guard against densifying masks beyond the configured budget.
 
@@ -500,10 +513,10 @@ def _validate_dense_mask_budget(
 
 
 def _prepare_problem(
-    x: Matrix,
+    x: InputMatrix,
     opts: MutableMapping[str, object],
     *,
-    mask_override: Matrix | None = None,
+    mask_override: InputMask | None = None,
 ) -> PreparedProblem:
     _validate_dense_mask_budget(x, mask_override, opts)
     x_data, x_probe, mask_prepared, n1x, n2x, row_idx, col_idx = _prepare_data(
@@ -783,7 +796,7 @@ def _resolve_noise_sufficient_statistics(
     }
 
 
-def _probe_covariances(store: CovarianceStore) -> np.ndarray | None:
+def _probe_covariances(store: CovarianceStore) -> Float64Array | None:
     return _covariances_stack(store) if len(store) else None
 
 
@@ -2245,7 +2258,7 @@ def _restore_original_shape(
         m.mu,
         m.muv,
     )
-    pattern_index: np.ndarray | list[int] | None = prepared.pattern_index
+    pattern_index: IndexArray | list[int] | None = prepared.pattern_index
 
     row_idx = (
         prepared.row_idx
@@ -2260,17 +2273,17 @@ def _restore_original_shape(
 
     if prepared.n_features < prepared.n1x:
         a, av_out = _add_m_rows(a, av, row_idx, prepared.n1x, m.va)
-        av = cast("list[np.ndarray]", av_out)
+        av = cast("list[Float64Array]", av_out)
         mu, muv_out = _add_m_rows(mu, muv, row_idx, prepared.n1x, float(m.vmu))
-        muv = cast("np.ndarray", muv_out)
+        muv = cast("Float64Array", muv_out)
 
     if prepared.n_samples < prepared.n2x:
         s, sv_out, pattern_index = _add_m_cols(
             s, sv, col_idx, prepared.n2x, pattern_index
         )
-        sv = cast("list[np.ndarray]", sv_out)
+        sv = cast("list[Float64Array]", sv_out)
         if isinstance(pattern_index, list):
-            pattern_index_out: np.ndarray | None = np.asarray(pattern_index, dtype=int)
+            pattern_index_out: IndexArray | None = np.asarray(pattern_index, dtype=int)
         elif pattern_index is None:
             pattern_index_out = None
         else:
@@ -2279,7 +2292,7 @@ def _restore_original_shape(
 
     # Ensure FinalState receives ndarray or None.
     if isinstance(pattern_index, list):
-        pattern_index_final: np.ndarray | None = np.asarray(pattern_index, dtype=int)
+        pattern_index_final: IndexArray | None = np.asarray(pattern_index, dtype=int)
     elif pattern_index is None:
         pattern_index_final = None
     else:
@@ -2302,7 +2315,9 @@ def _restore_original_shape(
     )
 
 
-def _reconstruct_data(a: np.ndarray, s: np.ndarray, mu: np.ndarray) -> np.ndarray:
+def _reconstruct_data(
+    a: Float64Array, s: Float64Array, mu: Float64Array
+) -> Float64Array:
     """
     Reconstruct data matrix using loadings, scores, and bias.
 
@@ -2324,7 +2339,7 @@ def _reconstruct_data(a: np.ndarray, s: np.ndarray, mu: np.ndarray) -> np.ndarra
     return recon  # type: ignore[no-any-return]
 
 
-def _marginal_variance(final: FinalState) -> np.ndarray:
+def _marginal_variance(final: FinalState) -> Float64Array:
     """
     Compute marginal variance for each observed entry.
 
@@ -2341,12 +2356,12 @@ def _marginal_variance(final: FinalState) -> np.ndarray:
 
 
 def _explained_variance(
-    xrec: np.ndarray,
+    xrec: Float64Array,
     n_components: int,
     *,
     solver: str = "auto",
     gram_ratio: float = 4.0,
-) -> tuple[np.ndarray, np.ndarray]:
+) -> tuple[Float64Array, Float64Array]:
     """Compute per-component explained variance from the reconstruction.
 
     Mirrors the legacy MATLAB workflow (eigenvalues of cov(Xrec')).
@@ -2390,10 +2405,10 @@ def _explained_variance(
 
 
 def _explained_variance_from_factors(  # noqa: PLR0914
-    loadings: np.ndarray,
-    scores: np.ndarray,
+    loadings: Float64Array,
+    scores: Float64Array,
     n_components: int,
-) -> tuple[np.ndarray, np.ndarray]:
+) -> tuple[Float64Array, Float64Array]:
     """Compute reconstruction variance from a small exact factorization.
 
     Centering ``loadings @ scores + mean`` across samples removes the mean
@@ -2435,10 +2450,10 @@ def _explained_variance_from_factors(  # noqa: PLR0914
 
 def _explained_variance_tall(
     *,
-    x_centered: np.ndarray,
+    x_centered: Float64Array,
     solver: str,
     gram_ratio: float,
-) -> np.ndarray:
+) -> Float64Array:
     n_features, n_samples = x_centered.shape
     safe_ratio = gram_ratio if gram_ratio > 0.0 else 3.0
     feature_sample_ratio = n_features / float(max(n_samples, 1))
@@ -2452,7 +2467,7 @@ def _explained_variance_tall(
         return np.flip(np.sort(np.real(eigvals)))
 
     singular_values = np.linalg.svd(x_centered, compute_uv=False)
-    return (singular_values**2) / float(n_samples - 1)
+    return np.asarray((singular_values**2) / float(n_samples - 1), dtype=np.float64)
 
 
 def _last_metric(lc: LearningCurve, key: NumericTraceKey) -> float:
