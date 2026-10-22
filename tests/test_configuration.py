@@ -354,3 +354,15 @@ def test_case_normalized_thread_request_uses_last_value(values, explicit, reques
     assert state.num_cpu_user_set is explicit
     if explicit:
         assert state.config.num_cpu == requested
+
+
+def test_public_configuration_hints_resolve_at_runtime():
+    from typing import get_type_hints
+
+    for target in (PCAOptions, PCAOptions.__init__, VBPCA.__init__):
+        hints = get_type_hints(target)
+        assert hints["num_cpu"] == int | None
+        if target is VBPCA.__init__:
+            assert "xprobe" not in hints
+        else:
+            assert "xprobe" in hints

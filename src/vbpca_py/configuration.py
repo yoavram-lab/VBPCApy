@@ -13,10 +13,12 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, fields
-from typing import TYPE_CHECKING, Generic, SupportsFloat, SupportsIndex, TypeVar, cast
+from pathlib import Path  # noqa: TC003 - public runtime type-hint resolution
+from typing import Generic, SupportsFloat, SupportsIndex, TypeVar, cast
 
 import numpy as np
 import numpy.typing as npt
+import scipy.sparse as sp  # noqa: TC002 - public runtime type-hint resolution
 
 from ._memory import resolve_max_dense_bytes
 from .options import (
@@ -31,12 +33,6 @@ from .options import (
     StatisticsMode,
     VarianceUpdateOrder,
 )
-
-if TYPE_CHECKING:
-    from pathlib import Path
-
-    import scipy.sparse as sp
-
 
 _Value = TypeVar("_Value")
 

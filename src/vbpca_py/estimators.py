@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import warnings
+from collections.abc import Mapping  # noqa: TC003 - public runtime type-hint resolution
 from dataclasses import replace
+from pathlib import Path  # noqa: TC003 - public runtime type-hint resolution
 from typing import TYPE_CHECKING, cast
 
 import numpy as np
+import numpy.typing as npt
 import scipy.sparse as sp
 
 from vbpca_py._memory import (
@@ -20,25 +23,20 @@ from vbpca_py._pca_full import Matrix, pca_full
 from vbpca_py._sklearn_compat import BaseEstimator
 from vbpca_py.configuration import PCAOptions
 from vbpca_py.model_selection import SelectionConfig, select_n_components
+from vbpca_py.options import (  # noqa: TC001 - public runtime type-hint resolution
+    AccessorMode,
+    Algorithm,
+    BiasUpdateOrder,
+    CompatMode,
+    CostDiagnostics,
+    CovarianceWriteback,
+    ExplainedVarianceSolver,
+    RuntimeTuning,
+    StatisticsMode,
+    VarianceUpdateOrder,
+)
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
-    from pathlib import Path
-
-    import numpy.typing as npt
-
-    from vbpca_py.options import (
-        AccessorMode,
-        Algorithm,
-        BiasUpdateOrder,
-        CompatMode,
-        CostDiagnostics,
-        CovarianceWriteback,
-        ExplainedVarianceSolver,
-        RuntimeTuning,
-        StatisticsMode,
-        VarianceUpdateOrder,
-    )
     from vbpca_py.results import LearningCurve
 
 __all__ = ["VBPCA"]
