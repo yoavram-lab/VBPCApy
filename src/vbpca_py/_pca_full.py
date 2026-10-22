@@ -72,7 +72,12 @@ from ._memory import (
     format_bytes,
     resolve_max_dense_bytes,
 )
-from ._monitoring import InitialMonitoringInputs, InitShapes, _initial_monitoring
+from ._monitoring import (
+    InitialMonitoringInputs,
+    InitShapes,
+    _initial_monitoring,
+    _normalize_init,
+)
 from ._noise_statistics import (
     NoiseComplement,
     normalize_noise_statistics,
@@ -242,9 +247,17 @@ def pca_full(
     use_prior, use_postvar = _select_algorithm(opts)
     _warn_if_no_post_warmup_window(opts, use_prior=use_prior)
 
+    # Retain the existing struct learning-curve policy before normalizing fields.
+    _adjust_opts_for_explicit_init(opts)
     initialization = opts["init"]
+    if initialization is not None and not (
+        isinstance(initialization, str) and initialization.lower() == "random"
+    ):
+        # Resolve MAT files and supported structs before retained axes are known.
+        initialization = _normalize_init(
+            cast("str | Mapping[str, object]", initialization)
+        )
     # Convert generic mappings before deepcopy (mappingproxy is not picklable).
-    # Keep MAT filenames and supported struct objects on their existing path.
     opts["init"] = deepcopy(
         dict(initialization) if isinstance(initialization, Mapping) else initialization
     )
@@ -574,8 +587,6 @@ def _initialize_model(
     use_postvar: bool,
     opts: MutableMapping[str, object],
 ) -> TrainingState:
-    _adjust_opts_for_explicit_init(opts)
-
     shapes = InitShapes(
         n_features=prepared.n_features,
         n_samples=prepared.n_samples,

@@ -111,8 +111,8 @@ def test_sv_invalid_array_shape_raises() -> None:
         init_params(init_dict, shapes, score_pattern_index=None, rng=_rng())
 
 
-def test_init_sv_list_paths_and_fallback_empty() -> None:
-    """Cover list-based Sv paths: Isv-indexing, direct-per-sample, and fallback."""
+def test_init_sv_list_paths_and_reject_invalid_length() -> None:
+    """Cover source-bank indexing, per-sample lists and invalid block counts."""
     shapes = InitShapes(n_features=3, n_samples=4, n_components=2, n_obs_patterns=4)
     rng = _rng()
     s = rng.standard_normal((2, 4))
@@ -137,13 +137,13 @@ def test_init_sv_list_paths_and_fallback_empty() -> None:
     assert len(out_full.sv) == 4
     assert np.allclose(out_full.sv[3], sv_list[3])
 
-    out_empty = init_params(
-        {"S": s, "Sv": [np.eye(2)]},
-        shapes,
-        score_pattern_index=None,
-        rng=rng,
-    )
-    assert out_empty.sv == []
+    with pytest.raises(ValueError, match=re.escape(ERR_SV_SHAPE)):
+        init_params(
+            {"S": s, "Sv": [np.eye(2)]},
+            shapes,
+            score_pattern_index=None,
+            rng=rng,
+        )
 
 
 def test_init_mu_muv_v_shape_and_empty_branches() -> None:
@@ -219,7 +219,8 @@ def test_coerce_int_and_resolve_score_pattern_index_branches() -> None:
     assert mon._coerce_int("bad", default=9) == 9
 
     isv_bad = np.array([0, 1, 0], dtype=int)
-    assert mon._resolve_score_pattern_index(None, isv_bad, n_samples=4) is None
+    with pytest.raises(ValueError, match="length n_samples"):
+        mon._resolve_score_pattern_index(None, isv_bad, n_samples=4)
 
 
 def test_log_helpers_non_verbose_and_empty_lc_noop(
