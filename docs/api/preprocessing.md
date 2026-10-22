@@ -7,8 +7,8 @@ Exactly constant observed columns use a unit denominator; wholly missing
 columns retain NaN mean/variance or extrema and also use a unit denominator.
 Zero or nonfinite computed scales use the same fallback. These rules apply to
 dense observed entries and stored sparse observations, including stored zeros.
-Sparse standardization computes centered column moments without making a dense
-copy of the data.
+Sparse standardization computes centered moments in bounded chunks of stored
+entries without making a dense copy of the data.
 
 ::: vbpca_py.AutoEncoder
 

@@ -36,6 +36,8 @@ __all__ = [
 Mask = np.ndarray
 ArrayLike = np.ndarray | sp.spmatrix
 
+_SCALER_MOMENT_CHUNK_ENTRIES = 65_536
+
 
 def _to_csr(x: ArrayLike, *, copy: bool = False) -> sp.csr_matrix:
     return sp.csr_matrix(cast("Any", x), copy=copy)
@@ -123,23 +125,47 @@ def _observed_mean_var(values: npt.NDArray[np.float64]) -> tuple[float, float]:
     return float(np.mean(values)), float(np.var(values))
 
 
-def _sparse_mean_var(mat: sp.csc_matrix) -> tuple[np.ndarray, np.ndarray]:
-    """Compute centered moments of stored observations column by column.
+def _sparse_mean_var(mat: sp.csc_matrix) -> tuple[np.ndarray, np.ndarray]:  # noqa: PLR0914
+    """Compute centered moments of stored observations in bounded chunks.
 
-    Unstored entries are missing; stored numeric zeros remain observed. Avoid
-    subtracting raw second moments, which can erase variation around an offset.
-    Temporary storage is bounded by one observed column rather than the dense
-    matrix or a second sparse matrix.
+    Unstored entries are missing; stored numeric zeros remain observed. Shift
+    each column by its first value before computing centered moments, avoiding
+    raw-moment cancellation and roundoff variance for exactly constant columns.
+    Temporary entry arrays are bounded by the chunk target or one oversized
+    observed column; indexing metadata and outputs scale with feature count.
 
     Returns:
         Tuple of ``(means, variances)`` per column.
     """
-    means = np.empty(mat.shape[1], dtype=float)
-    vars_ = np.empty(mat.shape[1], dtype=float)
-    for j in range(mat.shape[1]):
-        start, end = mat.indptr[j : j + 2]
-        values = np.asarray(mat.data[start:end], dtype=np.float64)
-        means[j], vars_[j] = _observed_mean_var(values)
+    means = np.full(mat.shape[1], np.nan, dtype=float)
+    vars_ = np.full(mat.shape[1], np.nan, dtype=float)
+    counts = np.diff(mat.indptr)
+    columns = np.flatnonzero(counts)
+    starts = mat.indptr[columns]
+    ends = mat.indptr[columns + 1]
+    first = 0
+    while first < columns.size:
+        start = int(starts[first])
+        last = max(
+            first + 1,
+            int(
+                np.searchsorted(
+                    ends, start + _SCALER_MOMENT_CHUNK_ENTRIES, side="right"
+                )
+            ),
+        )
+        selected = columns[first:last]
+        local_counts = counts[selected]
+        offsets = starts[first:last] - start
+        values = np.asarray(mat.data[start : int(ends[last - 1])], dtype=np.float64)
+        anchors = values[offsets]
+        centered = values - np.repeat(anchors, local_counts)
+        mean_offsets = np.add.reduceat(centered, offsets) / local_counts
+        means[selected] = anchors + mean_offsets
+        centered -= np.repeat(mean_offsets, local_counts)
+        np.square(centered, out=centered)
+        vars_[selected] = np.add.reduceat(centered, offsets) / local_counts
+        first = last
     return means, vars_
 
 

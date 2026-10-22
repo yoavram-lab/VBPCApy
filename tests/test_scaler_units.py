@@ -100,3 +100,27 @@ def test_standard_scaler_retains_variation_around_a_large_offset(storage):
     np.testing.assert_allclose(
         actual[:, 0], [-np.sqrt(1.5), 0.0, np.sqrt(1.5)], rtol=1e-14, atol=0.0
     )
+
+
+def test_sparse_centered_moments_bound_entry_chunks_without_densifying(monkeypatch):
+    # One column exceeds the chunk target; an empty column separates later data.
+    long_count = 70_000
+    data = np.concatenate((
+        [-1.0, 0.0, 1.0],
+        np.tile([-2.0, 2.0], long_count // 2),
+        np.tile([0.0, 2.0], 3),
+    ))
+    indices = np.concatenate((np.arange(3), np.arange(long_count), np.arange(6)))
+    indptr = np.array([0, 3, 3 + long_count, 3 + long_count, len(data)])
+    x = sp.csc_matrix((data, indices, indptr), shape=(100_000_000, 4))
+
+    def forbid_dense(*_args, **_kwargs):
+        pytest.fail("Sparse scaler fit densified the logical matrix")
+
+    monkeypatch.setattr(sp.csc_matrix, "toarray", forbid_dense)
+    monkeypatch.setattr(sp.csc_matrix, "todense", forbid_dense)
+    scaler = MissingAwareStandardScaler().fit(x)
+    np.testing.assert_allclose(
+        scaler.mean_, [0.0, 0.0, np.nan, 1.0], rtol=0.0, atol=0.0
+    )
+    np.testing.assert_allclose(scaler.var_, [2 / 3, 4.0, np.nan, 1.0], rtol=1e-14)
