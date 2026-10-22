@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from ._types import Float64Array, InputArray  # noqa: TC001 - runtime annotation resolution
+from ._types import BoolArray, Float64Array, InputArray  # noqa: TC001 - runtime annotation resolution
 from .encoding import EncodedVariable, EncodingSchema
 
 if TYPE_CHECKING:
@@ -66,7 +66,7 @@ def categorical_scores(
         raise ValueError(msg)
     brier: list[Float64Array] = []
     log_score: list[Float64Array] = []
-    correct: list[Float64Array] = []
+    correct: list[BoolArray] = []
     for variable in _categorical_variables(labels, pred.shape[0], schema):
         scores = _cell_scores(pred, held, variable, validate=schema is not None)
         if scores is not None:
@@ -139,7 +139,7 @@ def _cell_scores(
     variable: EncodedVariable,
     *,
     validate: bool,
-) -> tuple[Float64Array, Float64Array, Float64Array] | None:
+) -> tuple[Float64Array, Float64Array, BoolArray] | None:
     rows = np.asarray(variable.columns, dtype=int)
     if rows.size == 0:
         return None

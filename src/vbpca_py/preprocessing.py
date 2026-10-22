@@ -1766,7 +1766,7 @@ def _emit(report: DataReport, msg: str, *, emit: bool) -> None:
 
 
 def _check_missing(
-    obs: BoolArray,
+    obs: Float64Array,
     name: str,
     col_summary: dict[str, float],
     cfg: _CheckDataConfig,
@@ -1784,7 +1784,7 @@ def _check_missing(
 
 
 def _check_variance(
-    obs: BoolArray,
+    obs: Float64Array,
     name: str,
     col_summary: dict[str, float],
     cfg: _CheckDataConfig,
@@ -1805,7 +1805,7 @@ def _check_variance(
 
 
 def _check_skewness(
-    obs: BoolArray,
+    obs: Float64Array,
     name: str,
     col_summary: dict[str, float],
     cfg: _CheckDataConfig,
@@ -1828,7 +1828,7 @@ def _check_skewness(
 
 
 def _check_outliers(
-    obs: BoolArray,
+    obs: Float64Array,
     name: str,
     col_summary: dict[str, float],
     cfg: _CheckDataConfig,
@@ -1900,7 +1900,7 @@ def check_data(  # noqa: PLR0913
         A :class:`DataReport` with warnings, per-feature summary, and
         suggested pre-transforms.
     """
-    x_arr = np.asarray(x, dtype=float)
+    x_arr: Float64Array = np.asarray(x, dtype=float)
     n_samples, n_features = x_arr.shape
     observed = _ensure_mask(x_arr, mask)
     report = DataReport()

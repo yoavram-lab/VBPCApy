@@ -11,16 +11,16 @@ import numpy as np
 import pytest
 import scipy.sparse as sp
 
-from vbpca_py import VBPCA
+from vbpca_py import VBPCA, preprocessing
 from vbpca_py import _full_update as updates
 from vbpca_py import _pca_full as solver
-from vbpca_py._categorical_scores import categorical_scores
+from vbpca_py._categorical_scores import _cell_scores, categorical_scores
 from vbpca_py._cost import CostParams, CovarianceInfo, ObservationInfo
 from vbpca_py._monitoring import InitResult, InitShapes
 from vbpca_py._noise_statistics import NoiseComplement, prepare_noise_complement
 from vbpca_py._rms import RmsConfig
 from vbpca_py._runtime_policy import RuntimePolicyConfig, RuntimeThreadConfig
-from vbpca_py._types import Float64Array, IndexArray
+from vbpca_py._types import BoolArray, Float64Array, IndexArray
 from vbpca_py.encoding import EncodedVariable, EncodingSchema
 from vbpca_py.errpca_pt import errpca_pt
 from vbpca_py.preprocessing import MissingAwareOneHotEncoder, _sparse_col_counts
@@ -139,6 +139,43 @@ def test_categorical_labels_can_be_strings():
     truth = np.eye(2)
     expected = categorical_scores(prediction, truth, [0, 0])
     assert categorical_scores(prediction, truth, ["variable", "variable"]) == expected
+
+
+def test_categorical_cell_accuracy_is_boolean_while_losses_are_float64():
+    variable = EncodedVariable("categorical", (0, 1), ("a", "b"), offset=(0.0, 0.0))
+    result = _cell_scores(
+        np.array([[0.8, 0.8], [0.2, 0.2]]), np.eye(2), variable, validate=True
+    )
+    assert result is not None
+    brier, log_score, correct = result
+    assert brier.dtype == log_score.dtype == np.float64
+    assert correct.dtype == np.bool_
+    np.testing.assert_allclose(brier, [0.08, 1.28])
+    np.testing.assert_allclose(log_score, -np.log([0.8, 0.2]))
+    np.testing.assert_array_equal(correct, [True, False])
+    assert (
+        get_type_hints(_cell_scores)["return"]
+        == tuple[Float64Array, Float64Array, BoolArray] | None
+    )
+
+
+def test_data_diagnostics_dispatch_observed_values_separately_from_masks():
+    x = np.array([[0.0], [2.0], [4.0], [1000.0], [np.nan]], dtype=np.float32)
+    mask = np.array([[True], [True], [True], [False], [True]])
+    report = preprocessing.check_data(x, mask=mask)
+    summary = report.summary["0"]
+    assert summary["n_obs"] == 3
+    assert summary["missing_fraction"] == pytest.approx(0.4)
+    assert summary["variance"] == pytest.approx(8.0 / 3.0)
+    assert summary["skewness"] == pytest.approx(0.0)
+    assert summary["outlier_fraction"] == 0
+    for helper in (
+        preprocessing._check_missing,
+        preprocessing._check_variance,
+        preprocessing._check_skewness,
+        preprocessing._check_outliers,
+    ):
+        assert get_type_hints(helper)["obs"] == Float64Array
 
 
 def test_plan_owns_coordinates_and_preserves_readonly_flags_on_roundtrip():

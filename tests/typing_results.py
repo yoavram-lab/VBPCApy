@@ -59,6 +59,7 @@ def check_numerical_helper_contracts() -> None:
     import numpy.typing as npt
     import scipy.sparse as sp
 
+    from vbpca_py._categorical_scores import _cell_scores
     from vbpca_py._full_update import CovarianceStore, ScoreState
     from vbpca_py._monitoring import InitResult
     from vbpca_py._noise_statistics import NoiseComplement
@@ -70,8 +71,35 @@ def check_numerical_helper_contracts() -> None:
         InputArray,
         SparseIndexArray,
     )
+    from vbpca_py.encoding import EncodedVariable
     from vbpca_py.errpca_pt import errpca_pt
-    from vbpca_py.preprocessing import MissingAwareOneHotEncoder, _sparse_col_counts
+    from vbpca_py.preprocessing import (
+        DataReport,
+        MissingAwareOneHotEncoder,
+        _check_missing,
+        _check_outliers,
+        _check_skewness,
+        _check_variance,
+        _CheckDataConfig,
+        _sparse_col_counts,
+    )
+
+    diagnostic_values: Float64Array = np.array([0.0, 2.0, 4.0])
+    report = DataReport()
+    cfg = _CheckDataConfig(2.0, 5.0, 1e-10, 0.5, 3, emit_warnings=False)
+    assert_type(_check_missing(diagnostic_values, "0", {}, cfg, report), None)
+    assert_type(_check_variance(diagnostic_values, "0", {}, cfg, report), bool)
+    assert_type(_check_skewness(diagnostic_values, "0", {}, cfg, report), None)
+    assert_type(_check_outliers(diagnostic_values, "0", {}, cfg, report), None)
+    assert_type(
+        _cell_scores(
+            np.eye(2),
+            np.eye(2),
+            EncodedVariable("categorical", (0, 1), ("a", "b"), offset=(0.0, 0.0)),
+            validate=True,
+        ),
+        tuple[Float64Array, Float64Array, BoolArray] | None,
+    )
 
     def records(
         prepared: PreparedProblem,
