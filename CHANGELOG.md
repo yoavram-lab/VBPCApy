@@ -28,6 +28,12 @@ The development version is not a release announcement.
 
 ### Fixed
 
+- Preserve standard and min-max normalization of small nonconstant columns
+  after positive changes of measurement units. Remove absolute near-zero
+  cutoffs, detect exact constants before moment reduction and compute sparse
+  variances from centered observations. Retain stored zeros, missing-column
+  metadata and inverse-transform behavior without densifying sparse inputs.
+
 - Copy initialization payloads before preparation and numerical updates.
   Fitting now accepts read-only warm-start arrays, retains caller-owned
   mappings and nested covariance arrays, and starts repeated fits from the

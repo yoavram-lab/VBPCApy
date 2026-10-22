@@ -36,6 +36,8 @@ __all__ = [
 Mask = np.ndarray
 ArrayLike = np.ndarray | sp.spmatrix
 
+_SCALER_MOMENT_CHUNK_ENTRIES = 65_536
+
 
 def _to_csr(x: ArrayLike, *, copy: bool = False) -> sp.csr_matrix:
     return sp.csr_matrix(cast("Any", x), copy=copy)
@@ -106,20 +108,74 @@ def _sparse_safe_max(mat: sp.csc_matrix, counts: np.ndarray) -> np.ndarray:
     return maxs
 
 
-def _sparse_mean_var(mat: sp.csc_matrix) -> tuple[np.ndarray, np.ndarray]:
-    """Compute mean/var per column ignoring missing (unstored) entries.
+def _observed_mean_var(values: npt.NDArray[np.float64]) -> tuple[float, float]:
+    """Compute centered moments, detecting exact constants before reduction.
+
+    Missing observations must be excluded by the caller. No absolute numerical
+    tolerance distinguishes constant from nonconstant observed values.
+
+    Returns:
+        Mean and population variance, or two NaNs for an empty column.
+    """
+    if values.size == 0:
+        return np.nan, np.nan
+    first = float(values[0])
+    if np.all(values == first):
+        return first, 0.0
+    return float(np.mean(values)), float(np.var(values))
+
+
+def _sparse_mean_var(mat: sp.csc_matrix) -> tuple[np.ndarray, np.ndarray]:  # noqa: PLR0914
+    """Compute centered moments of stored observations in bounded chunks.
+
+    Unstored entries are missing; stored numeric zeros remain observed. Shift
+    each column by its first value before computing centered moments, avoiding
+    raw-moment cancellation and roundoff variance for exactly constant columns.
+    Temporary entry arrays are bounded by the chunk target or one oversized
+    observed column; indexing metadata and outputs scale with feature count.
 
     Returns:
         Tuple of ``(means, variances)`` per column.
     """
-    counts = _sparse_col_counts(mat)
-    sums = np.array(mat.sum(axis=0)).ravel()
-    sumsq = np.array(mat.power(2).sum(axis=0)).ravel()
     means = np.full(mat.shape[1], np.nan, dtype=float)
     vars_ = np.full(mat.shape[1], np.nan, dtype=float)
-    nonzero = counts > 0
-    means[nonzero] = sums[nonzero] / counts[nonzero]
-    vars_[nonzero] = sumsq[nonzero] / counts[nonzero] - means[nonzero] ** 2
+    counts = np.diff(mat.indptr)
+    columns = np.flatnonzero(counts)
+    starts = mat.indptr[columns]
+    ends = mat.indptr[columns + 1]
+    first = 0
+    while first < columns.size:
+        start = int(starts[first])
+        last = max(
+            first + 1,
+            int(
+                np.searchsorted(
+                    ends, start + _SCALER_MOMENT_CHUNK_ENTRIES, side="right"
+                )
+            ),
+        )
+        selected = columns[first:last]
+        local_counts = counts[selected]
+        offsets = starts[first:last] - start
+        values = np.asarray(mat.data[start : int(ends[last - 1])], dtype=np.float64)
+        anchors = values[offsets]
+        with np.errstate(over="ignore", invalid="ignore"):
+            centered = values - np.repeat(anchors, local_counts)
+            mean_offsets = np.add.reduceat(centered, offsets) / local_counts
+            means[selected] = anchors + mean_offsets
+            centered -= np.repeat(mean_offsets, local_counts)
+            np.square(centered, out=centered)
+            vars_[selected] = np.add.reduceat(centered, offsets) / local_counts
+        # Opposite-sign finite extremes can overflow the shift or its sum.
+        # Reuse dense moments only for affected columns, preserving the existing
+        # nonfinite-scale fallback without slowing ordinary sparse columns.
+        for position in np.flatnonzero(~np.isfinite(mean_offsets)):
+            lo = offsets[position]
+            hi = lo + local_counts[position]
+            means[selected[position]], vars_[selected[position]] = _observed_mean_var(
+                values[lo:hi]
+            )
+        first = last
     return means, vars_
 
 
@@ -694,7 +750,13 @@ class MissingAwareSparseOneHotEncoder(BaseEstimator, TransformerMixin):
 
 
 class MissingAwareStandardScaler(_BaseScaler):
-    """Standardize continuous columns ignoring missing entries."""
+    """Standardize continuous columns ignoring missing entries.
+
+    Use every finite, nonzero computed standard deviation without an absolute
+    near-zero cutoff. Exactly constant observed columns have zero variance and
+    use a unit denominator. Zero or nonfinite computed deviations also use a
+    unit denominator; wholly missing columns retain NaN moments.
+    """
 
     def __init__(self) -> None:
         super().__init__()
@@ -723,11 +785,10 @@ class MissingAwareStandardScaler(_BaseScaler):
                     vars_[j] = np.nan
                     continue
                 col_vals = col[col_obs]
-                means[j] = float(np.mean(col_vals))
-                vars_[j] = float(np.var(col_vals))
+                means[j], vars_[j] = _observed_mean_var(col_vals)
         scales = np.sqrt(vars_)
         scales[~np.isfinite(scales)] = 1.0
-        zero_mask = np.isclose(scales, 0.0)
+        zero_mask = np.equal(scales, 0.0)
         scales[zero_mask] = 1.0
         self.mean_ = means
         self.var_ = vars_
@@ -774,7 +835,12 @@ class MissingAwareStandardScaler(_BaseScaler):
 
 
 class MissingAwareMinMaxScaler(_BaseScaler):
-    """Scale features to [0, 1] range while ignoring missing entries."""
+    """Scale features to [0, 1] range while ignoring missing entries.
+
+    Use every finite, nonzero observed range without an absolute near-zero
+    cutoff. Zero or nonfinite ranges use a unit denominator. Wholly missing
+    columns retain NaN extrema.
+    """
 
     def __init__(self) -> None:
         super().__init__()
@@ -807,7 +873,7 @@ class MissingAwareMinMaxScaler(_BaseScaler):
 
         data_range = data_max - data_min
         data_range[~np.isfinite(data_range)] = 1.0
-        zero_mask = np.isclose(data_range, 0.0)
+        zero_mask = np.equal(data_range, 0.0)
         data_range[zero_mask] = 1.0
         self.data_min_ = data_min
         self.data_max_ = data_max
