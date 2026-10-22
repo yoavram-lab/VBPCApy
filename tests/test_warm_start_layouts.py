@@ -350,3 +350,32 @@ def test_normalization_retains_existing_struct_learning_curve_policy():
     supplied = SimpleNamespace(_fieldnames=list(payload), **payload)
     result = _fit(np.ones((5, 8)), supplied)
     assert len(result["lc"]["rms"]) == 1
+
+
+@pytest.mark.parametrize("layout", ["diagonal", "stack", "list"])
+@pytest.mark.parametrize("representation", ["struct", "mat_flat", "mat_struct"])
+def test_mat_source_banks_use_explicit_zero_based_indices(
+    tmp_path, layout, representation
+):
+    payload = _payload(n=3, layout=layout)
+    payload["S"] = np.zeros((2, 6))
+    matlab_indices = np.array([[3, 2, 3, 2, 2, 3]])
+    payload["Isv"] = matlab_indices - 1
+    supplied = _supplied_payload(payload, representation, layout, tmp_path)
+    actual = init_params(supplied, InitShapes(5, 6, 2, 6), None)
+    for index, block in zip(payload["Isv"].ravel(), actual.sv, strict=True):
+        expected = (
+            np.diag(payload["Sv"][:, index])
+            if layout == "diagonal"
+            else payload["Sv"][index]
+        )
+        np.testing.assert_array_equal(block, expected)
+
+
+@pytest.mark.parametrize("representation", ["mapping", "struct", "mat_struct"])
+def test_unconverted_matlab_bank_endpoint_is_rejected(tmp_path, representation):
+    payload = _payload(n=2)
+    payload["Isv"] = np.array([1, 2])
+    supplied = _supplied_payload(payload, representation, "stack", tmp_path)
+    with pytest.raises(ValueError, match="zero-based"):
+        init_params(supplied, InitShapes(5, 2, 2, 2), None)

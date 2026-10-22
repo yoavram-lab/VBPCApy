@@ -53,6 +53,11 @@ negative, out-of-range and incompatible indices fail clearly. Full covariance
 blocks retain cross terms; a square two-dimensional table remains a diagonal
 representation rather than being guessed to be a shared full covariance.
 
+This zero-based contract also applies to MAT files and struct objects. Explicitly
+subtract one from native MATLAB `Isv` values at the import boundary before using
+them as a Python initialization. The loader does not infer index origin from
+the labels or dimensions: an all-positive vector may be valid zero-based data.
+
 Before fitting, mappings, supported struct objects and flat or single-struct
 MAT files are normalized into an owned payload. Removing empty features slices
 `A`, `Av`, `Mu` and `Muv` together. Removing samples slices `S` and per-sample

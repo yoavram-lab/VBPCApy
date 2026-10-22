@@ -366,7 +366,10 @@ def _score_covariances_for_samples(
     """
     if source is not None:
         if np.any(source >= len(blocks)):
-            msg = "Isv contains an index outside the supplied Sv covariance bank"
+            msg = (
+                "Isv contains an index outside the supplied Sv covariance bank; "
+                "indices must be zero-based (explicitly rebase MATLAB indices)"
+            )
             raise ValueError(msg)
         per_sample = [blocks[int(index)] for index in source]
     elif len(blocks) == shapes.n_samples:
