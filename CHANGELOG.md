@@ -28,6 +28,13 @@ The development version is not a release announcement.
 
 ### Fixed
 
+- Slice warm-start feature means/variances with retained loadings, and select
+  diagonal versus stacked score covariances on their declared sample axes.
+  Resolve source covariance-bank indices separately from destination pattern
+  sharing, preserving full covariance cross terms and rejecting malformed
+  layouts/indices. Normalize supported MAT and struct inputs before removing
+  empty axes, while retaining caller ownership and the mean-only model.
+
 - Preserve standard and min-max normalization of small nonconstant columns
   after positive changes of measurement units. Remove absolute near-zero
   cutoffs, detect exact constants before moment reduction and compute sparse

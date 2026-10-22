@@ -51,8 +51,8 @@ ERR_MUV_SHAPE = "Muv must have shape (n_features, 1)."
 ERR_AV_SHAPE = "Unsupported Av array shape for initialization."
 ERR_SV_SHAPE = (
     "Unsupported Sv array shape for initialization: expected "
-    "(n_components, n_samples) or "
-    "(n_samples, n_components, n_components)."
+    "(n_components, n_blocks), (n_blocks, n_components, n_components), "
+    "or a list of full covariance blocks."
 )
 ERR_SV_PATTERN_INDEX = (
     "score_pattern_index or Isv is required when n_obs_patterns < n_samples."
@@ -114,8 +114,8 @@ def init_params(
     shapes
         InitShapes holding (n_features, n_samples, n_components, n_obs_patterns).
     score_pattern_index
-        Pattern index per sample (column), equivalent to Isv in the
-        original code, or None if there is no pattern sharing.
+        Destination pattern index per sample (column), or None without
+        sharing. Source-bank indices in ``init['Isv']`` are resolved first.
     rng
         Random number generator instance. If None, uses default_rng().
 
@@ -159,17 +159,16 @@ def _normalize_init(init: str | Mapping[str, Any] | None) -> dict[str, Any]:
     if isinstance(init, str):
         if init.lower() == "random":
             return {}
-
         mat_data = loadmat(init)
-        # If MATLAB stored a struct named "init", prefer that; otherwise use the dict.
-        if "init" in mat_data:
-            raw = mat_data["init"]
-            # MATLAB structs come in with dtype.names
-            if getattr(raw, "dtype", None) is not None and raw.dtype.names:
-                return {name: raw[name].squeeze() for name in raw.dtype.names}
-            return dict(raw)
-
-        return dict(mat_data)
+        raw = mat_data.get("init", mat_data)
+        if isinstance(raw, np.ndarray) and raw.dtype.names:
+            if raw.size != 1:
+                msg = "MAT initialization must contain one init struct"
+                raise ValueError(msg)
+            record = raw.reshape(-1)[0]
+            init = {name: record[name] for name in raw.dtype.names}
+        else:
+            init = raw
 
     if init is None:
         return {}
@@ -207,6 +206,9 @@ def _init_a_av(
 
     Returns:
         Tuple of loading matrix ``A`` and list of covariance matrices ``Av``.
+
+    Raises:
+        ValueError: If covariance dimensions do not match the feature/component axes.
     """
     n_features = shapes.n_features
     n_components = shapes.n_components
@@ -224,6 +226,10 @@ def _init_a_av(
 
     if isinstance(av_raw, list):
         av = [np.asarray(m, dtype=float) for m in av_raw]
+        if len(av) != n_features or any(
+            m.shape != (n_components, n_components) for m in av
+        ):
+            raise ValueError(ERR_AV_SHAPE)
         return a, av
 
     av_arr = np.asarray(av_raw, dtype=float)
@@ -247,7 +253,7 @@ def _expand_av_array(
     if av_arr.ndim == 2 and av_arr.shape == (n_features, n_components):
         # Diagonal variances for each row of A.
         return [np.diag(av_arr[i, :]) for i in range(n_features)]
-    if av_arr.ndim == 3 and av_arr.shape[0] == n_features:
+    if av_arr.ndim == 3 and av_arr.shape == (n_features, n_components, n_components):
         return [av_arr[i] for i in range(n_features)]
     raise ValueError(ERR_AV_SHAPE)
 
@@ -288,8 +294,11 @@ def _init_mu_muv_v(
     elif muv.shape != (n_features, 1):
         raise ValueError(ERR_MUV_SHAPE)
 
-    v_raw = init_dict.get("V", 1.0)
-    v = float(v_raw)
+    v_raw = np.asarray(init_dict.get("V", 1.0), dtype=float)
+    if v_raw.size != 1:
+        msg = "V must contain one noise-variance value"
+        raise ValueError(msg)
+    v = float(v_raw.reshape(()))
     return mu, muv, v
 
 
@@ -317,34 +326,85 @@ def _init_s_sv(
         s = rng.standard_normal((n_components, n_samples))
 
     sv_raw = init_dict.get("Sv")
-    isv_init = init_dict.get("Isv")
-    isv = _resolve_score_pattern_index(score_pattern_index, isv_init, n_samples)
-
-    # No Sv provided: default to identity per pattern.
     if sv_raw is None or np.size(sv_raw) == 0:
-        sv_default = [np.eye(n_components, dtype=float) for _ in range(n_obs_patterns)]
-        return s, sv_default
+        return s, [np.eye(n_components, dtype=float) for _ in range(n_obs_patterns)]
 
-    # Pattern-sharing mode.
-    if n_obs_patterns < n_samples:
-        if isv is None:
+    source = _resolve_score_pattern_index(None, init_dict.get("Isv"), n_samples)
+    target = _resolve_score_pattern_index(score_pattern_index, None, n_samples)
+    if target is None and n_obs_patterns < n_samples:
+        if source is None:
             raise ValueError(ERR_SV_PATTERN_INDEX)
-        sv = _init_sv_pattern_mode(sv_raw, isv, n_obs_patterns)
-        return s, sv
+        target = source
+    if target is not None and not np.array_equal(
+        np.unique(target), np.arange(n_obs_patterns)
+    ):
+        msg = "score_pattern_index must cover every declared zero-based pattern"
+        raise ValueError(msg)
 
-    # No pattern-sharing: one covariance per sample.
-    if isinstance(sv_raw, list):
-        if isv is not None and len(sv_raw) >= len(isv):
-            sv = [np.asarray(sv_raw[idx], dtype=float) for idx in isv]
-            return s, sv
-        if len(sv_raw) == n_samples:
-            sv = [np.asarray(m, dtype=float) for m in sv_raw]
-            return s, sv
-        return s, []
+    blocks = _score_covariance_blocks(sv_raw, n_components)
+    per_sample = _score_covariances_for_samples(blocks, source, target, shapes)
 
-    sv_arr = np.asarray(sv_raw, dtype=float)
-    sv = _expand_sv_array(sv_arr, n_samples, n_components)
-    return s, sv
+    if target is None:
+        return s, per_sample
+    _, first_sample = np.unique(target, return_index=True)
+    return s, [per_sample[int(sample)] for sample in first_sample]
+
+
+def _score_covariances_for_samples(
+    blocks: list[np.ndarray],
+    source: np.ndarray | None,
+    target: np.ndarray | None,
+    shapes: InitShapes,
+) -> list[np.ndarray]:
+    """Interpret a source bank before applying the destination sharing policy.
+
+    Returns:
+        Full covariance blocks in retained sample order.
+
+    Raises:
+        ValueError: If bank indices or block counts are incompatible.
+    """
+    if source is not None:
+        if np.any(source >= len(blocks)):
+            msg = (
+                "Isv contains an index outside the supplied Sv covariance bank; "
+                "indices must be zero-based (explicitly rebase MATLAB indices)"
+            )
+            raise ValueError(msg)
+        per_sample = [blocks[int(index)] for index in source]
+    elif len(blocks) == shapes.n_samples:
+        per_sample = blocks
+    elif target is not None and len(blocks) == shapes.n_obs_patterns:
+        # Without Isv, an explicitly target-sized bank uses the target labels.
+        per_sample = [blocks[int(index)] for index in target]
+    else:
+        raise ValueError(ERR_SV_SHAPE)
+
+    return per_sample
+
+
+def _score_covariance_blocks(
+    raw: np.ndarray | Sequence[np.ndarray], n_components: int
+) -> list[np.ndarray]:
+    """Normalize declared diagonal or full covariance axes without guessing.
+
+    Returns:
+        Full blocks in their supplied sample/bank order.
+
+    Raises:
+        ValueError: If a representation or block shape is unsupported.
+    """
+    if isinstance(raw, (list, tuple)):
+        blocks = [np.asarray(block, dtype=float) for block in raw]
+        if any(block.shape != (n_components, n_components) for block in blocks):
+            raise ValueError(ERR_SV_SHAPE)
+        return blocks
+    array = np.asarray(raw, dtype=float)
+    if array.ndim == 2 and array.shape[0] == n_components:
+        return _expand_sv_array(array, array.shape[1], n_components)
+    if array.ndim == 3 and array.shape[1:] == (n_components, n_components):
+        return _expand_sv_array(array, array.shape[0], n_components)
+    raise ValueError(ERR_SV_SHAPE)
 
 
 def _resolve_score_pattern_index(
@@ -352,45 +412,42 @@ def _resolve_score_pattern_index(
     isv_init: np.ndarray | Sequence[int] | None,
     n_samples: int,
 ) -> np.ndarray | None:
-    """Resolve the score pattern index from explicit argument or init dict.
+    """Validate and normalize a sample-to-covariance index vector.
+
+    Integral floating values are accepted for MAT compatibility. Row and
+    column vectors have the same explicit sample axis; matrices are rejected.
 
     Returns:
-        Array of pattern indices or ``None`` when not provided.
+        Zero-based integer indices, or None for an omitted/empty vector.
+
+    Raises:
+        ValueError: If shape, numeric integrality or index sign is invalid.
     """
-    if score_pattern_index is not None:
-        return np.asarray(score_pattern_index, dtype=int)
-    if isv_init is not None:
-        isv_arr = np.asarray(isv_init, dtype=int)
-        if isv_arr.shape[0] == n_samples:
-            return isv_arr
-    return None
-
-
-def _init_sv_pattern_mode(
-    sv_raw: np.ndarray | Sequence[np.ndarray],
-    isv: np.ndarray,
-    n_obs_patterns: int,
-) -> list[np.ndarray]:
-    """Initialize Sv when multiple columns share covariance patterns.
-
-    Returns:
-        List of covariance matrices, one per observed pattern.
-    """
-    _, first_idx = np.unique(isv, return_index=True)
-    sv_list: list[np.ndarray] = []
-
-    if not isinstance(sv_raw, list):
-        sv_arr = np.asarray(sv_raw, dtype=float)
-        # Expect shape (n_components, n_samples).
-        for pattern_idx in range(n_obs_patterns):
-            col = isv[first_idx[pattern_idx]]
-            sv_list.append(np.diag(sv_arr[:, col]))
-        return sv_list
-
-    for pattern_idx in range(n_obs_patterns):
-        col = isv[first_idx[pattern_idx]]
-        sv_list.append(np.asarray(sv_raw[col], dtype=float))
-    return sv_list
+    raw = score_pattern_index if score_pattern_index is not None else isv_init
+    if raw is None:
+        return None
+    array = np.asarray(raw)
+    if array.size == 0:
+        return None
+    vector = array.ndim == 1 or (array.ndim == 2 and 1 in array.shape)
+    numeric = np.issubdtype(array.dtype, np.integer) or np.issubdtype(
+        array.dtype, np.floating
+    )
+    if not vector or array.size != n_samples or not numeric:
+        msg = "score_pattern_index/Isv must be an integral vector of length n_samples"
+        raise ValueError(msg)
+    if (
+        not np.isfinite(array).all()
+        or np.any(array < 0)
+        or np.any(array >= np.iinfo(np.intp).max)
+    ):
+        msg = "score_pattern_index/Isv must contain finite nonnegative indices"
+        raise ValueError(msg)
+    integer = array.reshape(-1).astype(int)
+    if not np.array_equal(integer, array.reshape(-1)):
+        msg = "score_pattern_index/Isv must contain integral indices"
+        raise ValueError(msg)
+    return integer
 
 
 def _coerce_int(
@@ -425,7 +482,7 @@ def _expand_sv_array(
     """
     if sv_arr.ndim == 2 and sv_arr.shape == (n_components, n_samples):
         return [np.diag(sv_arr[:, j]) for j in range(n_samples)]
-    if sv_arr.ndim == 3 and sv_arr.shape[0] == n_samples:
+    if sv_arr.ndim == 3 and sv_arr.shape == (n_samples, n_components, n_components):
         return [sv_arr[j] for j in range(n_samples)]
     raise ValueError(ERR_SV_SHAPE)
 

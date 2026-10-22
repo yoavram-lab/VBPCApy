@@ -163,32 +163,111 @@ def _update_init_dict(
     if init is None or not isinstance(init, dict):
         return init
 
-    n_rows_kept = ir.size
-    n_cols_kept = ic.size
-
-    # Update A and Av along rows
-    if n_rows_kept < n_rows_orig:
-        if "A" in init and init["A"] is not None:
-            init["A"] = init["A"][ir, :]
-        if "Av" in init and init["Av"] is not None:
-            av = init["Av"]
-            if isinstance(av, list):
-                init["Av"] = [av[i] for i in ir]
-            else:
-                init["Av"] = av[ir, :]
-
-    # Update S and Sv along columns
-    if n_cols_kept < n_cols_orig:
-        if "S" in init and init["S"] is not None:
-            init["S"] = init["S"][:, ic]
-        if "Sv" in init and init["Sv"] is not None:
-            sv = init["Sv"]
-            if isinstance(sv, list):
-                init["Sv"] = [sv[j] for j in ic]
-            else:
-                init["Sv"] = sv[:, ic]
-
+    if ir.size < n_rows_orig:
+        for key in ("A", "Av", "Mu", "Muv"):
+            if init.get(key) is not None:
+                init[key] = _slice_feature_initialization(
+                    init[key], key, ir, n_rows_orig
+                )
+    if ic.size < n_cols_orig:
+        _slice_sample_initialization(init, ic, n_cols_orig)
     return init
+
+
+def _empty_initialization_value(value: object) -> bool:
+    """Recognize empty sentinels without stacking covariance lists.
+
+    Returns:
+        Whether a supported array or sequence is empty.
+    """
+    if isinstance(value, np.ndarray):
+        return value.size == 0
+    return isinstance(value, (list, tuple)) and len(value) == 0
+
+
+def _slice_feature_initialization(
+    value: object, key: str, rows: np.ndarray, original_count: int
+) -> object:
+    """Slice an explicit feature axis while preserving mean-vector orientation.
+
+    Returns:
+        Feature-selected initialization value.
+
+    Raises:
+        ValueError: If a value does not use an accepted original feature axis.
+    """
+    if key != "A" and _empty_initialization_value(value):
+        return value
+    if key == "Av" and isinstance(value, list):
+        if len(value) != original_count:
+            msg = "Av must contain one covariance block per original feature"
+            raise ValueError(msg)
+        return [value[int(i)] for i in rows]
+    array = np.asarray(value)
+    if key in {"Mu", "Muv"}:
+        if array.shape in {(original_count,), (original_count, 1)}:
+            return array[rows]
+        if key == "Mu" and array.shape == (1, original_count):
+            return array[:, rows]
+        msg = f"{key} must use the original feature-vector axis"
+        raise ValueError(msg)
+    if array.ndim not in {2, 3} or array.shape[0] != original_count:
+        msg = f"{key} must use the original feature axis"
+        raise ValueError(msg)
+    return array[rows]
+
+
+def _slice_sample_initialization(
+    init: dict[str, object], columns: np.ndarray, original_count: int
+) -> None:
+    """Slice sample factors and source indices, keeping indexed banks intact.
+
+    Raises:
+        ValueError: If scores or source indices lack the original sample axis.
+    """
+    if init.get("S") is not None:
+        scores = np.asarray(init["S"])
+        if scores.ndim != 2 or scores.shape[1] != original_count:
+            msg = "S must use the original sample axis"
+            raise ValueError(msg)
+        init["S"] = scores[:, columns]
+    source = init.get("Isv")
+    if source is not None and not _empty_initialization_value(source):
+        mapping = np.asarray(source)
+        vector = mapping.ndim == 1 or (mapping.ndim == 2 and 1 in mapping.shape)
+        if not vector or mapping.size != original_count:
+            msg = "Isv must have one index per original sample"
+            raise ValueError(msg)
+        init["Isv"] = mapping.reshape(-1)[columns]
+    elif init.get("Sv") is not None:
+        init["Sv"] = _slice_sample_covariances(init["Sv"], columns, original_count)
+
+
+def _slice_sample_covariances(
+    value: object, columns: np.ndarray, original_count: int
+) -> object:
+    """Slice a per-sample covariance axis when no source-bank index is present.
+
+    Returns:
+        Selected list, diagonal table or stacked full covariances.
+
+    Raises:
+        ValueError: If the representation lacks the original sample axis.
+    """
+    if _empty_initialization_value(value):
+        return value
+    if isinstance(value, list):
+        if len(value) != original_count:
+            msg = "Sv without Isv must contain one block per original sample"
+            raise ValueError(msg)
+        return [value[int(j)] for j in columns]
+    array = np.asarray(value)
+    if array.ndim == 2 and array.shape[1] == original_count:
+        return array[:, columns]
+    if array.ndim == 3 and array.shape[0] == original_count:
+        return array[columns]
+    msg = "Sv must use its declared diagonal or stacked sample axis"
+    raise ValueError(msg)
 
 
 # --------------------------------------------------------------------------- #
@@ -211,7 +290,8 @@ def remove_empty_entries(
             Optional probe matrix sliced identically to ``x``.
         init:
             Optional initialization object. If it is a dict, recognized
-            keys ``"A"``, ``"Av"``, ``"S"``, and ``"Sv"`` are sliced
+            keys ``"A"``, ``"Av"``, ``"Mu"``, ``"Muv"``, ``"S"``, ``"Sv"``
+            and ``"Isv"`` are sliced
             consistently with the retained rows and columns. Non-dict
             values are passed through unchanged.
         compat_mode:

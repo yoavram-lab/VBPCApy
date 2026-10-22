@@ -26,6 +26,7 @@ so explicit RMS comparisons match lc["rms"] in those tests.
 from __future__ import annotations
 
 import pathlib
+from copy import copy
 
 import numpy as np
 import pytest
@@ -1205,6 +1206,14 @@ def test_pca_full_bias_toggle_mean_shift_effect() -> None:
 # ----------------------------------------------------------------------
 
 
+def _python_indexed_mat_result(result):
+    """Rebase the known MATLAB fixture convention at its import boundary."""
+    initialization = copy(result)
+    if hasattr(result, "Isv"):
+        initialization.Isv = np.asarray(result.Isv) - 1
+    return initialization
+
+
 def test_pca_full_matches_matlab_dense_fixture() -> None:
     fixture = _fixture_path("legacy_pca_full_dense.mat")
     if not fixture.exists():
@@ -1223,7 +1232,7 @@ def test_pca_full_matches_matlab_dense_fixture() -> None:
         maxiters=int(getattr(mat_res, "maxiters", 200)),
         bias=int(getattr(mat_res, "bias", 1)),
         uniquesv=int(getattr(mat_res, "uniquesv", 0)),
-        init=mat_res,
+        init=_python_indexed_mat_result(mat_res),
         autosave=0,
         display=0,
         verbose=0,
@@ -1272,7 +1281,7 @@ def test_pca_full_matches_matlab_missing_fixture() -> None:
         maxiters=int(getattr(mat_res, "maxiters", 200)),
         bias=int(getattr(mat_res, "bias", 1)),
         uniquesv=int(getattr(mat_res, "uniquesv", 0)),
-        init=mat_res,
+        init=_python_indexed_mat_result(mat_res),
         autosave=0,
         display=0,
         verbose=0,
@@ -1389,7 +1398,7 @@ def test_pca_full_missing_fixture_matches_matlab_across_rotate_modes(
         maxiters=int(getattr(mat_res, "maxiters", 200)),
         bias=int(getattr(mat_res, "bias", 1)),
         uniquesv=int(getattr(mat_res, "uniquesv", 0)),
-        init=mat_res,
+        init=_python_indexed_mat_result(mat_res),
         rotate2pca=rotate2pca,
         autosave=0,
         display=0,

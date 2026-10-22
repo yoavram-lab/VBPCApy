@@ -25,6 +25,10 @@ fit needs separate convergence checks.
 `Xrec`, `Vr`, `Vpred`, `ExplainedVar` and `ExplainedVarRatio` are `None` when
 diagnostics are disabled. Covariances can be a sequence of blocks or a stacked
 array; `Isv`, when present, maps samples to shared score covariance blocks.
+When reusing score covariances in a warm start, retain `Sv` and its `Isv`
+together; source bank labels and the next fit's prepared pattern labels have
+different roles. The [warm-start layout contract](options.md#warm-start-layouts)
+defines their indexing and retained-feature/sample behavior.
 Float-array aliases specify float64 dtype. Pattern indices use NumPy's default
 integer dtype, which can depend on platform and NumPy version. Shape and ownership requirements
 remain documented runtime contracts, rather than checks performed by typing.

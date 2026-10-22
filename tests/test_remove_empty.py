@@ -291,7 +291,7 @@ def test_sparse_remove_empty_columns_only_and_ndarray_covariances() -> None:
         "A": np.arange(2 * 2, dtype=float).reshape(2, 2),
         "Av": np.arange(2 * 2 * 2, dtype=float).reshape(2, 2, 2),
         "S": np.arange(2 * 3, dtype=float).reshape(2, 3),
-        "Sv": np.arange(2 * 3 * 3, dtype=float).reshape(2, 3, 3),
+        "Sv": np.arange(3 * 2 * 2, dtype=float).reshape(3, 2, 2),
     }
     a_orig = init["A"].copy()
     av_orig = init["Av"].copy()
@@ -308,7 +308,7 @@ def test_sparse_remove_empty_columns_only_and_ndarray_covariances() -> None:
     assert np.array_equal(init_out["A"], a_orig)
     assert np.array_equal(init_out["Av"], av_orig)
     assert np.array_equal(init_out["S"], s_orig[:, ic])
-    assert np.array_equal(init_out["Sv"], sv_orig[:, ic])
+    assert np.array_equal(init_out["Sv"], sv_orig[ic])
 
 
 def test_slice_matrix_like_dense_row_and_col_only_paths() -> None:
