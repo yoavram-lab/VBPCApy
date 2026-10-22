@@ -15,14 +15,14 @@ def score_update_dense_no_av(
     loadings: npt.NDArray[np.float64],
     noise_var: float,
     return_covariance: bool = ...,
-) -> dict[str, np.ndarray]: ...
+) -> dict[str, npt.NDArray[np.float64]]: ...
 def loadings_update_dense_no_sv(
     x_data: npt.NDArray[np.float64],
     scores: npt.NDArray[np.float64],
     prior_prec: npt.NDArray[np.float64],
     noise_var: float,
     return_covariance: bool = ...,
-) -> dict[str, np.ndarray]: ...
+) -> dict[str, npt.NDArray[np.float64]]: ...
 def score_update_dense_masked_nopattern(
     x_data: npt.NDArray[np.float64],
     mask: MaskArray,
@@ -32,7 +32,7 @@ def score_update_dense_masked_nopattern(
     return_covariances: bool = ...,
     use_complement: bool = ...,
     num_cpu: int = ...,
-) -> dict[str, np.ndarray]: ...
+) -> dict[str, npt.NDArray[np.float64]]: ...
 def loadings_update_dense_masked_nopattern(
     x_data: npt.NDArray[np.float64],
     mask: MaskArray,
@@ -43,5 +43,5 @@ def loadings_update_dense_masked_nopattern(
     return_covariances: bool = ...,
     use_complement: bool = ...,
     num_cpu: int = ...,
-) -> dict[str, np.ndarray]: ...
+) -> dict[str, npt.NDArray[np.float64]]: ...
 def effective_thread_count(requested: int, n_items: int, /) -> int: ...

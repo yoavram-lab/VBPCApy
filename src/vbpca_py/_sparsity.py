@@ -8,10 +8,12 @@ import numpy as np
 import numpy.typing as npt
 import scipy.sparse as sp
 
+from ._types import DenseMask  # noqa: TC001 - runtime annotation resolution
+
 __all__ = ["validate_mask_compatibility"]
 
 
-def _as_dense_mask(mask: object) -> np.ndarray:
+def _as_dense_mask(mask: object) -> DenseMask:
     """Retain boolean storage while preserving legacy numeric-mask coercion.
 
     Shape and sparse/dense compatibility are validated by the caller. Boolean

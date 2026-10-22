@@ -53,3 +53,106 @@ def check_configuration_types(estimator: VBPCA) -> None:
     PCAOptions(algorithm="vb")  # type: ignore[arg-type]
     VBPCA(1, maxiter=3)  # type: ignore[call-arg]
     pca_full(np.ones((2, 3)), 1, options={})  # type: ignore[arg-type]
+
+
+def check_numerical_helper_contracts() -> None:
+    import numpy.typing as npt
+    import scipy.sparse as sp
+
+    from vbpca_py._categorical_scores import _cell_scores
+    from vbpca_py._full_update import CovarianceStore, ScoreState
+    from vbpca_py._monitoring import InitResult
+    from vbpca_py._noise_statistics import NoiseComplement
+    from vbpca_py._pca_full import ModelState, PreparedProblem
+    from vbpca_py._types import (
+        BoolArray,
+        CountArray,
+        IndexArray,
+        InputArray,
+        SparseIndexArray,
+    )
+    from vbpca_py.encoding import EncodedVariable
+    from vbpca_py.errpca_pt import errpca_pt
+    from vbpca_py.preprocessing import (
+        DataReport,
+        MissingAwareOneHotEncoder,
+        _check_missing,
+        _check_outliers,
+        _check_skewness,
+        _check_variance,
+        _CheckDataConfig,
+        _sparse_col_counts,
+    )
+
+    diagnostic_values: Float64Array = np.array([0.0, 2.0, 4.0])
+    report = DataReport()
+    cfg = _CheckDataConfig(2.0, 5.0, 1e-10, 0.5, 3, emit_warnings=False)
+    assert_type(_check_missing(diagnostic_values, "0", {}, cfg, report), None)
+    assert_type(_check_variance(diagnostic_values, "0", {}, cfg, report), bool)
+    assert_type(_check_skewness(diagnostic_values, "0", {}, cfg, report), None)
+    assert_type(_check_outliers(diagnostic_values, "0", {}, cfg, report), None)
+    assert_type(
+        _cell_scores(
+            np.eye(2),
+            np.eye(2),
+            EncodedVariable("categorical", (0, 1), ("a", "b"), offset=(0.0, 0.0)),
+            validate=True,
+        ),
+        tuple[Float64Array, Float64Array, BoolArray] | None,
+    )
+
+    def records(
+        prepared: PreparedProblem,
+        state: ModelState,
+        score: ScoreState,
+        initial: InitResult,
+        plan: NoiseComplement,
+    ) -> None:
+        assert_type(prepared.ix_obs, IndexArray)
+        assert_type(prepared.n_obs_row, CountArray)
+        assert_type(state.a, Float64Array)
+        assert_type(state.av, CovarianceStore)
+        assert_type(score.scores, Float64Array)
+        assert_type(initial.a, Float64Array)
+        assert_type(plan.rows, npt.NDArray[np.int32])
+        integer_values: npt.NDArray[np.int32] = np.ones((2, 1), dtype=np.int32)
+        state.a = integer_values  # type: ignore[assignment]
+        floating_counts: npt.NDArray[np.float32] = np.ones(2, dtype=np.float32)
+        unsigned_counts: npt.NDArray[np.uint64] = np.ones(2, dtype=np.uint64)
+        extended_counts: npt.NDArray[np.longdouble] = np.ones(2, dtype=np.longdouble)
+        prepared.n_obs_row = floating_counts
+        prepared.n_obs_row = unsigned_counts
+        prepared.n_obs_row = extended_counts
+        complex_counts: npt.NDArray[np.complex128] = np.ones(2, dtype=np.complex128)
+        prepared.n_obs_row = complex_counts  # type: ignore[assignment]
+        plan.observed_count = 3  # type: ignore[misc]
+
+    del records
+    data = np.ones(3, dtype=np.float64)
+    indices = np.array([0, 2, 1], dtype=np.int32)
+    indptr = np.array([0, 2, 3], dtype=np.int32)
+    residual = errpca_pt(data, indices, indptr, np.ones((2, 1)), np.ones((1, 3)))
+    assert_type(residual["data"], Float64Array)
+    assert_type(residual["indices"], npt.NDArray[np.int32])
+    assert_type(residual["shape"], tuple[int, int])
+    residual["shape"] = data  # type: ignore[typeddict-item]
+    residual["indices"] = data  # type: ignore[typeddict-item]
+    assert_type(
+        _sparse_col_counts(sp.csc_matrix((2, 3))),
+        SparseIndexArray,
+    )
+    assert_type(
+        MissingAwareOneHotEncoder(dtype=np.complex64).transform(np.ones((3, 1))),
+        InputArray,
+    )
+    assert_type(pca_full(np.ones((2, 3), dtype=np.float32), 1), PCAResult)
+    assert_type(
+        pca_full(
+            np.ones((2, 3), dtype=np.int32), 1, mask=np.ones((2, 3), dtype=np.int16)
+        ),
+        PCAResult,
+    )
+    observed: BoolArray = np.ones((2, 3), dtype=bool)
+    floating_values: Float64Array = np.ones((2, 3), dtype=np.float64)
+    observed = floating_values  # type: ignore[assignment]
+    assert_type(observed, BoolArray)

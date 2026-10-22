@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from ._types import BoolArray, Float64Array, InputArray  # noqa: TC001 - runtime annotation resolution
 from .encoding import EncodedVariable, EncodingSchema
 
 if TYPE_CHECKING:
@@ -29,8 +30,8 @@ _FLOOR = 1e-6
 
 
 def categorical_scores(
-    prediction: np.ndarray,
-    held_out: np.ndarray,
+    prediction: Float64Array,
+    held_out: Float64Array,
     groups: Sequence[object],
     *,
     schema: EncodingSchema | None = None,
@@ -63,9 +64,9 @@ def categorical_scores(
     if pred.ndim != 2 or pred.shape != held.shape or labels.shape != (pred.shape[0],):
         msg = "prediction, held_out and groups must describe the same features"
         raise ValueError(msg)
-    brier: list[np.ndarray] = []
-    log_score: list[np.ndarray] = []
-    correct: list[np.ndarray] = []
+    brier: list[Float64Array] = []
+    log_score: list[Float64Array] = []
+    correct: list[BoolArray] = []
     for variable in _categorical_variables(labels, pred.shape[0], schema):
         scores = _cell_scores(pred, held, variable, validate=schema is not None)
         if scores is not None:
@@ -82,7 +83,7 @@ def categorical_scores(
 
 
 def _categorical_variables(
-    labels: np.ndarray, n_features: int, schema: EncodingSchema | None
+    labels: InputArray, n_features: int, schema: EncodingSchema | None
 ) -> list[EncodedVariable]:
     if schema is not None:
         schema.validate(n_features)
@@ -105,7 +106,9 @@ def _categorical_variables(
     return variables
 
 
-def validate_legacy_categorical_input(x: np.ndarray, groups: Sequence[object]) -> None:
+def validate_legacy_categorical_input(
+    x: Float64Array, groups: Sequence[object]
+) -> None:
     """Require unambiguous full one-hot targets for schema-free selection.
 
     Raises:
@@ -131,12 +134,12 @@ def validate_legacy_categorical_input(x: np.ndarray, groups: Sequence[object]) -
 
 
 def _cell_scores(
-    prediction: np.ndarray,
-    held: np.ndarray,
+    prediction: Float64Array,
+    held: Float64Array,
     variable: EncodedVariable,
     *,
     validate: bool,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray] | None:
+) -> tuple[Float64Array, Float64Array, BoolArray] | None:
     rows = np.asarray(variable.columns, dtype=int)
     if rows.size == 0:
         return None
@@ -162,7 +165,7 @@ def _cell_scores(
     )
 
 
-def _validate_decoded(truth: np.ndarray, prediction: np.ndarray) -> None:
+def _validate_decoded(truth: Float64Array, prediction: Float64Array) -> None:
     if not (
         np.all(np.isclose(truth, 0.0) | np.isclose(truth, 1.0))
         and np.all(np.isclose(truth.sum(axis=0), 1.0))

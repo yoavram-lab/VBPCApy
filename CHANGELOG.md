@@ -24,6 +24,15 @@ The development version is not a release announcement.
 
 ### Changed
 
+- Propagate numerical dtype contracts through solver state, covariance helpers,
+  bindings, encoding, preprocessing and selection. Keep raw inputs and dynamic
+  encoder dtypes distinct from float64 working parameters; preserve Boolean
+  observations and signed sparse indices. Slot state records while retaining
+  mutable training payloads. Snapshot immutable encoding metadata and retain
+  owned read-only noise coordinates through serialization; document borrowed
+  descriptors and covariance views. Split omitted-mean initialization from
+  initial centering without changing its arithmetic or update order.
+
 - Expose every `VBPCA` solver control as an explicit constructor parameter and
   use native sklearn parameter introspection, cloning and grid-search plumbing.
   Store constructor inputs unchanged and validate at configuration/fit time.

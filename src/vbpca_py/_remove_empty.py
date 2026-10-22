@@ -17,18 +17,20 @@ Definitions of "empty":
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import numpy as np
 import scipy.sparse as sp
+
+from ._types import Float64Array, IndexArray, MaskMatrix
 
 if TYPE_CHECKING:
     import numpy.typing as npt
 
     from .results import IndexArray
 
-InitType = Any
-Dense = np.ndarray
+InitType = object
+Dense = Float64Array
 Sparse = sp.csr_matrix
 Matrix = Dense | Sparse
 
@@ -37,11 +39,11 @@ Matrix = Dense | Sparse
 # Internal helpers
 # --------------------------------------------------------------------------- #
 def _nonempty_indices(
-    x: Matrix,
+    x: Matrix | MaskMatrix,
     compat_mode: str,
     *,
     is_mask: bool = False,
-) -> tuple[np.ndarray, np.ndarray]:
+) -> tuple[IndexArray, IndexArray]:
     """Return indices of non-empty rows and columns.
 
     Dense data use NaNs, modern sparse data use stored observations, and
@@ -100,8 +102,8 @@ def _sparse_observed_axes(
 
 def _slice_matrix_like(
     mat: Matrix | None,
-    ir: np.ndarray,
-    ic: np.ndarray,
+    ir: IndexArray,
+    ic: IndexArray,
     n_rows_orig: int,
     n_cols_orig: int,
 ) -> Matrix | None:
@@ -148,8 +150,8 @@ def _slice_matrix_like(
 
 def _update_init_dict(
     init: InitType,
-    ir: np.ndarray,
-    ic: np.ndarray,
+    ir: IndexArray,
+    ic: IndexArray,
     n_rows_orig: int,
     n_cols_orig: int,
 ) -> InitType:
@@ -186,7 +188,7 @@ def _empty_initialization_value(value: object) -> bool:
 
 
 def _slice_feature_initialization(
-    value: object, key: str, rows: np.ndarray, original_count: int
+    value: object, key: str, rows: IndexArray, original_count: int
 ) -> object:
     """Slice an explicit feature axis while preserving mean-vector orientation.
 
@@ -218,7 +220,7 @@ def _slice_feature_initialization(
 
 
 def _slice_sample_initialization(
-    init: dict[str, object], columns: np.ndarray, original_count: int
+    init: dict[str, object], columns: IndexArray, original_count: int
 ) -> None:
     """Slice sample factors and source indices, keeping indexed banks intact.
 
@@ -244,7 +246,7 @@ def _slice_sample_initialization(
 
 
 def _slice_sample_covariances(
-    value: object, columns: np.ndarray, original_count: int
+    value: object, columns: IndexArray, original_count: int
 ) -> object:
     """Slice a per-sample covariance axis when no source-bank index is present.
 
@@ -279,8 +281,8 @@ def remove_empty_entries(
     init: InitType,
     *,
     compat_mode: str = "strict_legacy",
-    mask: Matrix | None = None,
-) -> tuple[Matrix, Matrix | None, np.ndarray, np.ndarray, InitType]:
+    mask: MaskMatrix | None = None,
+) -> tuple[Matrix, Matrix | None, IndexArray, IndexArray, InitType]:
     """Remove rows and columns that are entirely empty and update ``init``.
 
     Args:

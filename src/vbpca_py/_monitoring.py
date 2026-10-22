@@ -17,13 +17,15 @@ from __future__ import annotations
 import logging
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, SupportsIndex, SupportsInt
+from typing import TYPE_CHECKING, SupportsIndex, SupportsInt, cast
 
 import numpy as np
+import numpy.typing as npt
 from scipy.io import loadmat
 from scipy.linalg import orth
 
 from ._rms import RmsConfig, compute_rms
+from ._types import Float64Array, IndexArray, MaskMatrix, Matrix  # noqa: TC001 - runtime annotation resolution
 
 if TYPE_CHECKING:
     from .results import LearningCurve
@@ -64,7 +66,7 @@ ERR_SV_PATTERN_INDEX = (
 # ---------------------------------------------------------------------
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class InitShapes:
     """Container for core shape parameters used during initialization."""
 
@@ -74,17 +76,17 @@ class InitShapes:
     n_obs_patterns: int
 
 
-@dataclass
+@dataclass(slots=True)
 class InitResult:
     """Result of parameter initialization for VBPCA."""
 
-    a: np.ndarray
-    s: np.ndarray
-    mu: np.ndarray
+    a: Float64Array
+    s: Float64Array
+    mu: Float64Array
     v: float
-    av: list[np.ndarray]
-    sv: list[np.ndarray]
-    muv: np.ndarray
+    av: list[Float64Array]
+    sv: list[Float64Array]
+    muv: Float64Array
 
 
 # ---------------------------------------------------------------------
@@ -93,9 +95,9 @@ class InitResult:
 
 
 def init_params(
-    init: str | Mapping[str, Any] | None,
+    init: object,
     shapes: InitShapes,
-    score_pattern_index: np.ndarray | Sequence[int] | None,
+    score_pattern_index: IndexArray | Sequence[int] | None,
     rng: np.random.Generator | None = None,
 ) -> InitResult:
     """Initialize A, S, mu, V, Av, Sv, and Muv.
@@ -147,7 +149,7 @@ def init_params(
 # ---------------------------------------------------------------------
 
 
-def _normalize_init(init: str | Mapping[str, Any] | None) -> dict[str, Any]:
+def _normalize_init(init: object) -> dict[str, object]:
     """Normalize init into a plain dictionary.
 
     Returns:
@@ -184,7 +186,7 @@ def _normalize_init(init: str | Mapping[str, Any] | None) -> dict[str, Any]:
     return _coerce_mat_cells(init_dict)
 
 
-def _coerce_mat_cells(init_dict: dict[str, Any]) -> dict[str, Any]:
+def _coerce_mat_cells(init_dict: dict[str, object]) -> dict[str, object]:
     """Convert MATLAB-style cell arrays (object ndarrays) to Python lists.
 
     Returns:
@@ -198,10 +200,10 @@ def _coerce_mat_cells(init_dict: dict[str, Any]) -> dict[str, Any]:
 
 
 def _init_a_av(
-    init_dict: Mapping[str, Any],
+    init_dict: Mapping[str, object],
     shapes: InitShapes,
     rng: np.random.Generator,
-) -> tuple[np.ndarray, list[np.ndarray]]:
+) -> tuple[Float64Array, list[Float64Array]]:
     """Initialize loading matrix A and its covariances Av.
 
     Returns:
@@ -220,7 +222,7 @@ def _init_a_av(
         a = orth(rng.standard_normal((n_features, n_components)))
 
     av_raw = init_dict.get("Av")
-    if av_raw is None or np.size(av_raw) == 0:
+    if av_raw is None or np.size(cast("npt.ArrayLike", av_raw)) == 0:
         av = [np.eye(n_components, dtype=float) for _ in range(n_features)]
         return a, av
 
@@ -238,10 +240,10 @@ def _init_a_av(
 
 
 def _expand_av_array(
-    av_arr: np.ndarray,
+    av_arr: Float64Array,
     n_features: int,
     n_components: int,
-) -> list[np.ndarray]:
+) -> list[Float64Array]:
     """Convert an Av array into a list of covariance matrices.
 
     Returns:
@@ -264,9 +266,9 @@ def _expand_av_array(
 
 
 def _init_mu_muv_v(
-    init_dict: Mapping[str, Any],
+    init_dict: Mapping[str, object],
     n_features: int,
-) -> tuple[np.ndarray, np.ndarray, float]:
+) -> tuple[Float64Array, Float64Array, float]:
     """Initialize mean vector mu, its variance muv, and noise variance v.
 
     Returns:
@@ -276,7 +278,7 @@ def _init_mu_muv_v(
         ValueError: If ``Muv`` has an incompatible shape.
     """
     mu_raw = init_dict.get("Mu")
-    if mu_raw is None or np.size(mu_raw) == 0:
+    if mu_raw is None or np.size(cast("npt.ArrayLike", mu_raw)) == 0:
         # Preserve the MATLAB empty sentinel. The solver uses it to initialize
         # Mu from observed row means before the first centering operation.
         mu = np.array([], dtype=float)
@@ -303,11 +305,11 @@ def _init_mu_muv_v(
 
 
 def _init_s_sv(
-    init_dict: Mapping[str, Any],
+    init_dict: Mapping[str, object],
     shapes: InitShapes,
-    score_pattern_index: np.ndarray | Sequence[int] | None,
+    score_pattern_index: IndexArray | Sequence[int] | None,
     rng: np.random.Generator,
-) -> tuple[np.ndarray, list[np.ndarray]]:
+) -> tuple[Float64Array, list[Float64Array]]:
     """Initialize score matrix S and its covariances Sv.
 
     Returns:
@@ -326,7 +328,7 @@ def _init_s_sv(
         s = rng.standard_normal((n_components, n_samples))
 
     sv_raw = init_dict.get("Sv")
-    if sv_raw is None or np.size(sv_raw) == 0:
+    if sv_raw is None or np.size(cast("npt.ArrayLike", sv_raw)) == 0:
         return s, [np.eye(n_components, dtype=float) for _ in range(n_obs_patterns)]
 
     source = _resolve_score_pattern_index(None, init_dict.get("Isv"), n_samples)
@@ -351,11 +353,11 @@ def _init_s_sv(
 
 
 def _score_covariances_for_samples(
-    blocks: list[np.ndarray],
-    source: np.ndarray | None,
-    target: np.ndarray | None,
+    blocks: list[Float64Array],
+    source: IndexArray | None,
+    target: IndexArray | None,
     shapes: InitShapes,
-) -> list[np.ndarray]:
+) -> list[Float64Array]:
     """Interpret a source bank before applying the destination sharing policy.
 
     Returns:
@@ -383,9 +385,7 @@ def _score_covariances_for_samples(
     return per_sample
 
 
-def _score_covariance_blocks(
-    raw: np.ndarray | Sequence[np.ndarray], n_components: int
-) -> list[np.ndarray]:
+def _score_covariance_blocks(raw: object, n_components: int) -> list[Float64Array]:
     """Normalize declared diagonal or full covariance axes without guessing.
 
     Returns:
@@ -408,10 +408,10 @@ def _score_covariance_blocks(
 
 
 def _resolve_score_pattern_index(
-    score_pattern_index: np.ndarray | Sequence[int] | None,
-    isv_init: np.ndarray | Sequence[int] | None,
+    score_pattern_index: IndexArray | Sequence[int] | None,
+    isv_init: object,
     n_samples: int,
-) -> np.ndarray | None:
+) -> IndexArray | None:
     """Validate and normalize a sample-to-covariance index vector.
 
     Integral floating values are accepted for MAT compatibility. Row and
@@ -468,10 +468,10 @@ def _coerce_int(
 
 
 def _expand_sv_array(
-    sv_arr: np.ndarray,
+    sv_arr: Float64Array,
     n_samples: int,
     n_components: int,
-) -> list[np.ndarray]:
+) -> list[Float64Array]:
     """Convert an Sv array into a list of covariance matrices.
 
     Returns:
@@ -495,7 +495,7 @@ def _expand_sv_array(
 def log_first_step(
     verbose: int,
     rms: float,
-    prms: float | np.ndarray,
+    prms: float | Float64Array,
 ) -> None:
     """Log the initial RMS and optional probe RMS."""
     if not verbose:
@@ -559,7 +559,7 @@ def log_progress(
 # ---------------------------------------------------------------------
 
 
-def display_init(display: int, lc: LearningCurve) -> dict[str, Any]:
+def display_init(display: int, lc: LearningCurve) -> dict[str, object]:
     """Initialize matplotlib plots for RMS training/test errors.
 
     Parameters
@@ -578,7 +578,7 @@ def display_init(display: int, lc: LearningCurve) -> dict[str, Any]:
         - 'rms': Line2D handle for training RMS
         - 'prms': Line2D handle for test RMS
     """
-    dsph: dict[str, Any] = {"display": bool(display)}
+    dsph: dict[str, object] = {"display": bool(display)}
 
     if not dsph["display"]:
         return dsph
@@ -617,13 +617,15 @@ def display_init(display: int, lc: LearningCurve) -> dict[str, Any]:
     return dsph
 
 
-def display_progress(dsph: Mapping[str, Any], lc: LearningCurve) -> None:
+def display_progress(dsph: Mapping[str, object], lc: LearningCurve) -> None:
     """Update RMS training/test plots if display is enabled."""
     if not dsph.get("display", False):
         return
 
-    line_rms = dsph["rms"]
-    line_prms = dsph["prms"]
+    from matplotlib.lines import Line2D  # noqa: PLC0415, TC002
+
+    line_rms = cast("Line2D", dsph["rms"])
+    line_prms = cast("Line2D", dsph["prms"])
 
     rms_values = np.asarray(lc.get("rms", []), dtype=float)
     prms_values = np.asarray(lc.get("prms", []), dtype=float)
@@ -636,8 +638,10 @@ def display_progress(dsph: Mapping[str, Any], lc: LearningCurve) -> None:
     line_prms.set_xdata(steps_prms)
     line_prms.set_ydata(prms_values)
 
-    ax1 = line_rms.axes
-    ax2 = line_prms.axes
+    from matplotlib.axes import Axes  # noqa: PLC0415, TC002
+
+    ax1 = cast("Axes", line_rms.axes)
+    ax2 = cast("Axes", line_prms.axes)
     ax1.relim()
     ax1.autoscale_view()
     ax2.relim()
@@ -653,24 +657,24 @@ def display_progress(dsph: Mapping[str, Any], lc: LearningCurve) -> None:
 # ---------------------------------------------------------------------
 
 
-@dataclass
+@dataclass(slots=True)
 class InitialMonitoringInputs:
     """Inputs required for computing initial RMS / probe RMS and logging."""
 
-    x_data: Any  # Matrix type alias is defined elsewhere in the package
-    x_probe: Any | None
-    mask: Any
-    mask_probe: Any | None
+    x_data: Matrix
+    x_probe: Matrix | None
+    mask: MaskMatrix
+    mask_probe: MaskMatrix | None
     n_data: float
     n_probe: int
-    a: np.ndarray
-    s: np.ndarray
+    a: Float64Array
+    s: Float64Array
     opts: Mapping[str, object]
 
 
 def _initial_monitoring(
     inputs: InitialMonitoringInputs,
-) -> tuple[float, Any, float, LearningCurve, dict[str, Any]]:
+) -> tuple[float, Matrix, float, LearningCurve, dict[str, object]]:
     """Compute initial RMS / probe RMS and set up logging / display.
 
     Returns:

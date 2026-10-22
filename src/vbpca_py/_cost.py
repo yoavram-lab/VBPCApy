@@ -17,7 +17,7 @@ MATLAB semantic alignment notes (cf_full.m):
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import cast
 
 import numpy as np
 import scipy.sparse as sp
@@ -28,6 +28,7 @@ from ._mean import (
 )
 from ._rms import RmsConfig, compute_rms
 from ._sparsity import validate_mask_compatibility
+from ._types import BoolArray, DenseMask, Float64Array, IndexArray  # noqa: TC001 - runtime annotation resolution
 
 # ============================================================
 # Common validation error messages
@@ -79,15 +80,15 @@ ERR_N_DATA_POSITIVE = "n_data must be positive for cost computation."
 class CostParams:
     """Grouped parameters for `compute_full_cost`."""
 
-    mu: np.ndarray
+    mu: Float64Array
     noise_variance: float
-    loading_covariances: list[np.ndarray] | None = None
-    score_covariances: list[np.ndarray] | None = None
-    score_pattern_index: np.ndarray | None = None
-    mu_variances: np.ndarray | None = None
-    loading_priors: np.ndarray | float | None = None
+    loading_covariances: list[Float64Array] | None = None
+    score_covariances: list[Float64Array] | None = None
+    score_pattern_index: IndexArray | None = None
+    mu_variances: Float64Array | None = None
+    loading_priors: Float64Array | float | None = None
     mu_prior_variance: float | None = None
-    mask: np.ndarray | sp.spmatrix | None = None
+    mask: DenseMask | sp.spmatrix | None = None
     s_xv: float | None = None
     n_data: int | None = None
     num_cpu: int = 1
@@ -97,9 +98,9 @@ class CostParams:
 class ObservationInfo:
     """Observed-entry structure for the data term."""
 
-    mask: np.ndarray | sp.spmatrix
-    row_idx: np.ndarray
-    col_idx: np.ndarray
+    mask: DenseMask | sp.spmatrix
+    row_idx: IndexArray
+    col_idx: IndexArray
     n_data: int | None
 
 
@@ -108,10 +109,10 @@ class CovarianceInfo:
     """Covariance and variance structure for the data term."""
 
     n_components: int
-    loading_covariances: list[np.ndarray] | None
-    score_covariances: list[np.ndarray] | None
-    score_pattern_index: np.ndarray | None
-    mu_variances: np.ndarray | None
+    loading_covariances: list[Float64Array] | None
+    score_covariances: list[Float64Array] | None
+    score_pattern_index: IndexArray | None
+    mu_variances: Float64Array | None
     s_xv: float | None
     num_cpu: int
 
@@ -121,7 +122,7 @@ class CovarianceInfo:
 # ============================================================
 
 
-def _normalize_mu(mu: np.ndarray, n_features: int) -> np.ndarray:
+def _normalize_mu(mu: Float64Array, n_features: int) -> Float64Array:
     """Ensure ``mu`` is a 1D array of length ``n_features``.
 
     Args:
@@ -142,7 +143,7 @@ def _normalize_mu(mu: np.ndarray, n_features: int) -> np.ndarray:
     return mu
 
 
-def _coerce_dense_mask_to_bool(mask: np.ndarray) -> np.ndarray:
+def _coerce_dense_mask_to_bool(mask: DenseMask) -> BoolArray:
     """Normalize dense masks to boolean "observed" semantics.
 
     Args:
@@ -153,17 +154,17 @@ def _coerce_dense_mask_to_bool(mask: np.ndarray) -> np.ndarray:
     """
     m = np.asarray(mask)
     if m.dtype == bool:
-        return m
+        return cast("BoolArray", m)
     # MATLAB uses numeric 0/1 masks frequently; treat nonzero as observed.
     return m != 0  # type: ignore[no-any-return]
 
 
 def _ensure_no_nan_on_observed(
-    mask_out: np.ndarray | sp.spmatrix,
-    x_clean: np.ndarray | sp.spmatrix,
-    mask: np.ndarray | sp.spmatrix | None,
-    row_idx: np.ndarray,
-    col_idx: np.ndarray,
+    mask_out: DenseMask | sp.spmatrix,
+    x_clean: Float64Array | sp.spmatrix,
+    mask: DenseMask | sp.spmatrix | None,
+    row_idx: IndexArray,
+    col_idx: IndexArray,
 ) -> None:
     """Validate that observed entries do not contain NaNs.
 
@@ -174,9 +175,9 @@ def _ensure_no_nan_on_observed(
         return
 
     if sp.issparse(mask_out):
-        mask_csr = sp.csr_matrix(cast("Any", mask_out))
+        mask_csr = sp.csr_matrix(mask_out)
         if sp.issparse(x_clean):
-            x_csr = sp.csr_matrix(cast("Any", x_clean))
+            x_csr = sp.csr_matrix(cast("sp.csr_matrix", x_clean))
             if np.isnan(np.asarray(x_csr.data)).any():
                 msg = ERR_NAN_ON_OBSERVED
                 raise ValueError(msg)
@@ -195,9 +196,9 @@ def _ensure_no_nan_on_observed(
 
 
 def _build_mask_and_clean_x(
-    x: np.ndarray | sp.spmatrix,
-    mask: np.ndarray | sp.spmatrix | None,
-) -> tuple[np.ndarray | sp.spmatrix, np.ndarray | sp.spmatrix, np.ndarray, np.ndarray]:
+    x: Float64Array | sp.spmatrix,
+    mask: DenseMask | sp.spmatrix | None,
+) -> tuple[Float64Array | sp.spmatrix, DenseMask | sp.spmatrix, IndexArray, IndexArray]:
     """Construct a mask and cleaned data for missing values.
 
     Args:
@@ -214,12 +215,12 @@ def _build_mask_and_clean_x(
         ValueError: If ``mask`` and ``x`` shapes differ or observed entries
         contain NaNs.
     """
-    x_clean: np.ndarray | sp.csr_matrix
-    mask_out: np.ndarray | sp.csr_matrix
+    x_clean: Float64Array | sp.csr_matrix
+    mask_out: DenseMask | sp.csr_matrix
 
     if mask is None:
         if sp.issparse(x):
-            x_csr = sp.csr_matrix(cast("Any", x))
+            x_csr = sp.csr_matrix(cast("sp.csr_matrix", x))
             mask_csr = sp.csr_matrix(x_csr, copy=True)
             mask_csr.data = np.ones_like(mask_csr.data, dtype=bool)
             x_clean = x_csr
@@ -230,9 +231,9 @@ def _build_mask_and_clean_x(
             mask_out = mask_dense
             x_clean = np.where(mask_dense, x_arr, 0.0)
     elif sp.issparse(x):
-        x_csr = sp.csr_matrix(cast("Any", x))
+        x_csr = sp.csr_matrix(cast("sp.csr_matrix", x))
         mask_csr = (
-            sp.csr_matrix(cast("Any", mask))
+            sp.csr_matrix(cast("sp.csr_matrix", mask))
             if sp.issparse(mask)
             else sp.csr_matrix(np.asarray(mask))
         )
@@ -248,7 +249,7 @@ def _build_mask_and_clean_x(
         raise ValueError(msg)
 
     if sp.issparse(mask_out):
-        mask_csr = sp.csr_matrix(cast("Any", mask_out))
+        mask_csr = sp.csr_matrix(mask_out)
         row_idx_sparse, col_idx_sparse = mask_csr.nonzero()
         row_idx_out = np.asarray(row_idx_sparse, dtype=np.intp)
         col_idx_out = np.asarray(col_idx_sparse, dtype=np.intp)
@@ -266,8 +267,8 @@ def _build_mask_and_clean_x(
 
 
 def _validate_score_pattern_index(
-    score_pattern_index: np.ndarray | None,
-    score_covariances: list[np.ndarray] | None,
+    score_pattern_index: IndexArray | None,
+    score_covariances: list[Float64Array] | None,
     n_samples: int,
 ) -> None:
     """Validate ``score_pattern_index`` against provided covariances.
@@ -289,10 +290,10 @@ def _validate_score_pattern_index(
 
 
 def _validate_score_covariances(
-    score_covariances: list[np.ndarray] | None,
+    score_covariances: list[Float64Array] | None,
     n_components: int,
     n_samples: int,
-    score_pattern_index: np.ndarray | None,
+    score_pattern_index: IndexArray | None,
 ) -> None:
     """Validate score covariance shapes and lengths.
 
@@ -324,7 +325,7 @@ def _validate_score_covariances(
 
 
 def _validate_loading_covariances(
-    loading_covariances: list[np.ndarray] | None,
+    loading_covariances: list[Float64Array] | None,
     n_features: int,
     n_components: int,
 ) -> None:
@@ -347,10 +348,10 @@ def _validate_loading_covariances(
 
 
 def _center_x_by_mu(
-    x_clean: np.ndarray | sp.spmatrix,
-    mu: np.ndarray,
-    mask_out: np.ndarray | sp.spmatrix,
-) -> np.ndarray | sp.spmatrix:
+    x_clean: Float64Array | sp.spmatrix,
+    mu: Float64Array,
+    mask_out: DenseMask | sp.spmatrix,
+) -> Float64Array | sp.spmatrix:
     """Mean-center ``x_clean`` using MATLAB-aligned cost semantics.
 
     Dense: ``Xc = X_clean - mu[:, None] * M`` where ``M`` is a boolean/0-1
@@ -374,9 +375,9 @@ def _center_x_by_mu(
     if sp.issparse(x_clean):
         # Use the same semantics as subtract_mu MEX: shift stored entries by Mu[row].
         # mask is ignored for sparse, but the API requires something; pass mask_out.
-        x_sparse = sp.csr_matrix(cast("Any", x_clean))
+        x_sparse = sp.csr_matrix(cast("sp.csr_matrix", x_clean))
         mask_sparse = (
-            sp.csr_matrix(cast("Any", mask_out))
+            sp.csr_matrix(mask_out)
             if sp.issparse(mask_out)
             else sp.csr_matrix(np.asarray(mask_out))
         )
@@ -389,14 +390,14 @@ def _center_x_by_mu(
     m_bool = mask_out if isinstance(mask_out, np.ndarray) else np.asarray(mask_out)
     m_bool = _coerce_dense_mask_to_bool(np.asarray(m_bool))
     x_arr = np.asarray(x_clean, dtype=float)
-    return x_arr - (mu[:, None] * m_bool)  # type: ignore[no-any-return]
+    return x_arr - (mu[:, None] * m_bool)
 
 
 def _sxv_identity_contrib(
-    a: np.ndarray,
-    s: np.ndarray,
+    a: Float64Array,
+    s: Float64Array,
     obs: ObservationInfo,
-    loading_covs: list[np.ndarray] | None,
+    loading_covs: list[Float64Array] | None,
 ) -> float:
     """Contribution to ``s_xv`` when ``Sv = I`` for all columns.
 
@@ -430,10 +431,10 @@ def _sxv_identity_contrib(
 
 
 def _sxv_patterned_fastpath(
-    a: np.ndarray,
+    a: Float64Array,
     obs: ObservationInfo,
-    score_covs: list[np.ndarray],
-    pattern_index: np.ndarray,
+    score_covs: list[Float64Array],
+    pattern_index: IndexArray,
 ) -> float:
     """Fast path for Sv with pattern indices and no Av.
 
@@ -465,8 +466,8 @@ def _sxv_patterned_fastpath(
 
 
 def _sxv_general_per_observation(
-    a: np.ndarray,
-    s: np.ndarray,
+    a: Float64Array,
+    s: Float64Array,
     obs: ObservationInfo,
     cov: CovarianceInfo,
 ) -> float:
@@ -506,8 +507,8 @@ def _sxv_general_per_observation(
 
 
 def _sxv_score_covariance_contrib(
-    a: np.ndarray,
-    s: np.ndarray,
+    a: Float64Array,
+    s: Float64Array,
     obs: ObservationInfo,
     cov: CovarianceInfo,
 ) -> float:
@@ -555,9 +556,9 @@ def _sxv_mu_variance_contrib(
 
 
 def _compute_sxv(
-    x_centered: np.ndarray | sp.spmatrix,
-    a: np.ndarray,
-    s: np.ndarray,
+    x_centered: Float64Array | sp.spmatrix,
+    a: Float64Array,
+    s: Float64Array,
     obs: ObservationInfo,
     cov: CovarianceInfo,
 ) -> tuple[float, int]:
@@ -607,11 +608,11 @@ def _compute_sxv(
 
 
 def _compute_mu_cost(
-    mu: np.ndarray,
-    mu_variances: np.ndarray | None,
+    mu: Float64Array,
+    mu_variances: Float64Array | None,
     n_features: int,
     mu_prior_variance: float | None,
-    loading_priors: np.ndarray | float | None,
+    loading_priors: Float64Array | float | None,
 ) -> float:
     """Compute the mean-term contribution to the variational cost.
 
@@ -661,7 +662,7 @@ def _compute_mu_cost(
 
 
 def _loading_cost_no_prior(
-    loading_covariances: list[np.ndarray] | None,
+    loading_covariances: list[Float64Array] | None,
     n_features: int,
     n_components: int,
 ) -> float:
@@ -685,9 +686,9 @@ def _loading_cost_no_prior(
 
 
 def _loading_cost_with_prior(
-    a: np.ndarray,
-    loading_covariances: list[np.ndarray] | None,
-    va_arr: np.ndarray,
+    a: Float64Array,
+    loading_covariances: list[Float64Array] | None,
+    va_arr: Float64Array,
     n_features: int,
     n_components: int,
 ) -> float:
@@ -718,9 +719,9 @@ def _loading_cost_with_prior(
 
 
 def _compute_loading_cost(
-    a: np.ndarray,
-    loading_covariances: list[np.ndarray] | None,
-    loading_priors: np.ndarray | float | None,
+    a: Float64Array,
+    loading_covariances: list[Float64Array] | None,
+    loading_priors: Float64Array | float | None,
     n_features: int,
     n_components: int,
 ) -> float:
@@ -760,9 +761,9 @@ def _compute_loading_cost(
 
 
 def _compute_score_cost(
-    s: np.ndarray,
-    score_covariances: list[np.ndarray] | None,
-    score_pattern_index: np.ndarray | None,
+    s: Float64Array,
+    score_covariances: list[Float64Array] | None,
+    score_pattern_index: IndexArray | None,
     n_components: int,
     n_samples: int,
 ) -> float:
@@ -813,9 +814,9 @@ def _compute_score_cost(
 
 
 def compute_full_cost(
-    x: np.ndarray | sp.spmatrix,
-    a: np.ndarray,
-    s: np.ndarray,
+    x: Float64Array | sp.spmatrix,
+    a: Float64Array,
+    s: Float64Array,
     params: CostParams,
 ) -> tuple[float, float, float, float, float]:
     """Compute total cost and components (cost, cost_x, cost_a, cost_mu, cost_s).

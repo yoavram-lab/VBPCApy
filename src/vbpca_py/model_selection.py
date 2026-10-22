@@ -10,7 +10,7 @@ from __future__ import annotations
 import itertools
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal, SupportsFloat, SupportsIndex, cast
+from typing import TYPE_CHECKING, Literal, SupportsFloat, SupportsIndex, cast
 
 import numpy as np
 import scipy.sparse as sp
@@ -35,6 +35,14 @@ from ._pca_full import (
     _marginal_variance,
     _reconstruct_data,
 )
+from ._types import (  # noqa: TC001 - runtime annotation resolution
+    BoolArray,
+    Float64Array,
+    IndexArray,
+    InputMask,
+    InputMatrix,
+    MaskMatrix,
+)
 
 if TYPE_CHECKING:  # pragma: no cover
     from collections.abc import Callable, Iterable, Mapping, Sequence
@@ -57,18 +65,10 @@ RANK_ZERO_SELECTION_SUPPORTED = True
 
 _Metric = Literal["rms", "prms", "cost"]
 _CVMetric = Literal["prms", "brier", "log_score"]
-_AllowedFloat = (
-    SupportsFloat
-    | SupportsIndex
-    | np.floating[Any]
-    | np.integer[Any]
-    | str
-    | bytes
-    | bytearray
-)
+_AllowedFloat = SupportsFloat | SupportsIndex | str | bytes | bytearray
 
 
-@dataclass
+@dataclass(slots=True)
 class SelectionConfig:
     """Configuration for component selection.
 
@@ -92,7 +92,7 @@ _PROBE_FRACTION = 0.1
 """Fraction of observed entries held out for the probe set."""
 
 
-@dataclass
+@dataclass(slots=True)
 class _SweepState:
     best_k: int
     best_val: float
@@ -163,12 +163,12 @@ def _is_metric_reversal(previous: float, current: float) -> bool:
 
 def _fit_candidate(
     k: int,
-    x_arr: np.ndarray | sp.csr_matrix,
-    mask: Matrix | None,
+    x_arr: InputMatrix,
+    mask: InputMask | None,
     cfg: SelectionConfig,
     opts: Mapping[str, object],
 ) -> tuple[dict[str, object], VBPCA | None]:
-    from .estimators import VBPCA  # noqa: PLC0415 # Avoid circular dependency
+    from .estimators import VBPCA  # noqa: PLC0415 - avoid circular dependency
 
     _ = cfg  # keep signature compatibility for injected stubs during tests
 
@@ -178,7 +178,7 @@ def _fit_candidate(
     groups = candidate_opts.pop("_cell_groups", None)
     schema = candidate_opts.pop("_encoding_schema", None)
     scorer = cast(
-        "Callable[[np.ndarray], dict[str, float]] | None",
+        "Callable[[Float64Array], dict[str, float]] | None",
         candidate_opts.pop("_extra_scorer", None),
     )
     if k == 0:
@@ -233,14 +233,14 @@ def _fit_candidate(
 
 
 def _fit_mean_only_candidate(  # noqa: PLR0913
-    x: np.ndarray | sp.csr_matrix,
-    mask: Matrix | None,
+    x: InputMatrix,
+    mask: InputMask | None,
     xprobe: Matrix | None,
     *,
     bias: bool,
     groups: Sequence[object] | None = None,
     encoding_schema: EncodingSchema | None = None,
-    extra_scorer: Callable[[np.ndarray], dict[str, float]] | None = None,
+    extra_scorer: Callable[[Float64Array], dict[str, float]] | None = None,
 ) -> tuple[dict[str, object], None]:
     """Evaluate an explicit rank-zero (mean-only) candidate.
 
@@ -269,7 +269,7 @@ def _fit_mean_only_candidate(  # noqa: PLR0913
             raise ValueError(msg)
         observed &= mask_arr
 
-    probe_arr: np.ndarray | None = None
+    probe_arr: Float64Array | None = None
     probe_observed = np.zeros(x_arr.shape, dtype=bool)
     if xprobe is not None:
         probe_arr = np.asarray(xprobe, dtype=float)
@@ -321,11 +321,11 @@ def _fit_mean_only_candidate(  # noqa: PLR0913
 
 
 def _prediction_scores(
-    prediction: np.ndarray,
-    held_out: np.ndarray,
+    prediction: Float64Array,
+    held_out: Float64Array,
     groups: Sequence[object],
     schema: EncodingSchema | None,
-    scorer: Callable[[np.ndarray], dict[str, float]] | None,
+    scorer: Callable[[Float64Array], dict[str, float]] | None,
 ) -> dict[str, float]:
     scores = categorical_scores(prediction, held_out, groups, schema=schema)
     if scorer is not None:
@@ -338,7 +338,7 @@ def _compute_evr_for_best(
     *,
     solver: str = "auto",
     gram_ratio: float = 4.0,
-) -> np.ndarray | None:
+) -> Float64Array | None:
     if est.components_ is None or est.scores_ is None or est.mean_ is None:
         return None
     check_dense_output_budget(
@@ -370,7 +370,7 @@ def _compute_evr_for_best(
     return evr
 
 
-def _compute_variance_for_best(est: VBPCA) -> np.ndarray | None:
+def _compute_variance_for_best(est: VBPCA) -> Float64Array | None:
     if (
         est.components_ is None
         or est.scores_ is None
@@ -410,8 +410,11 @@ def _compute_variance_for_best(est: VBPCA) -> np.ndarray | None:
 
 
 def _normalize_mask_for_selection(
-    x: Matrix, mask: Matrix | None, max_dense_bytes: int | None, opts: dict[str, object]
-) -> Matrix | None:
+    x: InputMatrix,
+    mask: InputMask | None,
+    max_dense_bytes: int | None,
+    opts: dict[str, object],
+) -> MaskMatrix | None:
     """Normalize mask to dense bool or CSR, enforcing budget for sparse inputs.
 
     Returns:
@@ -457,8 +460,8 @@ def _normalize_mask_for_selection(
 
 def _ensure_metric_opts(
     fit_opts: dict[str, object],
-    x_arr: np.ndarray | sp.csr_matrix,
-    mask: Matrix | None,
+    x_arr: InputMatrix,
+    mask: InputMask | None,
     cfg: SelectionConfig,
     seed: int | np.random.Generator | None = None,
 ) -> None:
@@ -511,7 +514,7 @@ def _ensure_metric_opts(
     fit_opts["xprobe"] = xprobe
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class SweepInputs:
     cfg: SelectionConfig
     fit_opts: dict[str, object]
@@ -545,7 +548,7 @@ def _component_regime(k: int) -> tuple[int, int]:
     return lower, (2 * lower) - 1
 
 
-def _matrix_representation(x: Matrix | None) -> str:
+def _matrix_representation(x: InputMatrix | None) -> str:
     if x is None:
         return "none"
     if sp.issparse(x):
@@ -553,7 +556,7 @@ def _matrix_representation(x: Matrix | None) -> str:
     return "dense"
 
 
-def _selection_observed_count(x: Matrix, mask: Matrix | None) -> int:
+def _selection_observed_count(x: InputMatrix, mask: InputMask | None) -> int:
     if sp.issparse(x):
         if sp.issparse(mask):
             return int(np.count_nonzero(mask.data))
@@ -570,8 +573,8 @@ def _selection_observed_count(x: Matrix, mask: Matrix | None) -> int:
 def _runtime_policy_key(
     *,
     k: int,
-    x: Matrix,
-    mask: Matrix | None,
+    x: InputMatrix,
+    mask: InputMask | None,
     opts: Mapping[str, object],
 ) -> tuple[object, ...]:
     """Build a conservative compatibility key for measured runtime settings.
@@ -721,8 +724,8 @@ def _handle_patience(
 def _fit_with_reused_runtime_policy(
     *,
     k: int,
-    x: Matrix,
-    mask: Matrix | None,
+    x: InputMatrix,
+    mask: InputMask | None,
     inputs: SweepInputs,
     cache: dict[tuple[object, ...], dict[str, object]],
 ) -> tuple[dict[str, object], VBPCA | None]:
@@ -787,7 +790,7 @@ def _fit_with_reused_runtime_policy(
 def _sweep_components(
     k_values: Sequence[int],
     x_arr: Matrix,
-    mask_arg: Matrix | None,
+    mask_arg: MaskMatrix | None,
     inputs: SweepInputs,
 ) -> tuple[int, dict[str, object], list[dict[str, object]], VBPCA | None, VBPCA | None]:
     trace: list[dict[str, object]] = []
@@ -883,9 +886,9 @@ def _sweep_components(
 
 
 def select_n_components(
-    x: Matrix,
+    x: InputMatrix,
     *,
-    mask: Matrix | None = None,
+    mask: InputMask | None = None,
     components: Iterable[int] | None = None,
     config: SelectionConfig | None = None,
     **opts: object,
@@ -937,7 +940,7 @@ def select_n_components(
             arrays=3,
             operation="Selected-model diagnostics",
         )
-    x_arr: np.ndarray | sp.csr_matrix = (
+    x_arr: Float64Array | sp.csr_matrix = (
         sp.csr_matrix(x, copy=True) if sp.issparse(x) else np.array(x, dtype=float)
     )
     mask_arg = _normalize_mask_for_selection(
@@ -1012,7 +1015,7 @@ def select_n_components(
 # ---------------------------------------------------------------------------
 
 
-@dataclass
+@dataclass(slots=True)
 class CVConfig:
     """Configuration for K-fold cross-validated component selection.
 
@@ -1047,7 +1050,7 @@ class CVConfig:
     n_splits: int = 5
     one_se_rule: bool = True
     seed: int = 0
-    feature_groups: Sequence[Any] | None = None
+    feature_groups: Sequence[object] | None = None
     selection_rule: Literal["one_se", "minimum", "first_minimum"] | None = None
     early_stop: bool = False
     encoding_schema: EncodingSchema | None = None
@@ -1075,10 +1078,10 @@ class CVConfig:
 
 
 def _make_element_folds(
-    x: np.ndarray,
+    x: Float64Array,
     n_splits: int,
     rng: np.random.Generator,
-) -> list[tuple[np.ndarray, np.ndarray]]:
+) -> list[tuple[IndexArray, IndexArray]]:
     """Partition observed entries of *x* into *n_splits* folds.
 
     Args:
@@ -1129,11 +1132,11 @@ def _make_element_folds(
 
 
 def _make_group_folds(
-    x: np.ndarray,
-    groups: Sequence[Any],
+    x: Float64Array,
+    groups: Sequence[object],
     n_splits: int,
     rng: np.random.Generator,
-) -> list[tuple[np.ndarray, np.ndarray]]:
+) -> list[tuple[IndexArray, IndexArray]]:
     """Partition observed (variable, sample) cells into *n_splits* folds.
 
     Every observed entry belongs to the cell of its feature's group and its
@@ -1211,13 +1214,13 @@ def _first_minimum_stops(
 
 
 def _training_support_backbone(
-    obs_rows: np.ndarray,
-    obs_cols: np.ndarray,
+    obs_rows: IndexArray,
+    obs_cols: IndexArray,
     *,
     n_rows: int,
     n_cols: int,
     rng: np.random.Generator,
-) -> np.ndarray:
+) -> BoolArray:
     """Reserve a minimum edge cover of non-empty rows and columns.
 
     The returned boolean vector indexes the observed-entry arrays. Reserved
@@ -1278,11 +1281,11 @@ def _training_support_backbone(
 
 
 def _fold_preserves_training_coverage(
-    probe_sel: np.ndarray,
-    obs_rows: np.ndarray,
-    obs_cols: np.ndarray,
-    row_counts: np.ndarray,
-    col_counts: np.ndarray,
+    probe_sel: IndexArray,
+    obs_rows: IndexArray,
+    obs_cols: IndexArray,
+    row_counts: IndexArray,
+    col_counts: IndexArray,
 ) -> bool:
     """Return whether one holdout leaves every observed row and column covered."""
     heldout_rows = np.bincount(obs_rows[probe_sel], minlength=len(row_counts))
@@ -1306,10 +1309,10 @@ _CONVERGENCE_FIELDS: tuple[str, ...] = (
 
 def _run_fold(  # noqa: PLR0913
     fold_i: int,
-    x_base: np.ndarray,
-    obs_rows: np.ndarray,
-    obs_cols: np.ndarray,
-    probe_sel: np.ndarray,
+    x_base: Float64Array,
+    obs_rows: IndexArray,
+    obs_cols: IndexArray,
+    probe_sel: IndexArray,
     *,
     k_list: list[int],
     opts: dict[str, object],
@@ -1486,8 +1489,8 @@ def _aggregate_cv_results(
 
 
 def _cv_sweep(  # noqa: PLR0913
-    x_arr: np.ndarray,
-    folds: list[tuple[np.ndarray, np.ndarray]],
+    x_arr: Float64Array,
+    folds: list[tuple[IndexArray, IndexArray]],
     k_list: list[int],
     *,
     config: CVConfig,
@@ -1558,9 +1561,9 @@ def _apply_rule(
 
 
 def cross_validate_components(
-    x: Matrix,
+    x: InputMatrix,
     *,
-    mask: Matrix | None = None,
+    mask: InputMask | None = None,
     components: Iterable[int] | None = None,
     config: CVConfig | None = None,
     **opts: object,
@@ -1698,7 +1701,7 @@ def cross_validate_components(
     return best_k, cv_results
 
 
-def _cv_groups(config: CVConfig, x: np.ndarray) -> Sequence[Any] | None:
+def _cv_groups(config: CVConfig, x: Float64Array) -> Sequence[object] | None:
     """Resolve and validate the encoding contract before fitting candidates.
 
     Returns:

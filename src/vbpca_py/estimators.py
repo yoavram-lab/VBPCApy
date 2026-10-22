@@ -36,6 +36,8 @@ from vbpca_py.options import (  # noqa: TC001 - public runtime type-hint resolut
     VarianceUpdateOrder,
 )
 
+from ._types import BoolArray, Float64Array, IndexArray, InputMask, InputMatrix  # noqa: TC001 - runtime annotation resolution
+
 if TYPE_CHECKING:
     from vbpca_py.results import LearningCurve
 
@@ -255,9 +257,9 @@ class VBPCA(BaseEstimator):
         self.runtime_report = runtime_report
         self.explained_var_solver = explained_var_solver
         self.explained_var_gram_ratio = explained_var_gram_ratio
-        self.components_: np.ndarray | None = None
-        self.scores_: np.ndarray | None = None
-        self.mean_: np.ndarray | None = None
+        self.components_: Float64Array | None = None
+        self.scores_: Float64Array | None = None
+        self.mean_: Float64Array | None = None
         self.rms_: float | None = None
         self.prms_: float | None = None
         self.noise_variance_: float | None = None
@@ -270,27 +272,27 @@ class VBPCA(BaseEstimator):
         self.returned_iteration_: int | None = None
         self.learning_curve_: LearningCurve | None = None
         self.runtime_report_: dict[str, object] | None = None
-        self.reconstruction_: np.ndarray | None = None
+        self.reconstruction_: Float64Array | None = None
         # Posterior variance of the denoised reconstruction E[AS + mu]:
         # epistemic uncertainty in the latent mean, excluding observation noise.
-        self.variance_: np.ndarray | None = None
+        self.variance_: Float64Array | None = None
         # Predictive variance for a new observed entry: variance_ + noise_variance_.
         # Use this for calibrated prediction intervals / coverage of noisy data.
-        self.predictive_variance_: np.ndarray | None = None
-        self.explained_variance_: np.ndarray | None = None
-        self.explained_variance_ratio_: np.ndarray | None = None
+        self.predictive_variance_: Float64Array | None = None
+        self.explained_variance_: Float64Array | None = None
+        self.explained_variance_ratio_: Float64Array | None = None
         self.n_features_in_: int | None = None
         # ARD state: final loading prior variances, the bias prior variance,
         # each returned component's share of reconstruction energy, and the
         # per-iteration prior variances when ``record_prior_trace=True``.
-        self.prior_variances_: np.ndarray | None = None
+        self.prior_variances_: Float64Array | None = None
         self.bias_prior_variance_: float | None = None
-        self.component_relevance_: np.ndarray | None = None
-        self.prior_trace_: np.ndarray | None = None
-        self._av: list[np.ndarray] | None = None
-        self._sv: list[np.ndarray] | None = None
-        self._pattern_index: np.ndarray | None = None
-        self._muv: np.ndarray | None = None
+        self.component_relevance_: Float64Array | None = None
+        self.prior_trace_: Float64Array | None = None
+        self._av: list[Float64Array] | None = None
+        self._sv: list[Float64Array] | None = None
+        self._pattern_index: IndexArray | None = None
+        self._muv: Float64Array | None = None
 
     def _solver_kwargs(self) -> dict[str, object]:
         """Gather stored arguments without changing constructor identities.
@@ -326,8 +328,8 @@ class VBPCA(BaseEstimator):
 
     def fit(  # noqa: C901, PLR0912, PLR0914, PLR0915
         self,
-        x: Matrix,
-        mask: Matrix | None = None,
+        x: InputMatrix,
+        mask: InputMask | None = None,
         xprobe: Matrix | None = None,
     ) -> VBPCA:
         """
@@ -394,7 +396,7 @@ class VBPCA(BaseEstimator):
                 mask_clean = np.asarray(mask, dtype=bool)
 
         mask_param: Matrix | None = None
-        data_for_fit: Matrix
+        data_for_fit: InputMatrix
         if sp.issparse(x):
             x_sparse = sp.csr_matrix(x)
             if mask_clean is not None:
@@ -519,9 +521,9 @@ class VBPCA(BaseEstimator):
                 result["ExplainedVarRatio"], dtype=float
             )
         self.n_features_in_ = int(self.components_.shape[0])
-        av_raw = cast("list[np.ndarray] | None", result.get("Av"))
+        av_raw = cast("list[Float64Array] | None", result.get("Av"))
         self._av = [np.asarray(a, dtype=float) for a in av_raw] if av_raw else None
-        sv_raw = cast("list[np.ndarray] | None", result.get("Sv"))
+        sv_raw = cast("list[Float64Array] | None", result.get("Sv"))
         self._sv = [np.asarray(s, dtype=float) for s in sv_raw] if sv_raw else None
         isv_raw = result.get("Isv")
         self._pattern_index = (
@@ -544,7 +546,7 @@ class VBPCA(BaseEstimator):
             else None
         )
         self.component_relevance_ = _component_relevance(
-            cast("np.ndarray", self.components_), cast("np.ndarray", self.scores_)
+            cast("Float64Array", self.components_), cast("Float64Array", self.scores_)
         )
         trace = (self.learning_curve_ or {}).get("prior_trace")
         self.prior_trace_ = np.asarray(trace, dtype=float) if trace else None
@@ -572,7 +574,7 @@ class VBPCA(BaseEstimator):
         """Return a fresh legacy keyword export of :meth:`get_config`."""
         return self.get_config().to_kwargs()
 
-    def transform(self, x: Matrix | None = None) -> np.ndarray:
+    def transform(self, x: InputMatrix | None = None) -> Float64Array:
         """Return scores from the fitted model; new data not yet supported.
 
         Raises:
@@ -586,7 +588,9 @@ class VBPCA(BaseEstimator):
             raise NotImplementedError(msg)
         return self.scores_
 
-    def fit_transform(self, x: Matrix, mask: np.ndarray | None = None) -> np.ndarray:
+    def fit_transform(
+        self, x: InputMatrix, mask: BoolArray | None = None
+    ) -> Float64Array:
         """Convenience wrapper for fit + transform on the training data.
 
         Returns:
@@ -594,7 +598,7 @@ class VBPCA(BaseEstimator):
         """
         return self.fit(x, mask).transform()
 
-    def inverse_transform(self, scores: np.ndarray | None = None) -> np.ndarray:
+    def inverse_transform(self, scores: Float64Array | None = None) -> Float64Array:
         """Reconstruct data from scores using fitted loadings and mean.
 
         Returns:
@@ -624,13 +628,13 @@ class VBPCA(BaseEstimator):
         recon = self.components_ @ scores_arr
         if self.bias:
             recon += self.mean_
-        return recon  # type: ignore[no-any-return]
+        return recon
 
     def select_n_components(
         self,
-        x: Matrix,
+        x: InputMatrix,
         *,
-        mask: Matrix | None = None,
+        mask: InputMask | None = None,
         components: list[int] | range | None = None,
         config: SelectionConfig | None = None,
         **opts: object,
@@ -655,7 +659,7 @@ class VBPCA(BaseEstimator):
         )
 
 
-def _component_relevance(loadings: np.ndarray, scores: np.ndarray) -> np.ndarray:
+def _component_relevance(loadings: Float64Array, scores: Float64Array) -> Float64Array:
     """Return each component's share of reconstruction energy.
 
     The share of component ``k`` is ``|a_k| |s_k|`` over the sum across
@@ -672,5 +676,5 @@ def _component_relevance(loadings: np.ndarray, scores: np.ndarray) -> np.ndarray
     total = float(energy.sum())
     if total <= 0.0:
         return np.zeros_like(energy)
-    shares: np.ndarray = energy / total
+    shares: Float64Array = energy / total
     return shares

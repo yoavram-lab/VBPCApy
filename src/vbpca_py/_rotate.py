@@ -19,6 +19,8 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from ._types import Float64Array, IndexArray  # noqa: TC001 - runtime annotation resolution
+
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
@@ -88,9 +90,9 @@ _EPS_EIG = 1e-20
 class RotateParams:
     """Grouped parameters for rotate_to_pca."""
 
-    loading_covariances: list[np.ndarray] | None = None
-    score_covariances: list[np.ndarray] = field(default_factory=list)
-    isv: np.ndarray | list[int] | None = None
+    loading_covariances: list[Float64Array] | None = None
+    score_covariances: list[Float64Array] = field(default_factory=list)
+    isv: IndexArray | list[int] | None = None
     obscombj: list[list[int]] | None = None
     update_bias: bool = True
 
@@ -100,7 +102,7 @@ class RotateParams:
 # ---------------------------------------------------------------------------
 
 
-def _as_int_array(idx: Iterable[int] | np.ndarray | None) -> np.ndarray:
+def _as_int_array(idx: Iterable[int] | IndexArray | None) -> IndexArray:
     """Convert an index-like iterable to a 1D int array (possibly empty).
 
     Returns:
@@ -119,8 +121,8 @@ def _as_int_array(idx: Iterable[int] | np.ndarray | None) -> np.ndarray:
 
 
 def _validate_a_s_shapes(
-    loadings: np.ndarray,
-    scores: np.ndarray,
+    loadings: Float64Array,
+    scores: Float64Array,
 ) -> tuple[int, int, int]:
     if loadings.ndim != 2:
         raise ValueError(ERR_A_SHAPE)
@@ -141,7 +143,7 @@ def _validate_a_s_shapes(
 
 
 def _validate_av_shapes(
-    loading_covariances: list[np.ndarray] | None,
+    loading_covariances: list[Float64Array] | None,
     n_features: int,
     n_components: int,
 ) -> None:
@@ -169,7 +171,7 @@ def _validate_av_shapes(
 
 
 def _validate_sv_shapes(
-    score_covariances: list[np.ndarray] | None, n_components: int
+    score_covariances: list[Float64Array] | None, n_components: int
 ) -> None:
     if (
         score_covariances is None
@@ -188,10 +190,10 @@ def _validate_sv_shapes(
 
 
 def _validate_shapes(
-    loadings: np.ndarray,
-    scores: np.ndarray,
-    loading_covariances: list[np.ndarray] | None,
-    score_covariances: list[np.ndarray] | None,
+    loadings: Float64Array,
+    scores: Float64Array,
+    loading_covariances: list[Float64Array] | None,
+    score_covariances: list[Float64Array] | None,
 ) -> tuple[int, int, int]:
     n_features, n_components, n_samples = _validate_a_s_shapes(loadings, scores)
     _validate_av_shapes(loading_covariances, n_features, n_components)
@@ -200,11 +202,11 @@ def _validate_shapes(
 
 
 def _build_cov_s(
-    scores: np.ndarray,
-    score_covariances: list[np.ndarray],
-    isv: np.ndarray,
+    scores: Float64Array,
+    score_covariances: list[Float64Array],
+    isv: IndexArray,
     obscombj: list[list[int]] | None,
-) -> np.ndarray:
+) -> Float64Array:
     """CovS = (S Sᵀ + sum_j Sv_j) / n_samples, with pattern-mode weighting.
 
     Returns:
@@ -244,10 +246,10 @@ def _build_cov_s(
             cov_s += len(cols) * np.asarray(sv_k, dtype=float)
 
     cov_s /= float(n_samples)
-    return cov_s  # type: ignore[no-any-return]
+    return cov_s
 
 
-def _eigh_psd(matrix: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+def _eigh_psd(matrix: Float64Array) -> tuple[Float64Array, Float64Array]:
     """Eigen-decompose symmetric PSD matrix, clipping tiny negative eigenvalues.
 
     Returns:
@@ -258,17 +260,19 @@ def _eigh_psd(matrix: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     return w, v
 
 
-def _build_ra(eigvals: np.ndarray, eigvecs: np.ndarray) -> np.ndarray:
+def _build_ra(eigvals: Float64Array, eigvecs: Float64Array) -> Float64Array:
     """RA = V_S * sqrt(D) using broadcasting.
 
     Returns:
         Matrix ``RA`` for rotating loadings.
     """
     sqrt_eig = np.sqrt(np.clip(eigvals, 0.0, None))
-    return eigvecs * sqrt_eig[np.newaxis, :]  # type: ignore[no-any-return]
+    return eigvecs * sqrt_eig[np.newaxis, :]
 
 
-def _build_r(eigvals_s: np.ndarray, v_s: np.ndarray, v_a: np.ndarray) -> np.ndarray:
+def _build_r(
+    eigvals_s: Float64Array, v_s: Float64Array, v_a: Float64Array
+) -> Float64Array:
     """R = V_A.T * diag(1/sqrt(eigvals_s)) * V_S.T with eigenvalue floor.
 
     Returns:
@@ -277,14 +281,14 @@ def _build_r(eigvals_s: np.ndarray, v_s: np.ndarray, v_a: np.ndarray) -> np.ndar
     sqrt_eig = np.sqrt(np.clip(eigvals_s, 0.0, None))
     inv_sqrt = 1.0 / np.maximum(sqrt_eig, _EPS_EIG)
     # Equivalent to v_a.T @ diag(inv_sqrt) @ v_s.T, but avoids building diag().
-    return (v_a.T * inv_sqrt[np.newaxis, :]) @ v_s.T  # type: ignore[no-any-return]
+    return (v_a.T * inv_sqrt[np.newaxis, :]) @ v_s.T
 
 
 def _transform_covariances(
-    covariances: list[np.ndarray],
-    left: np.ndarray,
-    right: np.ndarray,
-) -> list[np.ndarray]:
+    covariances: list[Float64Array],
+    left: Float64Array,
+    right: Float64Array,
+) -> list[Float64Array]:
     if not covariances:
         return covariances
 
@@ -296,11 +300,11 @@ def _transform_covariances(
 
 
 def _weighted_cov_eigh(
-    base: np.ndarray,
-    covariances: list[np.ndarray],
-    weights: np.ndarray,
+    base: Float64Array,
+    covariances: list[Float64Array],
+    weights: Float64Array,
     normalizer: float,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[Float64Array, Float64Array, Float64Array]:
     cov_stack = np.asarray(covariances, dtype=float)
     out = _weighted_cov_eigh_psd_ext(
         np.asarray(base, dtype=float),
@@ -315,11 +319,11 @@ def _weighted_cov_eigh(
 
 
 def _cov_s_eigh(
-    scores: np.ndarray,
-    score_covariances: list[np.ndarray],
-    isv: np.ndarray,
+    scores: Float64Array,
+    score_covariances: list[Float64Array],
+    isv: IndexArray,
     obscombj: list[list[int]] | None,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[Float64Array, Float64Array, Float64Array]:
     _, n_samples = scores.shape
     if isv.size > 0 and isv.size != n_samples:
         raise ValueError(ERR_ISV_LENGTH)
@@ -352,10 +356,10 @@ def _cov_s_eigh(
 
 
 def _cov_a_eigh(
-    loadings: np.ndarray,
-    loading_covariances: list[np.ndarray] | None,
+    loadings: Float64Array,
+    loading_covariances: list[Float64Array] | None,
     n_features: int,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[Float64Array, Float64Array, Float64Array]:
     base = loadings.T @ loadings
     if loading_covariances:
         weights = np.ones(len(loading_covariances), dtype=float)
@@ -373,11 +377,15 @@ def _cov_a_eigh(
 
 
 def rotate_to_pca(
-    loadings: np.ndarray,
-    scores: np.ndarray,
+    loadings: Float64Array,
+    scores: Float64Array,
     params: RotateParams,
 ) -> tuple[
-    np.ndarray, np.ndarray, list[np.ndarray] | None, np.ndarray, list[np.ndarray]
+    Float64Array,
+    Float64Array,
+    list[Float64Array] | None,
+    Float64Array,
+    list[Float64Array],
 ]:
     """Rotate the VB-PCA latent space to a PCA-like orientation (RotateToPCA.m).
 

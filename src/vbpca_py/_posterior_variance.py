@@ -6,6 +6,8 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from ._types import Float64Array, IndexArray  # noqa: TC001 - runtime annotation resolution
+
 if TYPE_CHECKING:
     from ._full_update import CovarianceStore
     from ._pca_full import FinalState
@@ -15,18 +17,18 @@ def _covariance_block(
     covariances: CovarianceStore,
     start: int,
     stop: int,
-    patterns: np.ndarray | None = None,
-) -> np.ndarray:
+    patterns: IndexArray | None = None,
+) -> Float64Array:
     if patterns is None:
         return np.asarray(covariances[start:stop], dtype=float)
     return np.asarray([covariances[int(j)] for j in patterns[start:stop]], dtype=float)
 
 
-def marginal_variance(  # noqa: PLR0914  # Named blocks mirror the covariance equation.
+def marginal_variance(  # noqa: PLR0914 - named blocks mirror the covariance equation
     final: FinalState,
     *,
     block_size: int = 128,
-) -> np.ndarray:
+) -> Float64Array:
     """Evaluate posterior variance using two GEMMs per rectangular block.
 
     Off-diagonal covariances and mean uncertainty are retained. Observation

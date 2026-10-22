@@ -11,22 +11,23 @@ which can then share computations such as covariance patterns.
 from __future__ import annotations
 
 import logging
-from typing import Any, cast
 
 import numpy as np
 import scipy.sparse as sp
 
+from ._types import Float64Array, IndexArray, InputArray, InputMask, InputMatrix
+
 logger = logging.getLogger(__name__)
 
 MASK_WRONG_DIM = "mask must be a 2D array."
-Matrix = np.ndarray | sp.spmatrix
+Matrix = Float64Array | sp.spmatrix
 
 
 def _missing_patterns(
-    mask: np.ndarray,
+    mask: InputArray,
     *,
     verbose: bool = False,
-) -> tuple[int, list[list[int]], np.ndarray]:
+) -> tuple[int, list[list[int]], IndexArray]:
     """Identify unique missingness patterns across columns.
 
     Columns that share the same pattern of missing/observed entries
@@ -113,7 +114,7 @@ def _xprobe_sparse(
     x: sp.csr_matrix,
     fraction: float,
     rng: np.random.Generator,
-    mask: Matrix | None = None,
+    mask: InputMask | None = None,
 ) -> tuple[sp.csr_matrix, sp.csr_matrix]:
     """Hold out probe entries from a sparse matrix.
 
@@ -128,7 +129,7 @@ def _xprobe_sparse(
         observed = x_csr.copy()
         observed.data = np.ones(observed.nnz, dtype=bool)
     elif sp.issparse(mask):
-        observed = sp.csr_matrix(cast("Any", mask), dtype=bool, copy=True)
+        observed = sp.csr_matrix(mask, dtype=bool, copy=True)
         observed.eliminate_zeros()
     else:
         mask_arr = np.asarray(mask, dtype=bool)
@@ -166,11 +167,11 @@ def _xprobe_sparse(
 
 
 def _xprobe_dense(
-    x: np.ndarray,
+    x: Float64Array,
     fraction: float,
     rng: np.random.Generator,
-    mask: Matrix | None = None,
-) -> tuple[np.ndarray, np.ndarray]:
+    mask: InputMask | None = None,
+) -> tuple[Float64Array, Float64Array]:
     """Hold out probe entries from a dense matrix.
 
     Returns:
@@ -209,12 +210,12 @@ def _xprobe_dense(
 
 
 def make_xprobe_mask(
-    x: np.ndarray | sp.csr_matrix,
+    x: InputMatrix,
     fraction: float = 0.10,
     rng: np.random.Generator | None = None,
     *,
-    mask: Matrix | None = None,
-) -> tuple[np.ndarray | sp.csr_matrix, np.ndarray | sp.csr_matrix]:
+    mask: InputMask | None = None,
+) -> tuple[Float64Array | sp.csr_matrix, Float64Array | sp.csr_matrix]:
     """Hold out a fraction of observed entries as probe data.
 
     Selects a random subset of observed entries (non-NaN for dense,

@@ -6,6 +6,8 @@ that were removed by ``rmempty``. Indices are **0-based** throughout.
 
 import numpy as np
 
+from ._types import Float64Array, IndexArray
+
 # ============================================================
 # Common index / shape validation errors
 # ============================================================
@@ -53,9 +55,9 @@ ERR_ROW_COV_ARRAY_SHAPE = (
 
 
 def _compute_kept_and_missing_indices(
-    kept_indices: np.ndarray | list[int],
+    kept_indices: IndexArray | list[int],
     n_total: int,
-) -> tuple[np.ndarray, np.ndarray]:
+) -> tuple[IndexArray, IndexArray]:
     """Validate kept indices and compute missing indices.
 
     Args:
@@ -90,12 +92,12 @@ def _compute_kept_and_missing_indices(
 
 
 def _expand_score_covs_list_per_column(
-    score_covs: list[np.ndarray],
-    kept_cols_idx: np.ndarray,
-    missing_cols_idx: np.ndarray,
+    score_covs: list[Float64Array],
+    kept_cols_idx: IndexArray,
+    missing_cols_idx: IndexArray,
     n_components: int,
     dtype: np.dtype,
-) -> tuple[list[np.ndarray], list[int] | None]:
+) -> tuple[list[Float64Array], list[int] | None]:
     """Expand list-based per-column covariances to all columns.
 
     Returns:
@@ -110,7 +112,7 @@ def _expand_score_covs_list_per_column(
 
     n_total_cols = kept_cols_idx.size + missing_cols_idx.size
     identity = np.eye(n_components, dtype=dtype)
-    expanded_score_covs: list[np.ndarray] = [
+    expanded_score_covs: list[Float64Array] = [
         identity.copy() for _ in range(n_total_cols)
     ]
 
@@ -125,12 +127,12 @@ def _expand_score_covs_list_per_column(
 
 
 def _expand_score_covs_list_unique_pattern(
-    score_covs: list[np.ndarray],
-    score_cov_indices: np.ndarray,
-    kept_cols_idx: np.ndarray,
+    score_covs: list[Float64Array],
+    score_cov_indices: IndexArray,
+    kept_cols_idx: IndexArray,
     n_total_cols: int,
     n_components: int,
-) -> tuple[list[np.ndarray], list[int]]:
+) -> tuple[list[Float64Array], list[int]]:
     """Expand list-based covariances in unique-pattern mode.
 
     Returns:
@@ -166,11 +168,11 @@ def _expand_score_covs_list_unique_pattern(
 
 
 def _expand_score_covs_diagonal(
-    score_covs: np.ndarray,
+    score_covs: Float64Array,
     n_components: int,
     n_total_cols: int,
-    kept_cols_idx: np.ndarray,
-) -> tuple[np.ndarray, None]:
+    kept_cols_idx: IndexArray,
+) -> tuple[Float64Array, None]:
     """Expand diagonal covariance specification to all columns.
 
     Returns:
@@ -188,12 +190,14 @@ def _expand_score_covs_diagonal(
 
 
 def _add_m_cols(
-    scores: np.ndarray,
-    score_covs: np.ndarray | list[np.ndarray],
-    kept_cols: np.ndarray | list[int],
+    scores: Float64Array,
+    score_covs: Float64Array | list[Float64Array],
+    kept_cols: IndexArray | list[int],
     n_total_cols: int,
-    score_cov_indices: np.ndarray | list[int] | None = None,
-) -> tuple[np.ndarray, np.ndarray | list[np.ndarray], np.ndarray | list[int] | None]:
+    score_cov_indices: IndexArray | list[int] | None = None,
+) -> tuple[
+    Float64Array, Float64Array | list[Float64Array], IndexArray | list[int] | None
+]:
     """Expand scores and covariances to the original number of columns.
 
     Used at the end of ``pca_full`` to reinsert columns removed by ``rmempty``.
@@ -254,8 +258,8 @@ def _add_m_cols(
     expanded_scores[:, kept_cols_idx] = scores
 
     # Handle score_covs depending on its representation.
-    expanded_score_covs: list[np.ndarray] | np.ndarray
-    expanded_score_cov_indices: list[int] | np.ndarray | None
+    expanded_score_covs: list[Float64Array] | Float64Array
+    expanded_score_cov_indices: list[int] | IndexArray | None
 
     if isinstance(score_covs, list):
         if score_cov_indices is None or len(score_cov_indices) == 0:
@@ -298,8 +302,8 @@ def _add_m_cols(
 
 def _normalize_row_variances(
     n_components: int,
-    row_variances: np.ndarray | list[float] | float | None,
-) -> np.ndarray:
+    row_variances: Float64Array | list[float] | float | None,
+) -> Float64Array:
     """Normalize row_variances into a 1D array of length n_components.
 
     Returns:
@@ -323,11 +327,11 @@ def _normalize_row_variances(
 
 
 def _init_expanded_rows(
-    rows: np.ndarray,
+    rows: Float64Array,
     n_total_rows: int,
-    kept_rows_idx: np.ndarray,
-    variances: np.ndarray,
-) -> np.ndarray:
+    kept_rows_idx: IndexArray,
+    variances: Float64Array,
+) -> Float64Array:
     """Initialize the expanded row matrix, inserting kept rows.
 
     Returns:
@@ -350,12 +354,12 @@ def _init_expanded_rows(
 
 
 def _expand_row_covs_list(
-    row_covs: list[np.ndarray],
+    row_covs: list[Float64Array],
     n_total_rows: int,
-    kept_rows_idx: np.ndarray,
-    _missing_rows_idx: np.ndarray,
-    variances: np.ndarray,
-) -> list[np.ndarray]:
+    kept_rows_idx: IndexArray,
+    _missing_rows_idx: IndexArray,
+    variances: Float64Array,
+) -> list[Float64Array]:
     """Expand list-based per-row covariance matrices to all rows.
 
     Returns:
@@ -368,7 +372,7 @@ def _expand_row_covs_list(
         raise ValueError(ERR_ROW_COV_LIST_LENGTH)
 
     default_cov = np.diag(variances) if variances.size > 0 else np.zeros((0, 0))
-    expanded_row_covs: list[np.ndarray] = [
+    expanded_row_covs: list[Float64Array] = [
         default_cov.copy() for _ in range(n_total_rows)
     ]
 
@@ -380,12 +384,12 @@ def _expand_row_covs_list(
 
 
 def _expand_row_covs_array(
-    row_covs: np.ndarray,
+    row_covs: Float64Array,
     n_components: int,
     n_total_rows: int,
-    kept_rows_idx: np.ndarray,
-    variances: np.ndarray,
-) -> np.ndarray:
+    kept_rows_idx: IndexArray,
+    variances: Float64Array,
+) -> Float64Array:
     """Expand array-like per-row diagonal variances to all rows.
 
     Returns:
@@ -403,12 +407,12 @@ def _expand_row_covs_array(
 
 
 def _add_m_rows(
-    rows: np.ndarray,
-    row_covs: list[np.ndarray] | np.ndarray | None,
-    kept_rows: np.ndarray | list[int],
+    rows: Float64Array,
+    row_covs: list[Float64Array] | Float64Array | None,
+    kept_rows: IndexArray | list[int],
     n_total_rows: int,
-    row_variances: np.ndarray | list[float] | float | None = None,
-) -> tuple[np.ndarray, list[np.ndarray] | np.ndarray]:
+    row_variances: Float64Array | list[float] | float | None = None,
+) -> tuple[Float64Array, list[Float64Array] | Float64Array]:
     """Expand rows and associated covariances to the original number of rows.
 
     This mirrors ``_add_m_cols`` but for rows, and is used at the end of
@@ -480,7 +484,7 @@ def _add_m_rows(
     if not has_covs or n_components == 0:
         return expanded_rows, []
 
-    expanded_row_covs: list[np.ndarray] | np.ndarray
+    expanded_row_covs: list[Float64Array] | Float64Array
     if isinstance(row_covs, list):
         expanded_row_covs = _expand_row_covs_list(
             row_covs=row_covs,

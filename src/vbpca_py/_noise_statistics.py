@@ -14,22 +14,136 @@ from typing import TYPE_CHECKING, Literal, cast
 import numpy as np
 import numpy.typing as npt
 
+from ._types import (  # noqa: TC001 - runtime annotation resolution
+    Float64Array,
+    IndexArray,
+)
 from .noise_update_kernels import noise_sxv_sum
 from .options import StatisticsMode
 
 if TYPE_CHECKING:
     from ._full_update import NoiseState
-    from .results import Float64Array
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, init=False)
 class NoiseComplement:
-    """Missing coordinates derived once from the exact observed coordinate set."""
+    """Owned read-only missing coordinates, with immutable scalar metadata.
+
+    Construction snapshots coordinate inputs; pickle/deepcopy reconstruct the
+    same ownership and write flags. Array shapes remain runtime checks.
+    """
 
     shape: tuple[int, int]
     observed_count: int
     rows: npt.NDArray[np.int32]
     columns: npt.NDArray[np.int32]
+
+    def __init__(
+        self,
+        shape: tuple[int, int],
+        observed_count: int,
+        rows: npt.ArrayLike,
+        columns: npt.ArrayLike,
+    ) -> None:
+        """Snapshot validated signed coordinates without retaining caller buffers.
+
+        Raises:
+            ValueError: Dimensions, coordinate bounds or counts are inconsistent.
+            TypeError: The observed count is not an integer.
+        """
+        integer_dimensions = all(
+            isinstance(size, int | np.integer) and not isinstance(size, bool | np.bool_)
+            for size in shape
+        )
+        if (
+            len(shape) != 2
+            or not integer_dimensions
+            or min(shape) < 0
+            or max(shape) > np.iinfo(np.int32).max
+        ):
+            msg = "noise complement shape must fit nonnegative int32 coordinates"
+            raise ValueError(msg)
+        normalized_shape = (int(shape[0]), int(shape[1]))
+        if not isinstance(observed_count, int | np.integer) or isinstance(
+            observed_count, bool | np.bool_
+        ):
+            msg = "noise complement observed count must be an integer"
+            raise TypeError(msg)
+        row_array = _owned_coordinates(rows, normalized_shape[0])
+        column_array = _owned_coordinates(columns, normalized_shape[1])
+        total = normalized_shape[0] * normalized_shape[1]
+        if (
+            row_array.size != column_array.size
+            or observed_count != total - row_array.size
+        ):
+            msg = "noise complement coordinate lengths and observed count disagree"
+            raise ValueError(msg)
+        flat = row_array.astype(np.int64) * normalized_shape[1] + column_array
+        if np.unique(flat).size != flat.size:
+            msg = "noise complement coordinates must be unique"
+            raise ValueError(msg)
+        object.__setattr__(self, "shape", normalized_shape)
+        object.__setattr__(self, "observed_count", int(observed_count))
+        object.__setattr__(self, "rows", row_array)
+        object.__setattr__(self, "columns", column_array)
+
+    @classmethod
+    def _from_owned_partition(
+        cls,
+        shape: tuple[int, int],
+        observed_count: int,
+        rows: npt.NDArray[np.int32],
+        columns: npt.NDArray[np.int32],
+    ) -> NoiseComplement:
+        """Take owned buffers after the observation-grid partition check.
+
+        Returns:
+            A read-only plan without repeating the grid/uniqueness screening.
+        """
+        result = object.__new__(cls)
+        rows.setflags(write=False)
+        columns.setflags(write=False)
+        object.__setattr__(result, "shape", shape)  # noqa: PLC2801 - frozen storage
+        object.__setattr__(result, "observed_count", observed_count)  # noqa: PLC2801 - frozen storage
+        object.__setattr__(result, "rows", rows)  # noqa: PLC2801 - frozen storage
+        object.__setattr__(result, "columns", columns)  # noqa: PLC2801 - frozen storage
+        return result
+
+    def __reduce__(
+        self,
+    ) -> tuple[
+        type[NoiseComplement],
+        tuple[tuple[int, int], int, npt.NDArray[np.int32], npt.NDArray[np.int32]],
+    ]:
+        """Reconstruct owned read-only arrays when deserializing.
+
+        Returns:
+            The constructor and its complete input payload.
+        """
+        return type(self), (self.shape, self.observed_count, self.rows, self.columns)
+
+
+def _owned_coordinates(values: npt.ArrayLike, bound: int) -> npt.NDArray[np.int32]:
+    """Own a bounded signed coordinate vector.
+
+    Returns:
+        A read-only int32 copy.
+
+    Raises:
+        ValueError: Values are not a one-dimensional bounded integer vector.
+    """
+    raw = np.asarray(values)
+    if (
+        raw.ndim != 1
+        or not np.issubdtype(raw.dtype, np.signedinteger)
+        or np.any(raw < 0)
+        or np.any(raw >= bound)
+    ):
+        msg = "noise complement coordinates must be bounded signed integer vectors"
+        raise ValueError(msg)
+    owned = np.array(raw, dtype=np.int32, copy=True)
+    owned.setflags(write=False)
+    return owned
 
 
 def normalize_noise_statistics(
@@ -55,7 +169,7 @@ def normalize_noise_statistics(
 
 
 def prepare_noise_complement(
-    shape: tuple[int, int], ix: np.ndarray, jx: np.ndarray
+    shape: tuple[int, int], ix: IndexArray, jx: IndexArray
 ) -> NoiseComplement | None:
     """Prepare a small complement without inferring membership from data values.
 
@@ -87,13 +201,11 @@ def prepare_noise_complement(
     rows_raw, columns_raw = np.nonzero(missing)
     rows = rows_raw.astype(np.int32)
     columns = columns_raw.astype(np.int32)
-    rows.setflags(write=False)
-    columns.setflags(write=False)
-    return NoiseComplement(shape, int(ix.size), rows, columns)
+    return NoiseComplement._from_owned_partition(shape, int(ix.size), rows, columns)  # noqa: SLF001 - validated factory
 
 
 def _supported_coordinates(
-    shape: tuple[int, int], ix: np.ndarray, jx: np.ndarray
+    shape: tuple[int, int], ix: IndexArray, jx: IndexArray
 ) -> bool:
     dimensions = min(shape) > 0 and max(shape) <= np.iinfo(np.int32).max
     same_vectors = ix.ndim == jx.ndim == 1 and ix.size == jx.size
