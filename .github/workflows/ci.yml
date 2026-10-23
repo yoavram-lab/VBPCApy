@@ -163,6 +163,7 @@ jobs:
           tests/test_feature_output.py
           tests/test_native_selection.py
           tests/test_native_sparse_validation.py
+          tests/test_pipeline_example.py
 
   numerical-reference:
     runs-on: ubuntu-latest
