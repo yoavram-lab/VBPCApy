@@ -212,7 +212,8 @@ class VBPCA(TypedEstimator):
             rotate2pca: Rotate factors to principal axes while fitting.
             display: Enable legacy progress display.
             bias_update_order: Mean-update ordering, or compatibility default.
-            variance_update_order: Noise-update ordering, or compatibility default.
+            variance_update_order: Prior-variance ordering relative to rotation,
+                or the compatibility default.
             compat_mode: Legacy or modern numerical compatibility policy.
             return_diagnostics: Include reconstruction and variance fit outputs.
             runtime_report: Retain execution-policy diagnostics after fit.

@@ -280,9 +280,16 @@ Combined grouped CV and multi-metric GridSearchCV tests cover mask routing,
 scoring-only row weights and dense containers. Custom scorers declare their own
 metadata requests; masked inference after search uses the fitted pipeline
 through `best_estimator_`, because search `transform` does not accept metadata.
-Complete the remaining #14/#19/#25/#319 examples/migration and #314 release
-qualification before the single 0.5 release. Frozen scientific registrations
-and study outcomes are not migrated by these engineering changes.
+The complete mixed-data Pipeline example (#349, closing #14) now projects
+separate new rows, decodes through the fitted model/encoder portion and
+qualifies default/pandas/Polars outputs. The mode comparison and executed
+migration source cover #19. Native raw sparse validation (#347) preserves
+observations before coalescing; modern dense explicit-mask preparation also
+preserves finite near-zero training/probe values (#350), while the historical
+strict-legacy epsilon policy is retained. Complete the remaining #25/#319
+gallery/docstring examples and #314 release qualification before the single
+0.5 release. Frozen scientific registrations and study outcomes are not
+migrated by these engineering changes.
 
 The preimplementation/boundary probes identified the prerequisites below,
 which have since been addressed before the native estimator migration.

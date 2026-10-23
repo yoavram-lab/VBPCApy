@@ -19,6 +19,8 @@ The explicit legacy adapter and low-level solver retain their historical
 defaults. Explicit `compat_mode="strict_legacy"` still requests historical
 numerical/observation semantics; use the legacy adapter when reproducing the
 pre-0.5 interface. Do not silently update a frozen study installation.
+The [mode comparison](../howto/compatibility-modes.md) details observation,
+epsilon and update-order differences and provides an executed migration example.
 
 ## Fit, project and reconstruct
 

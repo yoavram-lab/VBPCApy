@@ -69,8 +69,9 @@ gate. Independent confirmation and a 5,846-feature by 2,504-sample scale check
 supported post-factor mean/RMS ordering for recommended workflows. It retained
 prediction and calibration while producing equal or lower rank error than
 legacy ordering. Accordingly, :func:`recommend_config` requests
-``bias_update_order="post_factor"``. The estimator default remains
-``strict_legacy`` for backward compatibility and MATLAB parity.
+``bias_update_order="post_factor"``. The explicit legacy adapter and low-level
+solver retain ``strict_legacy`` for backward compatibility and MATLAB parity;
+the native 0.5 estimator and public selection helpers default to ``modern``.
 
 **Cost-stop correction:** recommendations no longer enable relative cost-change
 or composite stopping. The public rank-one regression compares the historical
