@@ -32,12 +32,15 @@ jobs:
               - 'src/vbpca_py/_remove_empty.py'
               - 'src/vbpca_py/_monitoring.py'
               - 'src/vbpca_py/rotate_update_kernels.cpp'
+              - 'src/vbpca_py/dense_update_kernels.cpp'
+              - 'src/vbpca_py/sparse_update_kernels.cpp'
               - 'src/vbpca_py/_rms.py'
               - 'src/vbpca_py/_mean.py'
               - 'src/vbpca_py/_cost.py'
               - 'src/vbpca_py/_sparse_error.py'
               - 'tests/test_rotate.py'
               - 'tests/test_rank_zero_rotation.py'
+              - 'tests/test_rank_zero_updates.py'
               - 'tests/test_rms_regression.py'
               - 'tests/test_mean.py'
               - 'tests/test_cost.py'
@@ -72,6 +75,27 @@ jobs:
         run: |
           uv build --sdist --out-dir dist-source-check
           uv run python scripts/check_sdist_tests.py dist-source-check
+
+  eigen33-updates:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+      - name: Install the Eigen headers used by manylinux
+        run: |
+          curl --fail --location --retry 3 \
+            https://gitlab.com/libeigen/eigen/-/archive/3.3.4/eigen-3.3.4.tar.gz \
+            --output "$RUNNER_TEMP/eigen-3.3.4.tar.gz"
+          echo "c5ca6e3442fb48ae75159ca7568854d9ba737bc351460f27ee91b6f3f9fd1f3d  $RUNNER_TEMP/eigen-3.3.4.tar.gz" | sha256sum --check -
+          tar -xzf "$RUNNER_TEMP/eigen-3.3.4.tar.gz" -C "$RUNNER_TEMP"
+          echo "EIGEN_INCLUDE_DIR=$RUNNER_TEMP/eigen-3.3.4" >> "$GITHUB_ENV"
+      - name: Rebuild native extensions with old headers
+        run: uv sync --extra dev --extra plot --python 3.12 --reinstall-package vbpca-py
+      - name: Require safe empty updates, full fits and validation
+        run: >-
+          .venv/bin/python -m pytest -q
+          tests/test_rank_zero_updates.py tests/test_rank_zero_rotation.py
+          tests/test_modern_small_values.py tests/test_native_failures.py
 
   numpy24-typing:
     runs-on: ubuntu-latest

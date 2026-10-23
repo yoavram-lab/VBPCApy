@@ -174,6 +174,16 @@ py::dict score_update_sparse_nopattern(
         }
     }
 
+    // Retain sparse-coordinate validation before returning empty factors.
+    if (n_components == 0) {
+        py::dict out;
+        out["scores"] = scores_out;
+        if (return_covariances) {
+            out["score_covariances"] = cov_out;
+        }
+        return out;
+    }
+
     const long long work_units =
         static_cast<long long>(nnz) * static_cast<long long>(std::max(1, n_components));
     const int threads = resolve_num_threads(num_cpu, n_samples, work_units);
@@ -354,6 +364,15 @@ py::dict loadings_update_sparse_nopattern(
         if (j < 0 || j >= n_samples) {
             throw std::invalid_argument("CSR column index out of range.");
         }
+    }
+
+    if (n_components == 0) {
+        py::dict out;
+        out["loadings"] = loadings_out;
+        if (return_covariances) {
+            out["loading_covariances"] = cov_out;
+        }
+        return out;
     }
 
     const long long work_units =

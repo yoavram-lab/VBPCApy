@@ -184,6 +184,11 @@ adapter. Python 3.11-3.14 and scikit-learn >=1.8 are required.
 
 ### Fixed
 
+- Return correctly shaped empty score/loading factors and requested covariance
+  outputs at rank zero without a native decomposition solve. This avoids a
+  floating-point signal in Eigen 3.3's empty matrix solve on manylinux wheels.
+  Preserve noise, shape, covariance-bank and sparse-coordinate validation.
+
 - Slice warm-start feature means/variances with retained loadings, and select
   diagonal versus stacked score covariances on their declared sample axes.
   Resolve source covariance-bank indices separately from destination pattern
