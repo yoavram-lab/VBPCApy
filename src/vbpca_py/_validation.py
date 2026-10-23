@@ -26,9 +26,8 @@ def check_raw_sparse_observations(x: object, mask: object | None) -> None:
     Raises:
         ValueError: Sparse buffers, mask dimensions or observed values are invalid.
     """
-    raw_mask = (
-        _checked_sparse_input(mask, numeric_mask=True) if sp.issparse(mask) else None
-    )
+    if sp.issparse(mask):
+        _checked_sparse_input(mask, numeric_mask=True)
     if not sp.issparse(x):
         return
     raw = _checked_sparse_input(x)
@@ -37,8 +36,8 @@ def check_raw_sparse_observations(x: object, mask: object | None) -> None:
     observed: BoolArray | sp.csr_matrix | None = None
     if mask is not None:
         observed = (
-            sp.csr_matrix(raw_mask, dtype=bool, copy=True)
-            if raw_mask is not None
+            sp.csr_matrix(cast("sp.csr_matrix", mask), dtype=bool, copy=True)
+            if sp.issparse(mask)
             else np.asarray(mask, dtype=bool)
         )
         if observed.shape != raw.shape:

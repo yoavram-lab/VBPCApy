@@ -1,5 +1,7 @@
 """Native sparse observations are validated before duplicate aggregation."""
 
+import copy
+
 import numpy as np
 import pytest
 import scipy.sparse as sp
@@ -245,3 +247,33 @@ def test_duplicate_readonly_mask_entries_are_boolean_union_without_mutation(
     else:
         model.transform(raw, mask=mask)
     _assert_unchanged(mask, before)
+
+
+@pytest.mark.parametrize(
+    "factory", [sp.bsr_matrix, sp.bsr_array, sp.lil_matrix, sp.lil_array]
+)
+@pytest.mark.parametrize("method", ["fit", "transform", "select"])
+def test_other_format_numeric_duplicate_masks_keep_original_observation_semantics(
+    factory, method
+):
+    raw, dense = _raw(sp.coo_matrix, [np.inf, -np.inf])
+    if factory in {sp.bsr_matrix, sp.bsr_array}:
+        values = np.r_[1.0, -1.0, np.ones(dense.size - 1)]
+        indices = np.r_[0, 0, 1, 2, np.tile([0, 1, 2], len(dense) - 1)]
+        pointer = np.r_[0, np.arange(4, dense.size + 2, 3)]
+        mask = factory((values[:, None, None], indices, pointer), shape=dense.shape)
+    else:
+        mask = factory(np.ones(dense.shape))
+        mask.rows[0] = [0, 0, 1, 2]
+        mask.data[0] = [1.0, -1.0, 1.0, 1.0]
+    assert sp.csr_matrix(mask, dtype=bool)[0, 0]
+    before = copy.deepcopy(mask)
+    model = VBPCA(1, **OPTIONS).fit(dense)
+    with pytest.raises(ValueError, match="infinity"):
+        _call(method, model, raw, mask)
+    np.testing.assert_array_equal(mask.data, before.data)
+    if mask.format == "lil":
+        np.testing.assert_array_equal(mask.rows, before.rows)
+    else:
+        np.testing.assert_array_equal(mask.indices, before.indices)
+        np.testing.assert_array_equal(mask.indptr, before.indptr)
