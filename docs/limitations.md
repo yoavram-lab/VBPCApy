@@ -1,12 +1,19 @@
 # Known Limitations
 
-- **`transform(new_data)` is not implemented.** Only training scores are returned. To project new data, refit on the combined dataset.
+- **Training and new-row scores have different posterior meanings.**
+  `scores_` contains the joint variational means estimated during fitting.
+  `transform(new_data)` returns conditional score means under the fitted
+  loading posterior, and `transform_posterior(new_data)` also returns the
+  conditional covariance. Do not treat these conditional projections as the
+  original joint training posterior.
 
 - **`inverse_transform()` always returns dense output**, even when the input was sparse CSR/CSC.
 
 - **`MissingAwareSparseOneHotEncoder` requires numeric categories.** String categories cannot survive the CSR round-trip.
 
-- **Data convention.** `AutoEncoder` expects samples × features; `VBPCA` expects features × samples. Transpose as needed.
+- **Data convention.** `AutoEncoder` and the native `vbpca_py.VBPCA` estimator
+  use samples × features. The explicit `vbpca_py.legacy.VBPCA` adapter and the
+  low-level `pca_full` boundary retain features × samples.
 
 - **Legacy RMS ordering with uncentered data.** The original MATLAB update
   order estimates the mean before updating the latent factors. With

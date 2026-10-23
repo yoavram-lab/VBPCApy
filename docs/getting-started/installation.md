@@ -9,7 +9,8 @@
 
 ## From PyPI (recommended)
 
-Pre-built wheels are available for Python 3.11–3.14 on Linux, macOS, and Windows:
+Pre-built wheels are available for Python 3.11–3.14 on Linux x86_64, macOS
+arm64, and Windows amd64:
 
 ```bash
 pip install vbpca-py

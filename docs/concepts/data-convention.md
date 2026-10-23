@@ -46,8 +46,9 @@ assert reconstruction.shape == X.shape
 ```
 
 A raw mask cannot be blindly forwarded across an encoder that changes feature
-width. The mask-routing and complete preprocessor conformance work is tracked
-by #178/#36. Direct preprocessing fits accept `y=None` and keyword-only `mask`.
+width. In a Pipeline, route it through a leading `ObservationMasker` before any
+width-changing encoder. Direct preprocessing fits accept `y=None` and a
+keyword-only `mask`.
 
 ## Sparse observations
 
@@ -77,8 +78,10 @@ conditions new rows under the fitted state. `fit_transform(X)` is exactly
 conditional score covariances, and `inverse_transform(Z)` returns samples x
 features, including rank-zero mean-only models.
 
-The existing cellwise selection helpers currently retain their feature-first
-boundary and compatibility-model return values while #180 integration proceeds.
-Transpose explicitly at that documented boundary, rather than changing the
-layout used by native estimators or preprocessors. Their PRMS/Brier selection
-target differs from native row-wise marginal Gaussian scoring.
+Public `select_n_components` and `cross_validate_components` use samples x
+features. Positive-rank models returned by `select_n_components` are native
+estimators; `cross_validate_components` returns the selected capacity and metric
+records. The compatibility helpers under `vbpca_py.legacy` retain their
+feature-first boundary. Transpose only when calling that explicit legacy API.
+Cellwise PRMS/Brier selection still targets a different prediction problem from
+native row-wise marginal Gaussian scoring.
