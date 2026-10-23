@@ -24,6 +24,12 @@ The development version is not a release announcement.
 
 ### Changed
 
+- Store only constructor parameters in all nine preprocessors. Create learned
+  fields during fitting, clear previous/partial state on refit failures or
+  cancellation, and raise scikit-learn's `NotFittedError` before inference.
+  Validate log offsets and winsorization quantiles during fit so invalid
+  requested settings remain cloneable. Numerical transforms are unchanged.
+
 - Refuse low-level and legacy fits when training-axis removal would discard
   observed probe entries, including stored zeros. This applies in both
   compatibility modes and prevents silently incomplete PRMS diagnostics.

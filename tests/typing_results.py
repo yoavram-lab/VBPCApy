@@ -55,6 +55,19 @@ def check_configuration_types(estimator: VBPCA) -> None:
     pca_full(np.ones((2, 3)), 1, options={})  # type: ignore[arg-type]
 
 
+def check_preprocessor_parameter_types() -> None:
+    from vbpca_py import MissingAwareLogTransformer, MissingAwareStandardScaler
+
+    scaler = MissingAwareStandardScaler()
+    assert_type(scaler.get_params(), dict[str, object])
+    assert_type(scaler.set_params(), MissingAwareStandardScaler)
+    transform = MissingAwareLogTransformer()
+    assert_type(transform.get_params(), dict[str, object])
+    assert_type(transform.set_params(offset=2.0), MissingAwareLogTransformer)
+    MissingAwareLogTransformer(offset="two")  # type: ignore[arg-type]
+    MissingAwareStandardScaler(misspelled=True)  # type: ignore[call-arg]
+
+
 def check_numerical_helper_contracts() -> None:
     import numpy.typing as npt
     import scipy.sparse as sp

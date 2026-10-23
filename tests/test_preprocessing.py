@@ -2,6 +2,7 @@
 
 import numpy as np
 import pytest
+from sklearn.exceptions import NotFittedError
 
 from vbpca_py.preprocessing import (
     AutoEncoder,
@@ -127,11 +128,11 @@ def test_autoencoder_column_types_override() -> None:
 
 def test_autoencoder_transform_before_fit_raises() -> None:
     auto = AutoEncoder()
-    with pytest.raises(RuntimeError, match="not fitted"):
+    with pytest.raises(NotFittedError, match="not fitted"):
         auto.transform(np.array([[1.0], [2.0]]))
 
 
 def test_autoencoder_inverse_transform_before_fit_raises() -> None:
     auto = AutoEncoder()
-    with pytest.raises(RuntimeError, match="not fitted"):
+    with pytest.raises(NotFittedError, match="not fitted"):
         auto.inverse_transform(np.array([[0.0], [1.0]]))

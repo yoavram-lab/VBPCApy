@@ -255,9 +255,21 @@ The contract map merged in #320 before production edits. The categorical
 foundation (#324), native empty-eigensystem correction (#323), development
 metadata gate (#325), and fit-owned initialization payloads (#329) have merged
 after green CI. Main now reports `0.5.0.dev0`; no 0.5 release has been published.
-The legacy estimator layout remains in place until its explicit migration.
+The native estimator layout and conditional projection landed in #337, with
+the explicit legacy adapter and migration guide. Typed solver configuration
+(#335) and numerical-helper contracts (#336) are also complete. Probe coverage
+guards now prevent incomplete diagnostics at native, legacy and low-level
+boundaries (#339).
 
-The preimplementation/boundary probes identified additional prerequisites.
+The nine preprocessors now keep learned state out of constructors and clear
+old/partial state when fitting fails or is interrupted. This lifecycle increment
+preserves the numerical transforms. Native input validation, sparse one-hot's
+single-column limitation, tags/names/containers, mask routing and selection
+layout/composition remain open; constructor checks alone do not establish full
+estimator conformance.
+
+The preimplementation/boundary probes identified the prerequisites below,
+which have since been addressed before the native estimator migration.
 Warm-start ownership (#326, addressed by #329) precedes covariance-layout and
 retained-feature metadata corrections (#327). Observation-presence preparation
 (#328) precedes typed initialization and native masks/preprocessors. Record

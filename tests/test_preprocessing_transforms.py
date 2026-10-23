@@ -2,6 +2,7 @@
 
 import numpy as np
 import pytest
+from sklearn.exceptions import NotFittedError
 
 from vbpca_py.preprocessing import (
     DataReport,
@@ -43,16 +44,16 @@ class TestMissingAwareLogTransformer:
 
     def test_invalid_offset_raises(self):
         with pytest.raises(ValueError, match="offset must be positive"):
-            MissingAwareLogTransformer(offset=0.0)
+            MissingAwareLogTransformer(offset=0.0).fit(np.ones((2, 1)))
 
     def test_transform_before_fit_raises(self):
         t = MissingAwareLogTransformer()
-        with pytest.raises(RuntimeError, match="not fitted"):
+        with pytest.raises(NotFittedError, match="not fitted"):
             t.transform(np.array([[1.0]]))
 
     def test_inverse_before_fit_raises(self):
         t = MissingAwareLogTransformer()
-        with pytest.raises(RuntimeError, match="not fitted"):
+        with pytest.raises(NotFittedError, match="not fitted"):
             t.inverse_transform(np.array([[1.0]]))
 
 
@@ -87,11 +88,13 @@ class TestMissingAwareWinsorizer:
 
     def test_invalid_quantiles_raise(self):
         with pytest.raises(ValueError, match="quantiles"):
-            MissingAwareWinsorizer(lower_quantile=0.5, upper_quantile=0.3)
+            MissingAwareWinsorizer(lower_quantile=0.5, upper_quantile=0.3).fit(
+                np.ones((2, 1))
+            )
 
     def test_transform_before_fit_raises(self):
         w = MissingAwareWinsorizer()
-        with pytest.raises(RuntimeError, match="not fitted"):
+        with pytest.raises(NotFittedError, match="not fitted"):
             w.transform(np.array([[1.0]]))
 
     def test_all_nan_column(self):
@@ -139,7 +142,7 @@ class TestMissingAwarePowerTransformer:
 
     def test_transform_before_fit_raises(self):
         t = MissingAwarePowerTransformer()
-        with pytest.raises(RuntimeError, match="not fitted"):
+        with pytest.raises(NotFittedError, match="not fitted"):
             t.transform(np.array([[1.0]]))
 
 
