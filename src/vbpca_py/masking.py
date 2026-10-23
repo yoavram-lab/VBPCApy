@@ -97,7 +97,14 @@ class ObservationMasker(PreprocessorState):
         mode = getattr(self, "_sklearn_output_config", {}).get(
             "transform", get_config()["transform_output"]
         )
-        if mode == "polars" and not sp.issparse(data) and data.dtype.kind == "O":
+        if (
+            mode == "polars"
+            and not sp.issparse(data)
+            and (
+                data.dtype.kind == "O"
+                or (observed is not None and data.dtype.kind not in "biuf")
+            )
+        ):
             msg = (
                 "Polars output does not support raw object observations safely; "
                 "set ObservationMasker output to 'pandas' or 'default' and "

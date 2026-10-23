@@ -398,6 +398,22 @@ def test_polars_raw_object_output_is_explicitly_refused(mode):
             model.fit_transform(x)
 
 
+@pytest.mark.parametrize("dtype", ["U8", "S8"])
+@pytest.mark.parametrize("mode", ["local", "global"])
+def test_masked_string_arrays_are_refused_before_polars_object_conversion(dtype, mode):
+    raw = np.array([["a", "b"], ["c", "d"]], dtype=dtype)
+    mask = np.array([[True, False], [True, True]])
+    model = ObservationMasker()
+    with config_context(transform_output="polars" if mode == "global" else "default"):
+        if mode == "local":
+            model.set_output(transform="polars")
+        with pytest.raises(ValueError, match="raw object observations"):
+            model.fit_transform(raw, mask=mask)
+        # Unmasked fixed-width strings do not need object conversion.
+        output = model.fit_transform(raw)
+        np.testing.assert_array_equal(output.to_numpy(), raw)
+
+
 @pytest.mark.parametrize("kind", ["masker", "onehot", "ordinal", "auto"])
 def test_polars_null_categories_are_missing_and_not_a_fitted_none_level(kind):
     x = pl.DataFrame({"area": ["low", None, "high", "low"]})
