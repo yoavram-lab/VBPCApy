@@ -209,6 +209,27 @@ def _check_mask(
     return observed
 
 
+def _check_observed_infinity(
+    raw: sp.csr_matrix | sp.csc_matrix | sp.coo_matrix,
+    observed: BoolArray | sp.csr_matrix | None,
+) -> None:
+    # Check raw duplicates before a conversion can combine +inf/-inf into NaN.
+    infinite = np.isinf(raw.data)
+    if not np.any(infinite):
+        return
+    if observed is not None:
+        coordinates = raw.tocoo(copy=False)
+        rows, columns = coordinates.row[infinite], coordinates.col[infinite]
+        if sp.issparse(observed):
+            selected = np.asarray(observed[rows, columns]).ravel()
+        else:
+            selected = observed[rows, columns]
+        if not np.any(selected):
+            return
+    msg = "Input contains infinity in observed entries"
+    raise ValueError(msg)
+
+
 def _check_sparse_structure(
     x: object, *, complex_indicators: bool = False, check_infinity: bool = True
 ) -> None:

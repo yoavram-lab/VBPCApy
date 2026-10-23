@@ -44,6 +44,11 @@ The development version is not a release announcement.
 
 ### Changed
 
+- Reject raw observed sparse infinity at native fit/projection/scoring and
+  component-selection boundaries before conversion can combine duplicates into
+  missing NaNs. Validate sparse data/mask buffers before conversion; preserve
+  explicit exclusions, stored zeros and mask-requested observed zeros.
+
 - Move public component-selection inputs, masks and probes to samples x
   features, default to modern observation semantics and return native
   positive-rank selected estimators without refitting. Preserve the existing

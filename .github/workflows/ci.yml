@@ -162,6 +162,7 @@ jobs:
           tests/test_observation_masker.py
           tests/test_feature_output.py
           tests/test_native_selection.py
+          tests/test_native_sparse_validation.py
 
   numerical-reference:
     runs-on: ubuntu-latest
