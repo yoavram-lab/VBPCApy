@@ -168,8 +168,8 @@ adapter. Python 3.11-3.14 and scikit-learn >=1.8 are required.
 
 ### Performance
 
-- Evaluate marginal variance with bounded covariance matrix products rather
-  than three per-cell einsum contractions and full-shape scratch arrays.
+- Evaluate marginal variance with bounded covariance matrix products and avoid
+  full-shape scratch arrays.
   Reuse sparse CSR/CSC views and remove observed-cell native heap allocations.
 
 - Permit explicit endpoint-only cost diagnostics for PRMS selection while
