@@ -35,5 +35,7 @@ recon = model.inverse_transform(scores)
 
 - [Installation](getting-started/installation.md) — full install guide with extras and build-from-source instructions.
 - [Quick Start](getting-started/quickstart.md) — dense and sparse examples with annotations.
+- [Mixed missing-table notebook](https://github.com/yoavram-lab/VBPCApy/blob/main/examples/mixed-missing-table.ipynb) — a synthetic freshwater survey from inspection through decoded reconstruction.
+- [Missing-aware Pipeline](tutorials/missing-aware-pipeline.md) — row validation, capacity search, projection and inverse reconstruction.
 - [Tutorials](tutorials/basic-dense-pca.md) — narrative walkthroughs for common workflows.
 - [API Reference](api/vbpca.md) — complete public API documentation.

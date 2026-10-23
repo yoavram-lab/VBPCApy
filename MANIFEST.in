@@ -34,6 +34,10 @@ include tools/allocation_counter.c
 # -----------------------------
 # Include all lightweight tests
 recursive-include tests *.py
+include examples/mixed-missing-table.ipynb
+include docs/getting-started/quickstart.md
+include docs/tutorials/basic-dense-pca.md
+include docs/tutorials/preprocessing-mixed-data.md
 
 # Repository analysis modules and fixed manifests used by the shipped tests.
 # Generated results and figures remain outside the source distribution.

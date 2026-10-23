@@ -1,4 +1,4 @@
-"""Require included tests to collect from an extracted source distribution."""
+"""Require included tests to collect and public examples to run from an sdist."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from pathlib import Path
 
 
 def check_archive(archive: Path) -> None:
-    """Collect shipped tests with the installed library and extracted helpers.
+    """Check shipped tests with the installed library and extracted helpers.
 
     Raises:
         ValueError: The archive does not contain one test-bearing project root.
@@ -40,6 +40,24 @@ def check_archive(archive: Path) -> None:
                 "-o",
                 "addopts=",
                 "tests",
+            ],
+            cwd=projects[0],
+            env=environment,
+            check=True,
+        )
+        # Collection cannot detect files opened only while a test runs. Execute
+        # the public examples from the extracted tree so their Markdown and
+        # notebook inputs must also be present in the archive.
+        subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "pytest",
+                "-q",
+                "-o",
+                "addopts=",
+                "tests/test_markdown_examples.py",
+                "tests/test_notebook_examples.py",
             ],
             cwd=projects[0],
             env=environment,

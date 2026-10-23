@@ -82,6 +82,7 @@ nav:
     - Missing Data & Model Selection: tutorials/missing-data-model-selection.md
     - Preprocessing Mixed Data: tutorials/preprocessing-mixed-data.md
     - Missing-aware Pipeline: tutorials/missing-aware-pipeline.md
+    - Mixed Missing Table Notebook: https://github.com/yoavram-lab/VBPCApy/blob/main/examples/mixed-missing-table.ipynb
     - Genomics Dosage Data: tutorials/genomics-dosage.md
     - Sparse Data Workflows: tutorials/sparse-data.md
     - Cross-Validation & Diagnostics: tutorials/cv-diagnostics.md

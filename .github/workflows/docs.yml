@@ -5,11 +5,16 @@ on:
     branches: [main]
     paths:
       - "docs/**"
+      - "examples/**"
+      - "tests/test_markdown_examples.py"
+      - "tests/test_notebook_examples.py"
       - "mkdocs.yml"
       - "src/vbpca_py/**"
       - "scripts/*gallery*.py"
       - "scripts/check_public_examples.py"
       - "scripts/example_masked_pipeline.py"
+      - "README.md"
+      - "MANIFEST.in"
       - "pyproject.toml"
       - ".github/workflows/docs.yml"
   workflow_dispatch:
@@ -46,6 +51,11 @@ jobs:
         run: |
           .venv/bin/python -m mkdocs build --strict
           .venv/bin/python scripts/check_gallery_site.py
+      - name: Execute maintained documentation workflows
+        run: >-
+          .venv/bin/python -m pytest -q
+          tests/test_markdown_examples.py
+          tests/test_notebook_examples.py
       - uses: actions/upload-pages-artifact@v3
         with:
           path: site
