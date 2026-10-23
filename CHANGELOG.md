@@ -13,6 +13,13 @@ The development version is not a release announcement.
 
 ### Added
 
+- Add `get_feature_names_out` and native sklearn pandas/Polars output wrapping
+  for VBPCA and all ten preprocessing transformers. Preserve pandas indices,
+  row order and zero-column dense outputs; refuse sparse table conversion
+  without densification. Add an optional Polars 2.x extra and an executed
+  masked Pipeline example. Normalize Polars input nulls to missing observations;
+  keep raw object masking in pandas mode before Polars numerical output.
+
 - Add native `ObservationMasker` to consume Boolean original-variable masks
   before learned preprocessing. Route its dedicated `observation_mask` alias
   through Pipeline fit/transform/scoring and CV/GridSearchCV row splits.
@@ -36,6 +43,12 @@ The development version is not a release announcement.
   Initialization continues to accept warm-start mappings and MAT filenames.
 
 ### Changed
+
+- Name outputs from fitted categories, reference drops and original-variable
+  plans; unnamed encoders use `x0`, `x1`, ... and generated collisions receive
+  stable suffixes. Keep fitted display metadata consistent during transform.
+  Reject duplicate table columns even when their labels are not strings.
+  Default numerical transforms and NumPy/SciPy outputs are unchanged.
 
 - Validate all nine preprocessors at their public boundaries: nonempty 2-D
   input, numeric/category dtypes, feature counts/names, inverse output width,

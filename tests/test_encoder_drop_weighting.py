@@ -41,11 +41,11 @@ def test_drop_first_removes_one_indicator_per_variable() -> None:
     assert z.shape == (5, 2 + 2 + 1)
     assert encoder.feature_groups_.tolist() == [0, 0, 1, 1, 2]
     assert encoder.feature_names_out_ == [
-        "col0_1.0",
-        "col0_2.0",
-        "col1_2.0",
-        "col1_0.0",
-        "col2_6.0",
+        "x0_1.0",
+        "x0_2.0",
+        "x1_2.0",
+        "x1_0.0",
+        "x2_6.0",
     ]
     assert encoder.categories_[1] == [1.0, 2.0, 0.0]
 

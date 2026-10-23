@@ -110,6 +110,24 @@ NaN/stored-entry Pipelines need no metadata opt-in. Run
 `python scripts/example_masked_pipeline.py` for mixed input, row CV, grid search
 and projection; see [preprocessing](docs/api/preprocessing.md) for the contract.
 
+## Named output tables
+
+Every native transformer implements `get_feature_names_out()` and sklearn's
+`set_output(transform="pandas")`. Install the `data` extra for pandas or the
+`polars` extra for qualified Polars 2.x output. Default outputs remain
+NumPy/SciPy. Pandas preserves row indices; Polars preserves row order. Names
+follow fitted category/reference order and use `x0`, `x1`, ... for unnamed
+inputs, with deterministic suffixes for ambiguous generated labels.
+VBPCA components are named `vbpca0`, `vbpca1`, ...; rank zero has no columns
+and retains the sample rows. Sparse outputs require default mode and are
+refused without densification when a dense container is requested.
+
+For a mixed string/NaN mask Pipeline with Polars numerical outputs, keep the
+leading `ObservationMasker` in pandas mode. Its raw object buffers cannot be
+safely wrapped by the native Polars adapter. See
+`python scripts/example_feature_output.py` and the
+[preprocessing API](docs/api/preprocessing.md) for configuration and limits.
+
 ## Categorical component selection
 
 Dense `AutoEncoder` and `MissingAwareOneHotEncoder` fits expose an

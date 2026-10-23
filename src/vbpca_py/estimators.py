@@ -10,16 +10,16 @@ from typing import Self, cast
 import numpy as np
 import numpy.typing as npt
 import scipy.sparse as sp
-from sklearn.base import TransformerMixin  # type: ignore[import-untyped]
 from sklearn.utils import Tags  # type: ignore[import-untyped]  # noqa: TC002 - runtime annotation resolution
 from sklearn.utils.validation import check_array, check_is_fitted, validate_data  # type: ignore[import-untyped]
 
+from ._feature_names import FeatureNamesMixin, check_named_columns, empty_table_array
 from ._full_update import _covariances_list
 from ._memory import check_dense_output_budget, resolve_max_dense_bytes
 from ._native import TypedEstimator
 from ._pca_full import pca_full
 from ._projection import ProjectionPosterior, project_rows, row_log_likelihood
-from ._types import Float64Array, InputMask, InputMatrix, Matrix  # noqa: TC001 - runtime annotation resolution
+from ._types import Float64Array, InputMask, InputMatrix, Matrix, ObjectArray  # noqa: TC001 - runtime annotation resolution
 from ._validation import (
     make_native_probe,
     observed_matrix,
@@ -45,7 +45,7 @@ from .results import LearningCurve, PCAResult  # noqa: TC001 - runtime annotatio
 __all__ = ["VBPCA"]
 
 
-class VBPCA(TransformerMixin, TypedEstimator):  # type: ignore[misc]
+class VBPCA(FeatureNamesMixin, TypedEstimator):
     """Variational PCA on samples  x  features, including missing observations.
 
     ``scores_`` contains joint variational training means. ``transform`` returns
@@ -347,6 +347,7 @@ class VBPCA(TransformerMixin, TypedEstimator):  # type: ignore[misc]
         Raises:
             ValueError: Feature names, dimensions or observations are invalid.
         """
+        check_named_columns(X)
         checked = cast(
             "InputMatrix",
             validate_data(
@@ -503,6 +504,11 @@ class VBPCA(TransformerMixin, TypedEstimator):  # type: ignore[misc]
         check_is_fitted(self, ["components_", "mean_", "noise_variance_"])
         return self._validate_observations(X, mask, reset=False)
 
+    def _output_feature_names(self, input_features: ObjectArray) -> ObjectArray:  # noqa: ARG002
+        return np.asarray(
+            [f"vbpca{i}" for i in range(self.components_.shape[0])], dtype=object
+        )
+
     def transform(self, X: object, *, mask: object | None = None) -> Float64Array:
         """Return conditional latent means for new rows without refitting."""
         data = self._projection_input(X, mask)
@@ -559,7 +565,8 @@ class VBPCA(TransformerMixin, TypedEstimator):  # type: ignore[misc]
         """
         check_is_fitted(self, ["components_", "mean_"])
         scores = cast(
-            "Float64Array", check_array(Z, dtype=np.float64, ensure_min_features=0)
+            "Float64Array",
+            check_array(empty_table_array(Z), dtype=np.float64, ensure_min_features=0),
         )
         if scores.shape[1] != self.components_.shape[0]:
             msg = "Z must have shape (n_samples, n_components)"

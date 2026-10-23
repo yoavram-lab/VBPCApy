@@ -359,6 +359,18 @@ class MissingAwareOneHotEncoder(PreprocessorState):
             start = stop
         return EncodingSchema(tuple(variables))
 
+    def _output_feature_names(self, input_features: ObjectArray) -> ObjectArray:
+        return np.asarray(
+            [
+                f"{name}_{category}"
+                for name, categories, width in zip(
+                    input_features, self.categories_, self._output_widths, strict=True
+                )
+                for category in (categories[-width:] if width else [])
+            ],
+            dtype=object,
+        )
+
     def _center_block(self, block: EncodedArray, j: int) -> EncodedArray:
         means: EncodedArray = np.zeros(block.shape[1], dtype=self.dtype)
         if self.mean_center:
@@ -467,14 +479,11 @@ class MissingAwareOneHotEncoder(PreprocessorState):
         x_arr = np.asarray(x)
         obs_mask = _ensure_mask(x_arr, mask)
         parts: list[EncodedArray] = []
-        names: list[str] = []
         for j in range(self.n_features_in_):
-            block, block_names, _means = self._transform_single(x_arr, obs_mask, j)
+            block, _block_names, _means = self._transform_single(x_arr, obs_mask, j)
             if self.block_weights_ is not None:
                 block *= self.block_weights_[j]
             parts.append(block)
-            names.extend(block_names)
-        self.feature_names_out_ = names
         return (
             np.concatenate(parts, axis=1)
             if parts
@@ -642,6 +651,22 @@ class MissingAwareSparseOneHotEncoder(PreprocessorState):
         rows, columns = np.nonzero(~np.isnan(values))
         return sp.csr_matrix(
             (values[rows, columns], (rows, columns)), shape=values.shape
+        )
+
+    def _output_feature_names(self, input_features: ObjectArray) -> ObjectArray:
+        groups = self.feature_groups_
+        if groups is None:
+            # Compatible older sparse encoders had one original variable.
+            if len(input_features) != 1:
+                msg = "multi-column sparse encoding needs fitted feature_groups_"
+                raise ValueError(msg)
+            groups = np.zeros(len(self.categories_), dtype=int)
+        return np.asarray(
+            [
+                f"{input_features[group]}_{category}"
+                for group, category in zip(groups, self.categories_, strict=True)
+            ],
+            dtype=object,
         )
 
     def fit(
@@ -1100,6 +1125,7 @@ class MissingAwareOrdinalEncoder(PreprocessorState):
                 if self.scaler == "standard"
                 else MissingAwareMinMaxScaler()
             )
+            self._scaler.set_output(transform="default")
             self._scaler.fit(scores, mask=known)
             self.n_features_in_ = n_features
             self.feature_names_out_ = [f"col{j}" for j in range(n_features)]
@@ -1306,6 +1332,7 @@ class AutoEncoder(PreprocessorState):
                             else MissingAwareMinMaxScaler()
                         )
                     col_mat = _to_csr(x_csr.getcol(j))
+                    encoder.set_output(transform="default")
                     encoder.fit(col_mat, mask=None)
                     z = encoder.transform(col_mat, mask=None)
                     width = z.shape[1]
@@ -1343,6 +1370,7 @@ class AutoEncoder(PreprocessorState):
                 encoder_dense = self._dense_encoder(
                     kind, None if self.column_levels is None else self.column_levels[j]
                 )
+                encoder_dense.set_output(transform="default")
                 encoder_dense.fit(x_dense[:, [j]], mask=obs_mask[:, [j]])
                 z_dense = encoder_dense.transform(
                     x_dense[:, [j]], mask=obs_mask[:, [j]]
@@ -1363,6 +1391,16 @@ class AutoEncoder(PreprocessorState):
             self._record_groups()
             self._record_schema()
             return self
+
+    def _output_feature_names(self, input_features: ObjectArray) -> ObjectArray:
+        return np.asarray(
+            [
+                name
+                for original, plan in zip(input_features, self._plan, strict=True)
+                for name in plan.encoder.get_feature_names_out([original])
+            ],
+            dtype=object,
+        )
 
     def _record_schema(self) -> None:
         variables = []

@@ -131,7 +131,7 @@ build-test:
 	source "$CLEANROOM/venv/bin/activate"
 	uv build --wheel --out-dir "$CLEANROOM/dist"
 	uv pip install --no-cache "$CLEANROOM"/dist/*.whl
-	uv pip install pytest pytest-benchmark hypothesis numpy scipy matplotlib mypy scipy-stubs
+	uv pip install pytest pytest-benchmark hypothesis numpy scipy matplotlib mypy scipy-stubs pandas 'polars>=2.0,<3'
 	python -m pytest tests -q -x -m 'not perf and not octave' \
 		--ignore=tests/test_octave_parity_smoke.py \
 		--ignore=tests/test_rms_regression.py \
