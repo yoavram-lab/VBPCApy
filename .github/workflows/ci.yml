@@ -160,6 +160,7 @@ jobs:
           tests/test_preprocessor_state.py
           tests/test_preprocessor_validation.py
           tests/test_observation_masker.py
+          tests/test_feature_output.py
 
   numerical-reference:
     runs-on: ubuntu-latest

@@ -85,6 +85,63 @@ entries without making a dense copy of the data.
 
 ::: vbpca_py.DataReport
 
+## Feature names and output containers
+
+All ten preprocessing transformers and native VBPCA implement
+`get_feature_names_out(input_features=None)`. String input names are captured
+at fit and checked in order. Unnamed inputs and tables with wholly non-string
+column labels use positional `x0`, `x1`, ... names. Mixed string/non-string
+labels and duplicate table columns are rejected. Supplied `input_features`
+must be a unique one-dimensional string sequence matching fitted names when
+present. Returned arrays own their name membership.
+
+Scalers, ordinal encoding and the masker preserve the validated input names.
+One-hot names follow fitted category order and reference drops; AutoEncoder
+uses the original variable's name for each fitted plan. Generated collisions
+receive stable `__<output-position>` suffixes, incremented if necessary.
+Existing encoder `feature_names_out_` lists agree with default method output
+and no longer change during transform. For unnamed fits, the older `col0`
+display prefix becomes `x0`. VBPCA names use fitted rank, including zero,
+rather than later parameter changes. Refit after changing encoding parameters.
+
+Use native sklearn `set_output(transform="pandas")` or global
+`config_context(transform_output="pandas")` for dense table output. Install
+`vbpca_py[data]` for pandas. Polars 2.x is qualified through
+`vbpca_py[polars]` and `transform="polars"`. Pandas preserves the input index,
+including duplicate index labels; Polars preserves row order without adding
+an index column. Zero-column dense outputs retain their row count in both
+qualified containers. Default NumPy/SciPy outputs and all numerical operations
+remain unchanged. Type annotations describe the default numerical return;
+configured table output is applied by sklearn's wrapping layer. Inverse
+transforms and `transform_posterior` retain their existing array/record output.
+
+Sparse output cannot be wrapped as a dense pandas/Polars table and raises a
+clear error without densification. This applies to the sparse one-hot encoder
+and sparse paths of scalers, AutoEncoder and ObservationMasker. Explicit complex
+indicator storage retains its real-indicator meaning; Polars can store those
+values as object columns. Inverse validation still refuses nonzero imaginary
+components rather than enabling complex-valued model inputs.
+
+For raw mixed string/NaN data, keep the leading masker in pandas mode when
+the remaining Pipeline uses Polars:
+
+```python
+pipeline.set_output(transform="polars")
+pipeline.named_steps["observe"].set_output(transform="pandas")
+```
+
+ObservationMasker explicitly refuses raw object output in Polars mode because
+the native adapter's inference cannot safely represent those buffers. Numeric
+masker output and subsequent encoded/projection outputs support Polars.
+Polars input nulls in object columns are converted to canonical NaNs before
+encoding; this can require an owned input copy. It does not reinterpret
+ordinary NumPy/Pandas object-category values. AutoEncoder's private nested
+encoders stay in default mode, avoiding repeated internal table wrapping.
+The [executed example](https://github.com/yoavram-lab/VBPCApy/blob/main/scripts/example_feature_output.py)
+demonstrates names, indices and matching numerical results with both outputs.
+These behaviors use the
+[native sklearn output API](https://scikit-learn.org/stable/developers/develop.html#developer-api-for-set-output).
+
 ## Fitted encoding metadata
 
 `schema.validate(n_features)` checks feature coverage and categorical decoding

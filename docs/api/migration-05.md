@@ -113,8 +113,8 @@ categorical dtypes, fitted feature counts and supplied string feature names/orde
 Duplicate names, observed infinity and raw complex input are rejected. Inverse
 transforms validate the fitted encoded width before decoding. Wholly missing
 columns retain their existing behavior, including zero-width categorical
-blocks. Named inputs capture `feature_names_in_`; transformed output names and
-pandas/polars wrapping remain separate work under #179.
+blocks. Named inputs capture `feature_names_in_`; generated output names and
+pandas/Polars wrapping now follow the contract below.
 
 Sparse preprocessing accepts CSR, CSC and COO matrices/arrays with valid
 structure. Stored NaNs become missing entries without eliminating stored
@@ -159,6 +159,20 @@ remain separate gates under #179/#39.
 `EncodingSchema.validate(..., strict_numeric=True)` now checks mixed numeric
 inverse maps explicitly; default categorical-only validation remains compatible
 with numeric descriptors that omit affine metadata.
+
+Every native transformer now provides `get_feature_names_out` and sklearn's
+`set_output`. Default outputs remain arrays/sparse matrices. Named pandas
+output preserves the index, and qualified Polars 2.x output preserves row order,
+including zero-column dense outputs. Sparse output is refused in table mode
+without densification. Unnamed encoder display metadata now uses `x0`, `x1`,
+... rather than `col0`, `col1`, ...; AutoEncoder names use original-variable
+positions rather than repeated nested-column labels. Generated collisions
+receive deterministic suffixes. In a mixed raw-data Pipeline using Polars for
+numerical outputs, keep the leading masker in pandas mode. Polars input nulls
+are missing observations. See the [preprocessing API](preprocessing.md) for the
+optional extras, configuration and supported dtype boundaries. Inverse and
+posterior-record output remain unchanged. Selection migration and full example
+qualification remain under #39/#14.
 
 ## Scoring and cellwise selection
 

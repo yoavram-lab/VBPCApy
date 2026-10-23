@@ -9,17 +9,22 @@ from typing import ClassVar, cast
 
 import numpy as np
 import scipy.sparse as sp
-from sklearn.base import TransformerMixin  # type: ignore[import-untyped]
 from sklearn.utils import Tags  # type: ignore[import-untyped]  # noqa: TC002 - runtime annotation resolution
 from sklearn.utils.validation import check_array, check_is_fitted, validate_data  # type: ignore[import-untyped]
 
+from ._feature_names import (
+    FeatureNamesMixin,
+    canonical_table_nulls,
+    check_named_columns,
+    empty_table_array,
+)
 from ._native import TypedEstimator
 from ._types import BoolArray, InputArray  # noqa: TC001 - runtime annotation resolution
 
 _PRIVATE_FIT_STATE = frozenset({"_output_width", "_output_widths", "_plan", "_scaler"})
 
 
-class PreprocessorState(TransformerMixin, TypedEstimator):  # type: ignore[misc]
+class PreprocessorState(FeatureNamesMixin, TypedEstimator):
     """Real sklearn transformer with transactional, fit-owned learned state."""
 
     n_features_in_: int | None
@@ -55,6 +60,7 @@ class PreprocessorState(TransformerMixin, TypedEstimator):  # type: ignore[misc]
             ValueError: Input feature names contain duplicates.
         """
         _check_sparse_structure(x)
+        check_named_columns(x)
         checked = cast(
             "InputArray | sp.spmatrix",
             validate_data(
@@ -71,6 +77,8 @@ class PreprocessorState(TransformerMixin, TypedEstimator):  # type: ignore[misc]
             msg = "X has duplicate feature names"
             raise ValueError(msg)
         observed = _check_mask(checked.shape, mask, sparse=sp.issparse(checked))
+        if not sp.issparse(checked):
+            checked = canonical_table_nulls(x, cast("InputArray", checked))
         return _finite_observations(checked, observed)
 
     def _validate_inverse(
@@ -100,12 +108,15 @@ class PreprocessorState(TransformerMixin, TypedEstimator):  # type: ignore[misc]
                     z = sparse
             else:
                 values = np.asarray(z)
+                if values.dtype.kind == "O":
+                    # Table adapters can retain complex indicators as objects.
+                    values = np.asarray(values, dtype=np.complex128)
                 if np.iscomplexobj(values):
                     z = _real_indicators(values)
         checked = cast(
             "InputArray | sp.spmatrix",
             check_array(
-                z,
+                empty_table_array(z),
                 dtype="numeric",
                 accept_sparse=["csr", "csc"] if self._accept_sparse else False,
                 ensure_all_finite=False,
@@ -155,6 +166,8 @@ class PreprocessorState(TransformerMixin, TypedEstimator):  # type: ignore[misc]
         try:
             self._clear_fit_state()
             yield
+            if hasattr(self, "feature_names_out_"):
+                self.feature_names_out_ = self.get_feature_names_out().tolist()
         except BaseException:
             self._clear_fit_state()
             raise

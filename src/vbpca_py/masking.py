@@ -9,8 +9,10 @@ from typing import ClassVar, Self, cast
 
 import numpy as np
 import scipy.sparse as sp
+from sklearn import get_config  # type: ignore[import-untyped]
 from sklearn.utils.validation import validate_data  # type: ignore[import-untyped]
 
+from ._feature_names import canonical_table_nulls, check_named_columns
 from ._preprocessing_state import (
     PreprocessorState,
     _check_sparse_structure,
@@ -73,7 +75,7 @@ class ObservationMasker(PreprocessorState):
         """
         self._check_fitted()
         data, observed = self._validated(X, mask, reset=False)
-        return _canonical_output(data, observed)
+        return self._output(data, observed)
 
     def fit_transform(
         self,
@@ -89,12 +91,33 @@ class ObservationMasker(PreprocessorState):
         """
         with self._fitting():
             data, observed = self._validated(X, mask, reset=True)
-            return _canonical_output(data, observed)
+            return self._output(data, observed)
+
+    def _output(self, data: InputMatrix, observed: BoolArray | None) -> InputMatrix:
+        mode = getattr(self, "_sklearn_output_config", {}).get(
+            "transform", get_config()["transform_output"]
+        )
+        if (
+            mode == "polars"
+            and not sp.issparse(data)
+            and (
+                data.dtype.kind == "O"
+                or (observed is not None and data.dtype.kind not in "biuf")
+            )
+        ):
+            msg = (
+                "Polars output does not support raw object observations safely; "
+                "set ObservationMasker output to 'pandas' or 'default' and "
+                "wrap downstream numerical outputs in Polars"
+            )
+            raise ValueError(msg)
+        return _canonical_output(data, observed)
 
     def _validated(
         self, X: object, mask: object | None, *, reset: bool
     ) -> tuple[InputMatrix, BoolArray | None]:
         _check_sparse_structure(X, check_infinity=False)
+        check_named_columns(X)
         sparse = sp.issparse(X)
         observed: BoolArray | sp.csr_matrix | None = None
         if sparse:
@@ -120,7 +143,7 @@ class ObservationMasker(PreprocessorState):
             return observed_matrix(
                 checked, cast("InputMask | None", observed), None
             ), None
-        dense = cast("InputArray", checked)
+        dense = canonical_table_nulls(X, cast("InputArray", checked))
         dense_mask = cast(
             "BoolArray | None", _observation_mask(dense.shape, mask, sparse=False)
         )

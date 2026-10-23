@@ -212,3 +212,17 @@ def check_observation_masker_types() -> None:
     assert_type(masker.fit_transform([[1.0]], mask=[[True]]), InputMatrix)
     assert_type(masker.get_params(), dict[str, object])
     assert_type(masker.set_params(), ObservationMasker)
+
+
+def check_feature_output_types(estimator: VBPCA) -> None:
+    from vbpca_py import AutoEncoder, ObservationMasker
+    from vbpca_py._types import ObjectArray
+
+    encoder = AutoEncoder()
+    masker = ObservationMasker()
+    assert_type(encoder.get_feature_names_out(), ObjectArray)
+    assert_type(encoder.set_output(transform="pandas"), AutoEncoder)
+    assert_type(masker.set_output(transform="polars"), ObservationMasker)
+    assert_type(estimator.get_feature_names_out(["a", "b"]), ObjectArray)
+    assert_type(estimator.set_output(transform="default"), VBPCA)
+    encoder.set_output(transform="unsupported")  # type: ignore[arg-type]
