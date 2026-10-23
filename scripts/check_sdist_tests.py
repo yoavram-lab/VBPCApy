@@ -10,6 +10,12 @@ import tarfile
 import tempfile
 from pathlib import Path
 
+REQUIRED_REFERENCE_FIXTURES = (
+    "legacy_pca_full_dense.mat",
+    "legacy_pca_full_missing.mat",
+    "legacy_rotate_to_pca.mat",
+)
+
 
 def check_archive(archive: Path, *, qualify: bool = False) -> None:
     """Check shipped tests with the installed library and extracted helpers.
@@ -34,6 +40,10 @@ def check_archive(archive: Path, *, qualify: bool = False) -> None:
         environment.pop("PYTEST_ADDOPTS", None)
         project = projects[0]
         if qualify:
+            for name in REQUIRED_REFERENCE_FIXTURES:
+                if not (project / "tests" / "data" / name).is_file():
+                    msg = f"Source qualification requires reference fixture {name}"
+                    raise ValueError(msg)
             # Refuse an editable checkout before accepting any release checks.
             subprocess.run(
                 [

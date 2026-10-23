@@ -242,8 +242,9 @@ adapter. Python 3.11-3.14 and scikit-learn >=1.8 are required.
 - Add advisory interleaved performance CI with machine, build, allocation and
   provenance metadata. Timing checks remain separate from numerical parity.
 - Qualify installed source archives and all advertised platform wheels before
-  publishing. Wheel-test dependencies include the pandas and Polars containers
-  exercised by the native contract suite; manual builds do not upload packages.
+  publishing. Include fixed MATLAB test fixtures in source archives and refuse
+  qualification when they are missing. Wheel-test dependencies include the
+  pandas and Polars containers exercised by the native contract suite; manual builds do not upload packages.
 
 ## [0.4.12] - 2026-10-21
 
