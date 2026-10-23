@@ -13,9 +13,9 @@ from vbpca_py import (
     EncodedVariable,
     EncodingSchema,
     MissingAwareOneHotEncoder,
-    cross_validate_components,
 )
 from vbpca_py._categorical_scores import categorical_scores
+from vbpca_py.legacy import cross_validate_components
 
 ENCODINGS = [
     {"binary": "both"},
@@ -158,7 +158,7 @@ def test_transform_keeps_fit_means_weights_and_schema_for_new_data():
 
 
 def test_schema_and_targets_are_validated_before_any_fit(monkeypatch):
-    import vbpca_py.model_selection as selection
+    import vbpca_py._selection_core as selection
 
     def unexpected_fit(*args, **kwargs):
         pytest.fail("invalid encoding reached model fitting")

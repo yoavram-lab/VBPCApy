@@ -16,7 +16,7 @@ import numpy as np
 from threadpoolctl import threadpool_info
 
 import vbpca_py._converge as convergence
-from vbpca_py.model_selection import SelectionConfig, select_n_components
+from vbpca_py.legacy import SelectionConfig, select_n_components
 
 
 def _probe(rank, repeats):

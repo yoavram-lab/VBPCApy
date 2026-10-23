@@ -169,7 +169,7 @@ def test_strict_mode_keeps_categorical_validation_and_feature_coverage(strict):
 def test_raw_cv_refuses_invalid_numeric_metadata_before_model_fitting(
     monkeypatch, change
 ):
-    import vbpca_py.model_selection as selection
+    import vbpca_py._selection_core as selection
 
     def unexpected_fit(*args, **kwargs):
         pytest.fail("invalid numeric metadata reached model fitting")

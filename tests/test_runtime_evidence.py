@@ -353,7 +353,7 @@ def test_shared_patterns_skip_the_unrepresentative_no_pattern_probe(monkeypatch)
 
 
 def test_selection_cache_distinguishes_eligible_statistics_crossovers():
-    from vbpca_py.model_selection import _runtime_policy_key
+    from vbpca_py._selection_core import _runtime_policy_key
 
     x = np.ones((400, 400))
     automatic = {"dense_sufficient_statistics": "auto"}

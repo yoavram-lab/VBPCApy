@@ -6,9 +6,9 @@ import numpy as np
 import pytest
 import scipy.sparse as sp
 
-import vbpca_py.model_selection as ms
+import vbpca_py._selection_core as ms
+from vbpca_py._selection_core import SelectionConfig, select_n_components
 from vbpca_py.legacy import VBPCA
-from vbpca_py.model_selection import SelectionConfig, select_n_components
 
 
 def test_vbpca_fit_error_paths() -> None:

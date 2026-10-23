@@ -3,14 +3,14 @@ import pytest
 import scipy.sparse as sp
 from numpy.testing import assert_allclose
 
-import vbpca_py.model_selection as ms
-from vbpca_py.legacy import VBPCA
-from vbpca_py.model_selection import (
+import vbpca_py._selection_core as ms
+from vbpca_py._selection_core import (
     CVConfig,
     SelectionConfig,
     cross_validate_components,
     select_n_components,
 )
+from vbpca_py.legacy import VBPCA
 
 
 def _low_rank_data(

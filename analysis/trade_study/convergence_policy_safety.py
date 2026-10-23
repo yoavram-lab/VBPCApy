@@ -17,8 +17,9 @@ import numpy as np
 import scipy
 from scipy.linalg import subspace_angles
 
-from vbpca_py import SelectionConfig, recommend_config, select_n_components
 from vbpca_py import __version__ as vbpca_version
+from vbpca_py import recommend_config
+from vbpca_py.legacy import SelectionConfig, select_n_components
 
 from ._convergence_policy_safety_design import (
     build_manifest,

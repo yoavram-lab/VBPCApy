@@ -49,7 +49,7 @@ import matplotlib.pyplot as plt
 from sklearn.decomposition import PCA
 from sklearn.impute import SimpleImputer
 
-from vbpca_py import VBPCA, SelectionConfig, select_n_components
+from vbpca_py.legacy import VBPCA, SelectionConfig, select_n_components
 
 LOGGER = logging.getLogger(__name__)
 

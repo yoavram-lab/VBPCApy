@@ -9,7 +9,7 @@ import pytest
 import scipy.sparse as sp
 
 from vbpca_py import _pca_full as pf
-from vbpca_py.model_selection import (
+from vbpca_py._selection_core import (
     CVConfig,
     SelectionConfig,
     cross_validate_components,

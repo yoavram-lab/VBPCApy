@@ -22,7 +22,8 @@ from time import perf_counter, process_time
 
 import numpy as np
 
-from vbpca_py import VBPCA, CVConfig, cross_validate_components, model_selection
+from vbpca_py import _selection_core as model_selection  # noqa: PLC2701 - instrument the shared numerical sweep
+from vbpca_py.legacy import VBPCA, CVConfig, cross_validate_components
 
 OFF = dict.fromkeys(["angle", "rms_plateau", "cost", "earlystop", "composite"], False)
 FIT = {

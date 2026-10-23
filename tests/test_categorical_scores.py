@@ -73,7 +73,7 @@ def _structured_one_hot() -> tuple[np.ndarray, np.ndarray]:
 
 
 def test_cross_validation_reports_categorical_scores() -> None:
-    from vbpca_py import CVConfig, cross_validate_components
+    from vbpca_py.legacy import CVConfig, cross_validate_components
 
     x, groups = _structured_one_hot()
 
@@ -93,7 +93,7 @@ def test_cross_validation_reports_categorical_scores() -> None:
 
 
 def test_brier_selection_recovers_the_planted_rank() -> None:
-    from vbpca_py import CVConfig, cross_validate_components
+    from vbpca_py.legacy import CVConfig, cross_validate_components
 
     x, groups = _structured_one_hot()
 
@@ -111,7 +111,7 @@ def test_brier_selection_recovers_the_planted_rank() -> None:
 
 
 def test_log_score_selection_runs_and_is_finite() -> None:
-    from vbpca_py import CVConfig, cross_validate_components
+    from vbpca_py.legacy import CVConfig, cross_validate_components
 
     x, groups = _structured_one_hot()
 
@@ -128,7 +128,7 @@ def test_log_score_selection_runs_and_is_finite() -> None:
 
 
 def test_categorical_metrics_need_feature_groups() -> None:
-    from vbpca_py import CVConfig, cross_validate_components
+    from vbpca_py.legacy import CVConfig, cross_validate_components
 
     x, _ = _structured_one_hot()
 

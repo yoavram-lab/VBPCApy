@@ -9,6 +9,28 @@ from vbpca_py._pca_full import pca_full
 from vbpca_py.estimators import VBPCA
 
 
+def check_selection_types() -> None:
+    from vbpca_py import (
+        CVConfig,
+        SelectionConfig,
+        cross_validate_components,
+        legacy,
+        select_n_components,
+    )
+
+    data = np.ones((8, 3))
+    result = select_n_components(data, components=[0, 1], config=SelectionConfig())
+    assert_type(result[3], VBPCA | None)
+    old = legacy.select_n_components(data.T, components=[0, 1])
+    assert_type(old[3], legacy.VBPCA | None)
+    assert_type(
+        cross_validate_components(data, config=CVConfig()),
+        tuple[int, list[dict[str, object]]],
+    )
+    select_n_components(data, config=CVConfig())  # type: ignore[arg-type]
+    cross_validate_components(data, config=SelectionConfig())  # type: ignore[arg-type]
+
+
 def check_result_types(result: PCAResult, estimator: VBPCA) -> None:
     assert_type(pca_full(np.ones((2, 3)), 1), PCAResult)
     assert_type(result["A"], Float64Array)

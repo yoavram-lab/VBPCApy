@@ -128,15 +128,17 @@ def test_candidate_sweeps_fit_one_encoder_per_fold_and_score_original_variables(
         scores = fold.numeric_scores(np.zeros_like(fold.training))
         for j, variable in enumerate(fold.schema.variables):
             np.testing.assert_array_equal(
-                np.isfinite(fold.training[list(variable.columns)]),
+                np.isfinite(fold.training[:, list(variable.columns)]),
                 np.broadcast_to(
-                    fold.training_mask[:, j], (len(variable.columns), len(fold.raw))
+                    fold.training_mask[:, j, None],
+                    (len(fold.raw), len(variable.columns)),
                 ),
             )
             np.testing.assert_array_equal(
-                np.isfinite(fold.held_out[list(variable.columns)]),
+                np.isfinite(fold.held_out[:, list(variable.columns)]),
                 np.broadcast_to(
-                    fold.heldout_mask[:, j], (len(variable.columns), len(fold.raw))
+                    fold.heldout_mask[:, j, None],
+                    (len(fold.raw), len(variable.columns)),
                 ),
             )
             if j < 2:
@@ -207,7 +209,7 @@ def test_held_only_level_requires_external_vocabulary_even_with_reference_drop()
     variable = declared.schema.variables[0]
     assert variable.categories[-1] == "novel"
     assert variable.offset[-1] == 0
-    assert declared.held_out[variable.columns[-1], row] == 1
+    assert declared.held_out[row, variable.columns[-1]] == 1
 
 
 def test_numeric_variable_without_eligible_holdouts_is_reported_explicitly():
@@ -312,7 +314,7 @@ def test_invalid_raw_input_factory_and_capacity_fail_clearly():
     x[:, 2] = np.nan
     with pytest.raises(ValueError, match="every variable and sample"):
         prepare_raw_cv_folds(x, encoder_factory=_encoder)
-    with pytest.raises(ValueError, match="smallest fold dimension"):
+    with pytest.raises(ValueError, match=r"min\(n_samples, n_features\)"):
         cross_validate_raw_components(
             _data(), encoder_factory=_encoder, components=[100]
         )

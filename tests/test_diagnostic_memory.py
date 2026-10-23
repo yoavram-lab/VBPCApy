@@ -8,8 +8,8 @@ import scipy.sparse as sp
 
 from vbpca_py import _memory
 from vbpca_py import _pca_full as pf
+from vbpca_py import _selection_core as ms
 from vbpca_py import legacy as estimators
-from vbpca_py import model_selection as ms
 from vbpca_py.legacy import VBPCA
 
 

@@ -5,8 +5,9 @@ scikit-learn >=1.8, stores constructor parameters unchanged and validates data
 and fitted state through its native validation helpers. This follows the
 [scikit-learn estimator contract](https://scikit-learn.org/stable/developers/develop.html)
 and [`validate_data`](https://scikit-learn.org/stable/modules/generated/sklearn.utils.validation.validate_data.html).
-The package is still in unreleased 0.5 development; preprocessing conformance,
-selection-helper migration and the remaining Pipeline gates are tracked by #180.
+The package is still in unreleased 0.5 development. Native preprocessing,
+selection and sklearn composition are qualified; remaining complete examples,
+migration/release checks are tracked by #180.
 
 | API | Data | Components | Joint training scores | Mean |
 | --- | --- | --- | --- | --- |
@@ -153,8 +154,7 @@ to a wider encoded table. Direct masker calls use `mask=mask`; every new table
 needs its own aligned mask when it contains placeholders. Without explicit
 masks, ordinary NaN/stored-entry Pipelines need no routing opt-in. See the
 [preprocessing API](preprocessing.md) for sparse zero handling and the runnable
-example. Generated output names/containers and selection-helper migration
-remain separate gates under #179/#39.
+example. Output names and containers are described below.
 
 `EncodingSchema.validate(..., strict_numeric=True)` now checks mixed numeric
 inverse maps explicitly; default categorical-only validation remains compatible
@@ -171,8 +171,8 @@ receive deterministic suffixes. In a mixed raw-data Pipeline using Polars for
 numerical outputs, keep the leading masker in pandas mode. Polars input nulls
 are missing observations. See the [preprocessing API](preprocessing.md) for the
 optional extras, configuration and supported dtype boundaries. Inverse and
-posterior-record output remain unchanged. Selection migration and full example
-qualification remain under #39/#14.
+posterior-record output remain unchanged. The complete inverse-reconstruction
+example remains under #14.
 
 ## Scoring and cellwise selection
 
@@ -187,11 +187,37 @@ is rejected. `score(X)` averages row scores; optional finite, nonnegative
 They do not alter training. With metadata routing enabled, request scoring
 weights explicitly through `set_score_request(sample_weight=True)`.
 
-Cellwise PRMS/Brier capacity selection remains a distinct target. At this
-increment the existing `select_n_components`/`cross_validate_components`
-helpers and their returned compatibility models still use the feature-first
-contract; their migration is a separate #180 integration step. Do not pass
-sample-first data to those helpers until their documented boundary changes.
+Cellwise PRMS/Brier capacity selection remains a distinct target. Public
+`select_n_components` and `cross_validate_components` consume samples x
+features, including masks and explicit selection probes, and default to modern
+mode. Requested positive-rank selected models are native estimators with
+`components_: (q,p)`, `scores_: (n,q)` and conditional `transform(X_new)`;
+they adopt the selected fit without refitting. Rank-zero selection retains the
+existing `None` best-model result. Diagnostics keep their byte budgets and
+use native axes. Warm starts retain their explicitly documented low-level axes.
+
+Native capacities reject negative, Boolean, nonintegral and oversized values.
+Cellwise CV constructs its own probes and refuses external probe options.
+Feature groups/schema columns describe the input feature axis. Raw CV still
+fits preprocessing separately within each cell fold; its public prepared
+training/probe arrays and `numeric_scores` inputs now use samples x encoded
+features. Rebuild older prepared-fold pickles, whose layout is explicitly
+refused. The [selection guide](../concepts/model-selection.md) explains the
+unchanged target/fold rules and includes the executed public example.
+
+To preserve historical feature-first helper inputs, defaults and returned
+compatibility models, import `select_n_components` and
+`cross_validate_components` from `vbpca_py.legacy`. Existing numerical/study
+characterizations remain on that explicit boundary; archived registrations
+and scientific results are not rewritten.
+
+Grouped sklearn CV and multi-metric GridSearchCV support explicitly requested
+raw mask metadata and scoring-only row weights. Custom scorers must declare
+their metadata requests through sklearn's public routing API. Training remains
+unweighted. On supported sklearn versions, `GridSearchCV.transform` does not
+accept metadata: use
+`search.best_estimator_.transform(X_new, observation_mask=new_mask)` for masked
+inference after search. `search.score` supports requested scoring metadata.
 
 ## Explicit legacy API and serialized models
 

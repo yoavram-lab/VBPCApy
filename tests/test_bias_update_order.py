@@ -7,7 +7,7 @@ import pytest
 from numpy.testing import assert_allclose
 
 from vbpca_py._pca_full import _build_options, pca_full
-from vbpca_py.model_selection import SelectionConfig, select_n_components
+from vbpca_py._selection_core import SelectionConfig, select_n_components
 
 _CONVERGENCE_OFF = {
     "angle": False,

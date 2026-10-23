@@ -20,7 +20,8 @@ import numpy as np
 import scipy
 
 import vbpca_py
-from vbpca_py import AutoEncoder, CVConfig, cross_validate_components
+from vbpca_py import AutoEncoder
+from vbpca_py.legacy import CVConfig, cross_validate_components
 
 # A deliberate version boundary: compare historical feature-first fits in both
 # environments, including installations that predate the explicit legacy API.
