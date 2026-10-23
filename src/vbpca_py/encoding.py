@@ -10,6 +10,13 @@ import numpy as np
 from ._types import Float64Array  # noqa: TC001 - runtime annotation resolution
 
 
+def _finite_real_scalar(value: object) -> bool:
+    if not np.isscalar(value):
+        return False
+    scalar = np.asarray(value)
+    return scalar.dtype.kind in "iuf" and bool(np.isfinite(scalar))
+
+
 @dataclass(frozen=True, slots=True)
 class EncodedVariable:
     """Describe one original variable in an encoded feature matrix.
@@ -93,14 +100,16 @@ class EncodedVariable:
                 "exactly one column and one offset"
             )
             raise ValueError(msg)
-        if not np.all(np.isfinite(self.offset)):
+        if not _finite_real_scalar(self.offset[0]):
             msg = (
-                "numeric encoding needs a finite fitted offset "
+                "numeric encoding needs a finite fitted offset that is a real scalar "
                 "(unavailable for wholly missing training support)"
             )
             raise ValueError(msg)
-        if not np.isfinite(self.weight) or self.weight <= 0:
-            msg = "numeric encoding needs a positive finite weight"
+        if not _finite_real_scalar(self.weight) or self.weight <= 0:
+            msg = (
+                "numeric encoding needs a positive finite weight that is a real scalar"
+            )
             raise ValueError(msg)
 
 
@@ -138,8 +147,9 @@ class EncodingSchema:
         Args:
             n_features: Number of rows of the model's features-by-samples input.
             strict_numeric: Also require continuous and ordinal variables to
-                have exactly one column, one finite fitted offset and a positive
-                finite weight. The default checks their feature coverage only,
+                have exactly one column, one finite real scalar fitted offset
+                and a positive finite real scalar weight. The default checks
+                their feature coverage only,
                 retaining compatibility with categorical-only scoring schemas.
                 Wholly missing numeric training columns have no fitted offset
                 and cannot pass strict validation.

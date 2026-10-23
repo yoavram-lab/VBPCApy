@@ -25,11 +25,24 @@ from vbpca_py import (
         ({"offset": (np.nan,)}, "finite fitted offset"),
         ({"offset": (np.inf,)}, "finite fitted offset"),
         ({"offset": (-np.inf,)}, "finite fitted offset"),
+        ({"offset": (np.array([10.0, 20.0]),)}, "real scalar"),
+        ({"offset": (np.array(10.0),)}, "real scalar"),
+        ({"offset": ((10.0, 20.0),)}, "real scalar"),
+        ({"offset": (1.0 + 2.0j,)}, "real scalar"),
+        ({"offset": (np.complex128(1.0),)}, "real scalar"),
+        ({"offset": (True,)}, "real scalar"),
+        ({"offset": ("1.0",)}, "real scalar"),
         ({"weight": 0.0}, "positive finite weight"),
         ({"weight": -1.0}, "positive finite weight"),
         ({"weight": np.nan}, "positive finite weight"),
         ({"weight": np.inf}, "positive finite weight"),
         ({"weight": -np.inf}, "positive finite weight"),
+        ({"weight": np.array([1.0, 2.0])}, "real scalar"),
+        ({"weight": np.array(1.0)}, "real scalar"),
+        ({"weight": 1.0 + 2.0j}, "real scalar"),
+        ({"weight": np.complex128(1.0)}, "real scalar"),
+        ({"weight": True}, "real scalar"),
+        ({"weight": "1.0"}, "real scalar"),
     ],
 )
 def test_strict_validation_and_decoding_refuse_invalid_numeric_maps(
@@ -44,6 +57,17 @@ def test_strict_validation_and_decoding_refuse_invalid_numeric_maps(
         schema.validate(width, strict_numeric=True)
     with pytest.raises(ValueError, match=message):
         variable.decode_numeric(np.zeros((width, 3)))
+
+
+@pytest.mark.parametrize("scalar", [int, float, np.int64, np.float32, np.float64])
+def test_numeric_maps_accept_python_and_numpy_real_scalars(scalar):
+    variable = EncodedVariable(
+        "continuous", (0,), offset=(scalar(10),), weight=scalar(2)
+    )
+    EncodingSchema((variable,)).validate(1, strict_numeric=True)
+    np.testing.assert_array_equal(
+        variable.decode_numeric(np.array([[0.0, 2.0]])), [[10.0, 11.0]]
+    )
 
 
 @pytest.mark.parametrize("scaler", ["standard", "minmax"])
@@ -132,7 +156,16 @@ def test_strict_mode_keeps_categorical_validation_and_feature_coverage(strict):
         EncodingSchema((numeric,)).validate(2, strict_numeric=strict)
 
 
-@pytest.mark.parametrize("change", [{"weight": 0.0}, {"offset": (np.nan,)}])
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"weight": 0.0},
+        {"offset": (np.nan,)},
+        {"offset": (np.array([10.0, 20.0]),)},
+        {"offset": (1.0 + 2.0j,)},
+        {"weight": np.complex128(1.0)},
+    ],
+)
 def test_raw_cv_refuses_invalid_numeric_metadata_before_model_fitting(
     monkeypatch, change
 ):
