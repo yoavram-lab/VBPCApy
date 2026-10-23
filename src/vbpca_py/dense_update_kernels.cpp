@@ -222,6 +222,16 @@ py::dict score_update_dense_no_av(
         throw std::invalid_argument("loadings row count must match x_data rows.");
     }
 
+    // Rank-zero outputs are known; avoid Eigen 3.3's empty matrix solve.
+    if (n_components == 0) {
+        py::dict out;
+        out["scores"] = Eigen::MatrixXd(0, n_samples);
+        if (return_covariance) {
+            out["score_covariance"] = Eigen::MatrixXd(0, 0);
+        }
+        return out;
+    }
+
     const Eigen::MatrixXd identity = Eigen::MatrixXd::Identity(n_components, n_components);
     Eigen::MatrixXd psi = loadings.transpose() * loadings + noise_var * identity;
     const Eigen::LLT<Eigen::MatrixXd> llt = stable_llt(std::move(psi));
@@ -260,6 +270,15 @@ py::dict loadings_update_dense_no_sv(
         static_cast<int>(prior_prec.cols()) != n_components
     ) {
         throw std::invalid_argument("prior_prec must be square with size n_components.");
+    }
+
+    if (n_components == 0) {
+        py::dict out;
+        out["loadings"] = Eigen::MatrixXd(n_features, 0);
+        if (return_covariance) {
+            out["loading_covariance"] = Eigen::MatrixXd(0, 0);
+        }
+        return out;
     }
 
     Eigen::MatrixXd phi = scores * scores.transpose() + prior_prec;
@@ -332,6 +351,15 @@ py::dict score_update_dense_masked_nopattern(
     if (return_covariances) {
         score_covariances = py::array_t<double>({n_samples, n_components, n_components});
         score_covariances_ptr = score_covariances.mutable_data();
+    }
+
+    if (n_components == 0) {
+        py::dict out;
+        out["scores"] = scores;
+        if (return_covariances) {
+            out["score_covariances"] = score_covariances;
+        }
+        return out;
     }
 
     const Eigen::MatrixXd identity = Eigen::MatrixXd::Identity(n_components, n_components);
@@ -498,6 +526,15 @@ py::dict loadings_update_dense_masked_nopattern(
     if (return_covariances) {
         loading_covariances = py::array_t<double>({n_features, n_components, n_components});
         loading_covariances_ptr = loading_covariances.mutable_data();
+    }
+
+    if (n_components == 0) {
+        py::dict out;
+        out["loadings"] = loadings;
+        if (return_covariances) {
+            out["loading_covariances"] = loading_covariances;
+        }
+        return out;
     }
 
     const Eigen::MatrixXd identity = Eigen::MatrixXd::Identity(n_components, n_components);
