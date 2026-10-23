@@ -8,6 +8,7 @@ from vbpca_py.configuration import PCAOptions
 from vbpca_py.defaults import recommend_config
 from vbpca_py.encoding import EncodedVariable, EncodingSchema
 from vbpca_py.estimators import VBPCA
+from vbpca_py.masking import ObservationMasker
 from vbpca_py.model_selection import (
     RANK_ZERO_SELECTION_SUPPORTED,
     CVConfig,
@@ -67,6 +68,7 @@ __all__ = [
     "MissingAwareStandardScaler",
     "MissingAwareWinsorizer",
     "NumericTraceKey",
+    "ObservationMasker",
     "PCAOptions",
     "PCAResult",
     "PhaseTimingKey",

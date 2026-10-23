@@ -29,6 +29,7 @@ from ._encoding_checks import detect_one_hot_blocks, encoding_warnings
 from ._missingness_checks import mcar_screen, missingness_summary, scale_warnings
 from ._preprocessing_state import PreprocessorState
 from .encoding import EncodedVariable, EncodingSchema
+from .masking import ObservationMasker
 
 __all__ = [
     "AutoEncoder",
@@ -40,6 +41,7 @@ __all__ = [
     "MissingAwareSparseOneHotEncoder",
     "MissingAwareStandardScaler",
     "MissingAwareWinsorizer",
+    "ObservationMasker",
     "check_data",
 ]
 
