@@ -9,7 +9,7 @@ from numpy.testing import assert_allclose
 import vbpca_py._converge as convergence
 from vbpca_py._missing import make_xprobe_mask
 from vbpca_py._pca_full import pca_full
-from vbpca_py.model_selection import (
+from vbpca_py._selection_core import (
     CVConfig,
     SelectionConfig,
     cross_validate_components,

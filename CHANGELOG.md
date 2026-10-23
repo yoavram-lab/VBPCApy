@@ -44,6 +44,22 @@ The development version is not a release announcement.
 
 ### Changed
 
+- Move public component-selection inputs, masks and probes to samples x
+  features, default to modern observation semantics and return native
+  positive-rank selected estimators without refitting. Preserve the existing
+  cellwise metrics, rank-zero `None` model result and low-level warm-start axes.
+  Export explicit feature-first helpers from `vbpca_py.legacy`; keep historical
+  engineering/study scripts on that boundary. Prepared raw-CV training/probe
+  arrays and numeric prediction inputs now use samples x encoded features;
+  version their pickle layout and require old prepared folds to be rebuilt.
+  Reject invalid native capacities instead of truncating or dropping them.
+  Qualify grouped, weighted multi-metric sklearn CV/GridSearchCV with raw mask
+  routing and dense output containers. Masked inference after search uses its
+  fitted `best_estimator_` because search `transform` does not route metadata.
+  Preserve Polars 2 input names and reject changed/reordered columns on the
+  sklearn 1.8 dependency floor, including preprocessors, maskers and probes,
+  without requiring pandas.
+
 - Name outputs from fitted categories, reference drops and original-variable
   plans; unnamed encoders use `x0`, `x1`, ... and generated collisions receive
   stable suffixes. Keep fitted display metadata consistent during transform.

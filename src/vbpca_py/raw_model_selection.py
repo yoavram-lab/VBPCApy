@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import numpy as np
 import scipy.sparse as sp
 
-from ._types import BoolArray, Float64Array, InputArray  # noqa: TC001 - runtime annotation resolution
-from .model_selection import (
+from ._selection_core import (
     CVConfig,
     _aggregate_cv_results,
     _apply_rule,
@@ -19,6 +18,8 @@ from .model_selection import (
     _normalize_components,
     _run_fold,
 )
+from ._types import BoolArray, Float64Array, InputArray  # noqa: TC001 - runtime annotation resolution
+from ._validation import validate_rank
 from .preprocessing import AutoEncoder, _ensure_mask
 
 if TYPE_CHECKING:
@@ -35,8 +36,8 @@ class PreprocessedFold:
         encoder: Fresh encoder fitted on training observations only.
         training_mask: Samples-by-variables training observation mask.
         heldout_mask: Samples-by-variables held-out observation mask.
-        training: Encoded features-by-samples training matrix.
-        held_out: Encoded features-by-samples probe matrix.
+        training: Samples-by-encoded-features training matrix.
+        held_out: Samples-by-encoded-features probe matrix.
         raw: Raw samples-by-variables values, with unobserved cells masked.
     """
 
@@ -46,6 +47,58 @@ class PreprocessedFold:
     training: Float64Array
     held_out: Float64Array
     raw: InputArray
+
+    def __post_init__(self) -> None:
+        """Require the declared sample axis without inferring an orientation.
+
+        Raises:
+            ValueError: Encoded arrays or masks do not match the raw/schema axes.
+        """
+        expected = (self.raw.shape[0], len(self.schema.feature_groups))
+        if (
+            self.training.shape != expected
+            or self.held_out.shape != expected
+            or self.training_mask.shape != self.raw.shape
+            or self.heldout_mask.shape != self.raw.shape
+        ):
+            msg = (
+                "prepared fold arrays must use samples-by-features "
+                "and aligned raw masks"
+            )
+            raise ValueError(msg)
+
+    def __getstate__(self) -> dict[str, object]:
+        """Record the fold layout explicitly for serialization.
+
+        Returns:
+            Named fold state with the native layout version.
+        """
+        return {
+            "layout_version": 1,
+            "encoder": self.encoder,
+            "training_mask": self.training_mask,
+            "heldout_mask": self.heldout_mask,
+            "training": self.training,
+            "held_out": self.held_out,
+            "raw": self.raw,
+        }
+
+    def __setstate__(self, state: object) -> None:
+        """Restore native folds; old feature-first artifacts must be rebuilt.
+
+        Raises:
+            ValueError: The layout marker is absent or incompatible.
+        """
+        if not isinstance(state, dict) or state.get("layout_version") != 1:
+            msg = "Incompatible prepared-fold layout; rebuild pre-0.5 CV folds"
+            raise ValueError(msg)
+        self.encoder = cast("AutoEncoder", state["encoder"])
+        self.training_mask = cast("BoolArray", state["training_mask"])
+        self.heldout_mask = cast("BoolArray", state["heldout_mask"])
+        self.training = cast("Float64Array", state["training"])
+        self.held_out = cast("Float64Array", state["held_out"])
+        self.raw = cast("InputArray", state["raw"])
+        self.__post_init__()
 
     @property
     def schema(self) -> EncodingSchema:
@@ -64,15 +117,19 @@ class PreprocessedFold:
         """Score each numeric variable in input or ordinal-index units.
 
         Args:
-            prediction: Encoded features-by-samples predicted means.
+            prediction: Samples-by-encoded-features predicted means.
 
         Returns:
             ``rmse_variable_j`` for each continuous or ordinal input column.
             ``NaN`` when the fold holds out no cells of that variable.
 
         Raises:
-            ValueError: If a held-out numeric prediction is not finite.
+            ValueError: Prediction shape is invalid or a held-out numeric
+                prediction is not finite.
         """
+        if prediction.shape != self.training.shape:
+            msg = "prediction must match the samples-by-encoded-features fold shape"
+            raise ValueError(msg)
         scores: dict[str, float] = {}
         for j, variable in enumerate(self.schema.variables):
             if variable.kind == "categorical":
@@ -86,7 +143,7 @@ class PreprocessedFold:
             else:
                 truth = np.asarray(self.raw[cells, j], dtype=float)
             decoded = variable.decode_numeric(
-                prediction[np.ix_(np.asarray(variable.columns, dtype=np.intp), cells)]
+                prediction[np.ix_(cells, np.asarray(variable.columns, dtype=np.intp))].T
             )
             if cells.size and not np.all(np.isfinite(decoded)):
                 msg = "held-out numeric predictions must be finite"
@@ -97,6 +154,14 @@ class PreprocessedFold:
                 else float("nan")
             )
         return scores
+
+    def _feature_first_scores(self, prediction: Float64Array) -> dict[str, float]:
+        """Adapt the private numerical scorer's axes without a prediction copy.
+
+        Returns:
+            Numeric errors in the established input-variable units.
+        """
+        return self.numeric_scores(prediction.T)
 
 
 def prepare_raw_cv_folds(
@@ -158,9 +223,9 @@ def prepare_raw_cv_folds(
         encoder.fit(train_raw, mask=train_mask)
         training = np.asarray(
             encoder.transform(train_raw, mask=train_mask), dtype=float
-        ).T
+        )
         try:
-            held_out = np.asarray(encoder.transform(raw, mask=held), dtype=float).T
+            held_out = np.asarray(encoder.transform(raw, mask=held), dtype=float)
         except ValueError as error:
             msg = (
                 f"fold {fold_index} cannot encode held-out observations; check input "
@@ -178,9 +243,9 @@ def _validate_preprocessed_fold(
     fold: PreprocessedFold, index: int, cfg: CVConfig
 ) -> None:
     schema = fold.schema
-    schema.validate(fold.training.shape[0], strict_numeric=True)
+    schema.validate(fold.training.shape[1], strict_numeric=True)
     if any(not variable.columns for variable in schema.variables) or not np.all(
-        np.isfinite(fold.training).any(axis=0)
+        np.isfinite(fold.training).any(axis=1)
     ):
         msg = f"fold {index} has insufficient encoded training support"
         raise ValueError(msg)
@@ -188,13 +253,13 @@ def _validate_preprocessed_fold(
         (fold.training, fold.training_mask),
         (fold.held_out, fold.heldout_mask),
     ):
-        if not np.array_equal(np.isfinite(encoded), mask[:, schema.feature_groups].T):
+        if not np.array_equal(np.isfinite(encoded), mask[:, schema.feature_groups]):
             msg = (
                 f"fold {index} must preserve raw observation masks "
                 "with finite encoded values"
             )
             raise ValueError(msg)
-    _cv_groups(CVConfig(metric=cfg.metric, encoding_schema=schema), fold.held_out)
+    _cv_groups(CVConfig(metric=cfg.metric, encoding_schema=schema), fold.held_out.T)
 
 
 def cross_validate_raw_components(
@@ -232,17 +297,21 @@ def cross_validate_raw_components(
     """
     cfg = config or CVConfig()
     rule = cfg.resolved_rule()
-    if "xprobe" in opts:
+    if "xprobe" in opts or opts.get("xprobe_fraction", 0.0) != 0:
         msg = "raw CV constructs its own probes; do not supply xprobe"
         raise ValueError(msg)
     folds = prepare_raw_cv_folds(
         x, encoder_factory=encoder_factory, mask=mask, config=cfg
     )
     max_k = min(min(fold.training.shape) for fold in folds)
-    candidates = _normalize_components(components, max_k, max_k)
-    if max(candidates) > max_k:
-        msg = f"raw CV capacities must not exceed the smallest fold dimension ({max_k})"
-        raise ValueError(msg)
+    candidates = _normalize_components(
+        None
+        if components is None
+        else [validate_rank(k, (max_k, max_k)) for k in components],
+        max_k,
+        max_k,
+    )
+    fit_options = {"compat_mode": "modern", **opts}
     numeric = tuple(
         f"rmse_variable_{j}"
         for j, v in enumerate(folds[0].schema.variables)
@@ -253,7 +322,7 @@ def cross_validate_raw_components(
     batches = [[k] for k in sorted(candidates)] if cfg.early_stop else [candidates]
     for batch in batches:
         for index, fold in enumerate(folds):
-            metrics[index].update(_evaluate_fold(fold, index, batch, cfg, opts))
+            metrics[index].update(_evaluate_fold(fold, index, batch, cfg, fit_options))
         evaluated.extend(batch)
         _, results = _aggregate_cv_results(evaluated, metrics, cfg.metric, numeric)
         if (
@@ -273,9 +342,9 @@ def _evaluate_fold(
     config: CVConfig,
     options: dict[str, object],
 ) -> dict[int, dict[str, object]]:
-    base = np.where(np.isfinite(fold.held_out), fold.held_out, fold.training)
+    base = np.where(np.isfinite(fold.held_out), fold.held_out, fold.training).T
     rows, columns = np.nonzero(np.isfinite(base))
-    probes = np.flatnonzero(np.isfinite(fold.held_out[rows, columns]))
+    probes = np.flatnonzero(np.isfinite(fold.held_out.T[rows, columns]))
     schema = fold.schema
     return _run_fold(
         index,
@@ -289,7 +358,7 @@ def _evaluate_fold(
             "verbose": 0,
             "_cell_groups": schema.feature_groups,
             "_encoding_schema": schema,
-            "_extra_scorer": fold.numeric_scores,
+            "_extra_scorer": fold._feature_first_scores,  # noqa: SLF001
         },
         seed=config.seed,
         n_splits=config.n_splits,

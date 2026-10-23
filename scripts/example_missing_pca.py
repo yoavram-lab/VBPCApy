@@ -12,8 +12,7 @@ import logging
 
 import numpy as np
 
-from vbpca_py import SelectionConfig, select_n_components
-from vbpca_py.legacy import VBPCA
+from vbpca_py.legacy import VBPCA, SelectionConfig, select_n_components
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 log = logging.getLogger(__name__)

@@ -25,8 +25,13 @@ from vbpca_py._memory import (
 from vbpca_py._missing import make_xprobe_mask
 from vbpca_py._native import TypedEstimator
 from vbpca_py._pca_full import Matrix, pca_full
+from vbpca_py._selection_core import (
+    CVConfig,
+    SelectionConfig,
+    cross_validate_components,
+    select_n_components,
+)
 from vbpca_py.configuration import PCAOptions
-from vbpca_py.model_selection import SelectionConfig, select_n_components
 from vbpca_py.options import (  # noqa: TC001 - public runtime type-hint resolution
     AccessorMode,
     Algorithm,
@@ -45,7 +50,13 @@ from ._types import BoolArray, Float64Array, IndexArray, InputMask, InputMatrix 
 if TYPE_CHECKING:
     from vbpca_py.results import LearningCurve
 
-__all__ = ["VBPCA"]
+__all__ = [
+    "VBPCA",
+    "CVConfig",
+    "SelectionConfig",
+    "cross_validate_components",
+    "select_n_components",
+]
 
 _TOL_DEPRECATION_MESSAGE = (
     "tol is deprecated and has no effect; configure rmsstop, "

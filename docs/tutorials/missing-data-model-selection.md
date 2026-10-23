@@ -52,7 +52,7 @@ Use `select_n_components` to sweep over candidate values of $k$ and pick the
 best according to the variational cost:
 
 ```python
-from vbpca_py import select_n_components, SelectionConfig
+from vbpca_py.legacy import select_n_components, SelectionConfig
 
 cfg = SelectionConfig(
     metric="cost",          # select by variational free energy

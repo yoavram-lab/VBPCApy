@@ -270,11 +270,19 @@ default preprocessors pass all applicable generic checks on minimum/current
 sklearn without skips or expected failures. Frozen synthetic transforms,
 inverse outputs and fitted metadata remain unchanged for existing valid cases.
 
-Mask routing, generated output names/container wrapping, strict mixed numeric
-encoding-schema validation and selection layout/composition remain open.
-Passing generic checks does not establish these integration contracts. Complete
-#178/#179/#39 and the remaining examples/migration/release gates before the
-single 0.5 release.
+Strict mixed numeric schema validation, canonical mask routing and generated
+names/container wrapping are implemented by #342/#343/#344. Selection now uses
+the public samples-by-features boundary and returns native selected models;
+the unchanged numerical selection routines remain feature-first internally and
+are exposed explicitly through the legacy API. Prepared raw-CV arrays and
+numeric predictions use samples-by-encoded-features with versioned serialization.
+Combined grouped CV and multi-metric GridSearchCV tests cover mask routing,
+scoring-only row weights and dense containers. Custom scorers declare their own
+metadata requests; masked inference after search uses the fitted pipeline
+through `best_estimator_`, because search `transform` does not accept metadata.
+Complete the remaining #14/#19/#25/#319 examples/migration and #314 release
+qualification before the single 0.5 release. Frozen scientific registrations
+and study outcomes are not migrated by these engineering changes.
 
 The preimplementation/boundary probes identified the prerequisites below,
 which have since been addressed before the native estimator migration.

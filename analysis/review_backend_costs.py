@@ -27,8 +27,7 @@ import vbpca_py
 import vbpca_py._converge as conv
 import vbpca_py._full_update as fu
 import vbpca_py._pca_full as pc
-from vbpca_py import VBPCA
-from vbpca_py.model_selection import SelectionConfig, select_n_components
+from vbpca_py.legacy import VBPCA, SelectionConfig, select_n_components
 
 OFF = dict.fromkeys(
     ("angle", "earlystop", "rms_plateau", "cost", "composite", "slowing_down"), False
@@ -260,7 +259,9 @@ def main():
             "_runtime_policy.py",
             "_rms.py",
             "estimators.py",
+            "legacy.py",
             "model_selection.py",
+            "_selection_core.py",
         )
     }
     numpy_build = io.StringIO()

@@ -10,8 +10,8 @@ import vbpca_py._full_update as updates
 import vbpca_py._rms as rms_module
 from vbpca_py._pca_full import pca_full
 from vbpca_py._rms import RmsConfig, compute_rms
+from vbpca_py._selection_core import SelectionConfig, select_n_components
 from vbpca_py._sparsity import _as_dense_mask
-from vbpca_py.model_selection import SelectionConfig, select_n_components
 
 _OFF = dict.fromkeys(
     ("angle", "earlystop", "rms_plateau", "cost", "composite", "slowing_down"), False

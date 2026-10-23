@@ -35,7 +35,7 @@ one observation in every non-empty row and column. `CVConfig.seed` controls
 both fold assignment and model initialization.
 
 ```python
-from vbpca_py import cross_validate_components, CVConfig
+from vbpca_py.legacy import cross_validate_components, CVConfig
 
 cfg = CVConfig(
     n_splits=5,

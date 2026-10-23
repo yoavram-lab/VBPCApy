@@ -4,7 +4,9 @@ import copy
 import pickle
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Event
 
 import numpy as np
 import pandas as pd
@@ -17,7 +19,14 @@ from sklearn.exceptions import NotFittedError
 from sklearn.model_selection import GridSearchCV
 from sklearn.pipeline import Pipeline
 
-from vbpca_py import VBPCA, AutoEncoder, ObservationMasker
+from vbpca_py import (
+    VBPCA,
+    AutoEncoder,
+    ObservationMasker,
+    _preprocessing_state,
+    estimators,
+    masking,
+)
 from vbpca_py import preprocessing as p
 
 KINDS = [
@@ -119,6 +128,80 @@ def test_names_are_owned_and_fitted_display_metadata_remains_consistent(kind):
     model.transform(_data())
     if hasattr(model, "feature_names_out_"):
         assert model.feature_names_out_ == before.tolist()
+
+
+@pytest.mark.parametrize("kind", KINDS)
+def test_polars_input_names_validate_order_across_table_types_and_reset(kind):
+    pandas = _data()
+    table = pl.DataFrame(pandas.to_numpy(), schema=list(pandas.columns))
+    model = _make(kind).fit(table)
+    np.testing.assert_array_equal(model.feature_names_in_, table.columns)
+    np.testing.assert_array_equal(
+        model.get_feature_names_out(), _expected(kind, table.columns)
+    )
+    actual = model.transform(table)
+    reference = model.transform(pandas)
+    if sp.issparse(actual):
+        actual, reference = actual.toarray(), reference.toarray()
+    np.testing.assert_allclose(actual, reference)
+    for changed in [
+        table.select("mass", "length"),
+        table.rename({"mass": "weight"}),
+        pandas[["mass", "length"]],
+    ]:
+        with pytest.raises(ValueError, match="feature names"):
+            model.transform(changed)
+        np.testing.assert_array_equal(model.feature_names_in_, table.columns)
+    model.fit(pandas)
+    with pytest.raises(ValueError, match="feature names"):
+        model.transform(table.select("mass", "length"))
+    model.fit(table.to_numpy())
+    assert not hasattr(model, "feature_names_in_")
+    with pytest.warns(UserWarning, match="fitted without feature names"):
+        model.transform(table)
+    assert not hasattr(model, "feature_names_in_")
+    model.fit(table)
+    with pytest.raises(ValueError):
+        model.fit(table.head(0))
+    assert not hasattr(model, "feature_names_in_")
+    with pytest.raises(NotFittedError):
+        model.get_feature_names_out()
+
+
+@pytest.mark.parametrize("kind", KINDS)
+def test_overlapping_polars_validation_does_not_hide_fitted_names(kind, monkeypatch):
+    pandas = _data()
+    table = pl.DataFrame(pandas.to_numpy(), schema=list(pandas.columns))
+    model = _make(kind).fit(table)
+    module = (
+        estimators
+        if kind.startswith("native")
+        else masking
+        if kind == "masker"
+        else _preprocessing_state
+    )
+    validate = module.validate_data
+    entered, resume = Event(), Event()
+
+    def paused_validator(estimator, values, **kwargs):
+        if isinstance(values, np.ndarray):
+            entered.set()
+            if not resume.wait(timeout=20):
+                pytest.fail("overlap test did not release Polars validation")
+        return validate(estimator, values, **kwargs)
+
+    monkeypatch.setattr(module, "validate_data", paused_validator)
+    with ThreadPoolExecutor(max_workers=1) as worker:
+        pending = worker.submit(model.transform, table)
+        try:
+            assert entered.wait(timeout=20)
+            np.testing.assert_array_equal(model.feature_names_in_, table.columns)
+            with pytest.raises(ValueError, match="feature names"):
+                model.transform(pandas[["mass", "length"]])
+        finally:
+            resume.set()
+        pending.result(timeout=20)
+    np.testing.assert_array_equal(model.feature_names_in_, table.columns)
 
 
 @pytest.mark.parametrize("kind", KINDS)

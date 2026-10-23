@@ -9,8 +9,8 @@ from typing import Any
 
 import numpy as np
 
-from vbpca_py import SelectionConfig, recommend_config, select_n_components
-from vbpca_py.legacy import VBPCA
+from vbpca_py import recommend_config
+from vbpca_py.legacy import VBPCA, SelectionConfig, select_n_components
 
 from ._modern_defaults_data import SimulationData, generate_simulation
 from ._modern_defaults_metrics import (

@@ -17,9 +17,8 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from vbpca_py import SelectionConfig, select_n_components
 from vbpca_py._pca_full import pca_full
-from vbpca_py.legacy import VBPCA
+from vbpca_py.legacy import VBPCA, SelectionConfig, select_n_components
 
 # -- strategies for generating test data --
 

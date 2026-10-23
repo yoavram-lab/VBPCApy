@@ -17,6 +17,7 @@ from ._feature_names import (
     canonical_table_nulls,
     check_named_columns,
     empty_table_array,
+    named_table_input,
 )
 from ._native import TypedEstimator
 from ._types import BoolArray, InputArray  # noqa: TC001 - runtime annotation resolution
@@ -61,17 +62,18 @@ class PreprocessorState(FeatureNamesMixin, TypedEstimator):
         """
         _check_sparse_structure(x)
         check_named_columns(x)
-        checked = cast(
-            "InputArray | sp.spmatrix",
-            validate_data(
-                self,
-                x,
-                reset=reset,
-                dtype="numeric" if self._numeric_input else None,
-                accept_sparse=["csr", "csc"] if self._accept_sparse else False,
-                ensure_all_finite=False,
-            ),
-        )
+        with named_table_input(self, x, reset=reset) as (validator, values):
+            checked = cast(
+                "InputArray | sp.spmatrix",
+                validate_data(
+                    validator,
+                    values,
+                    reset=reset,
+                    dtype="numeric" if self._numeric_input else None,
+                    accept_sparse=["csr", "csc"] if self._accept_sparse else False,
+                    ensure_all_finite=False,
+                ),
+            )
         names = getattr(self, "feature_names_in_", None)
         if names is not None and np.unique(names).size != len(names):
             msg = "X has duplicate feature names"

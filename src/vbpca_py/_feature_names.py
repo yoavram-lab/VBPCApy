@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import warnings
+from collections.abc import Generator  # noqa: TC003 - runtime annotation resolution
+from contextlib import contextmanager
+from copy import copy
 from typing import Literal, Self, cast
 
 import numpy as np
@@ -87,6 +91,49 @@ def check_named_columns(x: object) -> None:
     if columns is not None and not getattr(columns, "is_unique", True):
         msg = "X has duplicate feature names"
         raise ValueError(msg)
+
+
+@contextmanager
+def named_table_input(
+    estimator: object, x: object, *, reset: bool
+) -> Generator[tuple[object, object], None, None]:
+    """Preserve Polars names alongside sklearn's array and dimension validation.
+
+    Polars 2 removed the dataframe protocol used by sklearn 1.8 to read labels.
+    Normalize that optional table type without importing pandas or relying on
+    private sklearn helpers. Other inputs retain sklearn's native validation.
+
+    Yields:
+        The estimator and its input for validation. For Polars, use a detached
+        metadata copy and the equivalent NumPy representation so concurrent
+        inference never sees temporarily cleared fitted names.
+
+    Raises:
+        ValueError: Polars columns differ from the fitted feature names/order.
+    """
+    if type(x).__module__.split(".")[0] != "polars" or not hasattr(x, "columns"):
+        yield estimator, x
+        return
+    names = np.asarray(x.columns, dtype=object)
+    state = vars(estimator)
+    previous = state.get("feature_names_in_")
+    if not reset:
+        if previous is not None and not np.array_equal(previous, names):
+            msg = "The feature names must match those passed during fit, in order"
+            raise ValueError(msg)
+        if previous is None:
+            warnings.warn(
+                "X has feature names, but the estimator was fitted "
+                "without feature names",
+                UserWarning,
+                stacklevel=3,
+            )
+    validator = copy(estimator)
+    vars(validator).pop("feature_names_in_", None)
+    yield validator, np.asarray(x)  # noqa: RUF075 - publish fit metadata only on success
+    if reset:
+        state["n_features_in_"] = vars(validator)["n_features_in_"]
+        state["feature_names_in_"] = names.copy()
 
 
 def canonical_table_nulls(original: object, checked: InputArray) -> InputArray:

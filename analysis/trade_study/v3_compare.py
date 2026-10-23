@@ -47,7 +47,7 @@ from scipy import stats as scipy_stats
 from sklearn.decomposition import PCA
 from sklearn.impute import SimpleImputer
 
-from vbpca_py import VBPCA, SelectionConfig, select_n_components
+from vbpca_py.legacy import VBPCA, SelectionConfig, select_n_components
 
 LOGGER = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(message)s")

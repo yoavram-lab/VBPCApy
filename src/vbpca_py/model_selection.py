@@ -1,55 +1,26 @@
-"""Model selection utilities for VBPCA.
+"""Samples-by-features component selection with an explicit legacy boundary.
 
-Sweeps candidate component counts while reusing the VBPCA estimator and
-convergence options. Stores only scalar endpoint metrics per candidate and
-optionally retains the best-fit model.
+Cellwise probe metrics retain their existing definitions and feature-first
+numerical implementation. They are distinct from native row-wise scoring.
 """
 
 from __future__ import annotations
 
-import itertools
-import logging
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal, SupportsFloat, SupportsIndex, cast
+from collections.abc import Iterable  # noqa: TC003 - public annotation resolution
+from typing import cast
 
-import numpy as np
 import scipy.sparse as sp
 
-from ._categorical_scores import (
-    CATEGORICAL_METRICS,
-    categorical_scores,
-    validate_legacy_categorical_input,
+from . import _selection_core
+from ._selection_core import (
+    RANK_ZERO_SELECTION_SUPPORTED,
+    CVConfig,
+    SelectionConfig,
 )
-from ._memory import (
-    check_dense_output_budget,
-    exceeds_budget,
-    format_bytes,
-    resolve_max_dense_bytes,
-)
-from ._missing import make_xprobe_mask
-from ._pca_full import (
-    _DENSE_COMPLEMENT_MIN_CELLS,
-    _dense_complement_thresholds,
-    _explained_variance,
-    _explained_variance_from_factors,
-    _marginal_variance,
-    _reconstruct_data,
-)
-from ._types import (  # noqa: TC001 - runtime annotation resolution
-    BoolArray,
-    Float64Array,
-    IndexArray,
-    InputMask,
-    InputMatrix,
-    MaskMatrix,
-)
-
-if TYPE_CHECKING:  # pragma: no cover
-    from collections.abc import Callable, Iterable, Mapping, Sequence
-
-    from ._pca_full import Matrix
-    from .encoding import EncodingSchema
-    from .legacy import VBPCA
+from ._types import Float64Array, Matrix  # noqa: TC001 - runtime annotation resolution
+from ._validation import require_training_observations, validate_rank
+from .estimators import VBPCA, _transpose_matrix
+from .legacy import VBPCA as LegacyVBPCA  # noqa: N811, TC001 - runtime annotation resolution
 
 __all__ = [
     "RANK_ZERO_SELECTION_SUPPORTED",
@@ -59,1676 +30,212 @@ __all__ = [
     "select_n_components",
 ]
 
-logger = logging.getLogger(__name__)
 
-RANK_ZERO_SELECTION_SUPPORTED = True
+def _selection_input(
+    x: object, mask: object | None, options: dict[str, object]
+) -> tuple[Matrix, VBPCA, dict[str, object]]:
+    """Validate native observations and adapt probe axes once.
 
-_Metric = Literal["rms", "prms", "cost"]
-_CVMetric = Literal["prms", "brier", "log_score"]
-_AllowedFloat = SupportsFloat | SupportsIndex | str | bytes | bytearray
+    Returns:
+        Native data, the validation estimator and feature-first fit options.
 
-
-@dataclass(slots=True)
-class SelectionConfig:
-    """Configuration for component selection.
-
-    ``cost_diagnostics='trace'`` preserves full per-iteration cost recording.
-    Opt-in ``'endpoint'`` evaluates only the returned iteration, provided the
-    selection metric and enabled stopping events do not consume cost traces.
-    Requested ``record_cost=True`` is incompatible with endpoint mode.
+    Raises:
+        ValueError: Observations, masks, probes or options are invalid.
     """
+    fit_options = dict(options)
+    probe = fit_options.pop("xprobe", None)
+    fit_options.setdefault("compat_mode", "modern")
+    constructor = dict(fit_options)
+    constructor.pop("selection_verbose", None)
+    template = VBPCA(0, **constructor)  # type: ignore[arg-type]
+    template.get_config()
+    if not 0 <= template.xprobe_fraction < 1:
+        msg = "xprobe_fraction must be in [0, 1)"
+        raise ValueError(msg)
+    data = template._validate_observations(x, mask, reset=True)  # noqa: SLF001 - shared native boundary
+    native_probe = None
+    if probe is not None:
+        native_probe = template._validate_observations(  # noqa: SLF001
+            probe, None, reset=False
+        )
+        if native_probe.shape != data.shape or sp.issparse(native_probe) != sp.issparse(
+            data
+        ):
+            msg = "xprobe must match X shape and dense/sparse representation"
+            raise ValueError(msg)
+        fit_options["xprobe"] = _transpose_matrix(native_probe)
+    require_training_observations(data, native_probe)
+    return data, template, fit_options
 
-    metric: _Metric = "prms"
-    stop_on_metric_reversal: bool = False
-    patience: int | None = None
-    max_trials: int | None = None
-    compute_explained_variance: bool = True
-    return_best_model: bool = False
-    reuse_runtime_policy: bool = True
-    cost_diagnostics: Literal["trace", "endpoint"] = "trace"
 
+def _native_capacities(
+    components: Iterable[int] | None, shape: tuple[int, int]
+) -> list[int] | None:
+    """Validate explicit capacities without guessing or truncating their values.
 
-_PROBE_FRACTION = 0.1
-"""Fraction of observed entries held out for the probe set."""
+    Returns:
+        Validated capacities, or ``None`` for the existing default grid.
 
-
-@dataclass(slots=True)
-class _SweepState:
-    best_k: int
-    best_val: float
-    best_metrics: dict[str, object]
-    best_model: VBPCA | None
-    no_improve: int
-
-
-def _normalize_components(
-    components: Iterable[int] | None, n_features: int, n_samples: int
-) -> list[int]:
+    Raises:
+        ValueError: Capacities are empty, nonintegral, negative or too large.
+    """
     if components is None:
-        max_k = max(1, min(n_features, n_samples))
-        return list(range(1, max_k + 1))
-
-    uniq: list[int] = []
-    for val in components:
-        k = int(val)
-        if k < 0:
-            continue
-        if k not in uniq:
-            uniq.append(k)
-    if not uniq:
-        msg = "components must contain at least one non-negative integer"
+        return None
+    values = [validate_rank(k, shape) for k in components]
+    if not values:
+        msg = "components must contain at least one nonnegative integer"
         raise ValueError(msg)
-    return uniq
+    return values
 
 
-def _to_float(val: object | None) -> float:
-    try:
-        return float(cast("_AllowedFloat", val))
-    except (TypeError, ValueError):
-        return float("nan")
+def _native_selected_model(source: LegacyVBPCA, template: VBPCA) -> VBPCA:
+    """Publish a selected numerical fit through the native estimator contract.
 
-
-def _metric_value(metric: _Metric, rms: float, prms: float, cost: float) -> float:
-    if metric == "rms":
-        return rms
-    if metric == "prms":
-        return prms
-    return cost
-
-
-def _metric_value_from_entry(metric: _Metric, entry: dict[str, object]) -> float:
-    return _metric_value(
-        metric,
-        rms=cast("float", entry["rms"]),
-        prms=cast("float", entry["prms"]),
-        cost=cast("float", entry["cost"]),
-    )
-
-
-def _verbose_enabled(val: object) -> bool:
-    try:
-        return int(cast("SupportsIndex | str | bytes | bytearray", val)) > 0
-    except (TypeError, ValueError):
-        return bool(val)
-
-
-def _is_metric_reversal(previous: float, current: float) -> bool:
-    return (np.isfinite(previous) and not np.isfinite(current)) or (
-        np.isfinite(previous)
-        and np.isfinite(current)
-        and current > previous
-        and not np.isclose(current, previous, equal_nan=False)
-    )
-
-
-def _fit_candidate(
-    k: int,
-    x_arr: InputMatrix,
-    mask: InputMask | None,
-    cfg: SelectionConfig,
-    opts: Mapping[str, object],
-) -> tuple[dict[str, object], VBPCA | None]:
-    from .legacy import VBPCA  # noqa: PLC0415 - avoid circular dependency
-
-    _ = cfg  # keep signature compatibility for injected stubs during tests
-
-    candidate_opts = dict(opts)
-    xprobe = candidate_opts.pop("xprobe", None)
-    preflight = candidate_opts.pop("_runtime_preflight", None)
-    groups = candidate_opts.pop("_cell_groups", None)
-    schema = candidate_opts.pop("_encoding_schema", None)
-    scorer = cast(
-        "Callable[[Float64Array], dict[str, float]] | None",
-        candidate_opts.pop("_extra_scorer", None),
-    )
-    if k == 0:
-        return _fit_mean_only_candidate(
-            x_arr,
-            mask,
-            cast("Matrix | None", xprobe),
-            bias=bool(candidate_opts.get("bias", True)),
-            groups=cast("Sequence[object] | None", groups),
-            encoding_schema=cast("EncodingSchema | None", schema),
-            extra_scorer=scorer,
-        )
-    est = VBPCA(k, **candidate_opts)  # type: ignore[arg-type]
-    est.fit(x_arr, mask=mask, xprobe=cast("Matrix | None", xprobe))
-    if preflight and est.runtime_report_ is not None:
-        existing = est.runtime_report_.get("preflight", [])
-        est.runtime_report_["preflight"] = [
-            *cast("list[dict[str, object]]", preflight),
-            *cast("list[dict[str, object]]", existing),
-        ]
-
-    rms = _to_float(est.rms_)
-    prms = _to_float(est.prms_)
-    cost = _to_float(est.cost_)
-
-    entry: dict[str, object] = {
-        "k": int(k),
-        "rms": rms,
-        "prms": prms,
-        "cost": cost,
-        "evr": None,
-        "n_iter": est.n_iter_ if est.n_iter_ is not None else 0,
-        "convergence_reason": est.convergence_reason_ or "maxiters",
-        "converged": bool(est.converged_),
-        "candidate_type": "low_rank",
-    }
-    if groups is not None and xprobe is not None and est.components_ is not None:
-        # Selection fits skip the stored reconstruction; rebuild it from A, S, Mu.
-        prediction = np.asarray(est.components_) @ np.asarray(est.scores_)
-        if est.mean_ is not None:
-            prediction += np.ravel(est.mean_)[:, np.newaxis]
-        entry.update(
-            _prediction_scores(
-                prediction,
-                np.asarray(xprobe, dtype=float),
-                cast("Sequence[object]", groups),
-                cast("EncodingSchema | None", schema),
-                scorer,
-            )
-        )
-    return entry, est
-
-
-def _fit_mean_only_candidate(  # noqa: PLR0913
-    x: InputMatrix,
-    mask: InputMask | None,
-    xprobe: Matrix | None,
-    *,
-    bias: bool,
-    groups: Sequence[object] | None = None,
-    encoding_schema: EncodingSchema | None = None,
-    extra_scorer: Callable[[Float64Array], dict[str, float]] | None = None,
-) -> tuple[dict[str, object], None]:
-    """Evaluate an explicit rank-zero (mean-only) candidate.
-
-    Rank zero is a closed-form baseline rather than a degenerate call to the
-    positive-rank VBPCA solver.  Its predictive error is therefore comparable
-    with positive-rank candidates, while the variational cost is deliberately
-    unavailable.
+    The selected fit is adopted without rerunning inference or retaining a
+    compatibility estimator. Covariance blocks keep their internal axes;
+    public loadings, scores, means and dense diagnostics use native axes.
 
     Returns:
-        Metric record and ``None`` because rank zero has no fitted estimator.
+        A fitted native estimator with the original input-name contract.
 
     Raises:
-        ValueError: If an input is sparse, shapes differ, or a biased fit has a
-            row without a training observation.
+        RuntimeError: The selected numerical fit has incomplete loading state.
     """
-    if sp.issparse(x) or sp.issparse(mask) or sp.issparse(xprobe):
-        msg = "the rank-zero candidate currently supports dense input only"
-        raise ValueError(msg)
-
-    x_arr = np.asarray(x, dtype=float)
-    observed = np.isfinite(x_arr)
-    if mask is not None:
-        mask_arr = np.asarray(mask, dtype=bool)
-        if mask_arr.shape != x_arr.shape:
-            msg = "mask must have the same shape as x"
-            raise ValueError(msg)
-        observed &= mask_arr
-
-    probe_arr: Float64Array | None = None
-    probe_observed = np.zeros(x_arr.shape, dtype=bool)
-    if xprobe is not None:
-        probe_arr = np.asarray(xprobe, dtype=float)
-        if probe_arr.shape != x_arr.shape:
-            msg = "xprobe must have the same shape as x"
-            raise ValueError(msg)
-        probe_observed = np.isfinite(probe_arr)
-        observed &= ~probe_observed
-
-    counts = np.sum(observed, axis=1)
-    if bias and np.any(counts == 0):
-        msg = "rank-zero mean estimation requires a training observation in each row"
-        raise ValueError(msg)
-    means = np.zeros(x_arr.shape[0], dtype=float)
-    if bias:
-        means = np.divide(
-            np.sum(np.where(observed, x_arr, 0.0), axis=1),
-            counts,
-            out=means,
-            where=counts > 0,
-        )
-
-    residual = x_arr - means[:, np.newaxis]
-    rms = float(np.sqrt(np.mean(np.square(residual[observed]))))
-    prms = float("nan")
-    if probe_arr is not None and np.any(probe_observed):
-        probe_residual = probe_arr - means[:, np.newaxis]
-        prms = float(np.sqrt(np.mean(np.square(probe_residual[probe_observed]))))
-
-    entry: dict[str, object] = {
-        "k": 0,
-        "rms": rms,
-        "prms": prms,
-        "cost": float("nan"),
-        "evr": None,
-        "n_iter": 0,
-        "convergence_reason": "closed_form_mean_only",
-        "converged": True,
-        "candidate_type": "mean_only",
-    }
-    if groups is not None and probe_arr is not None:
-        prediction = np.broadcast_to(means[:, np.newaxis], x_arr.shape)
-        entry.update(
-            _prediction_scores(
-                prediction, probe_arr, groups, encoding_schema, extra_scorer
-            )
-        )
-    return entry, None
-
-
-def _prediction_scores(
-    prediction: Float64Array,
-    held_out: Float64Array,
-    groups: Sequence[object],
-    schema: EncodingSchema | None,
-    scorer: Callable[[Float64Array], dict[str, float]] | None,
-) -> dict[str, float]:
-    scores = categorical_scores(prediction, held_out, groups, schema=schema)
-    if scorer is not None:
-        scores.update(scorer(prediction))
-    return scores
-
-
-def _compute_evr_for_best(
-    est: VBPCA,
-    *,
-    solver: str = "auto",
-    gram_ratio: float = 4.0,
-) -> Float64Array | None:
-    if est.components_ is None or est.scores_ is None or est.mean_ is None:
-        return None
-    check_dense_output_budget(
-        (est.components_.shape[0], est.scores_.shape[1]),
-        resolve_max_dense_bytes(est.max_dense_bytes),
-        arrays=1
-        + int(est.variance_ is not None)
-        + int(est.predictive_variance_ is not None),
-        operation="Selected-model diagnostics",
-    )
-    xrec = _reconstruct_data(est.components_, est.scores_, est.mean_)
-    if solver == "auto":
-        ev, evr = _explained_variance_from_factors(
-            est.components_,
-            est.scores_,
-            est.components_.shape[1],
-        )
-    else:
-        ev, evr = _explained_variance(
-            xrec,
-            est.components_.shape[1],
-            solver=solver,
-            gram_ratio=gram_ratio,
-        )
-    # Retain reconstruction for downstream consumers (e.g., posterior tests).
-    est.reconstruction_ = xrec
-    est.explained_variance_ = ev
-    est.explained_variance_ratio_ = evr
-    return evr
-
-
-def _compute_variance_for_best(est: VBPCA) -> Float64Array | None:
     if (
-        est.components_ is None
-        or est.scores_ is None
-        or est._av is None  # noqa: SLF001
-        or est._muv is None  # noqa: SLF001
+        source.components_ is None
+        or source.scores_ is None
+        or source.mean_ is None
+        or source.components_.shape[0] != template.n_features_in_
     ):
-        return None
-    check_dense_output_budget(
-        (est.components_.shape[0], est.scores_.shape[1]),
-        resolve_max_dense_bytes(est.max_dense_bytes),
-        arrays=1
-        + int(est.noise_variance_ is not None)
-        + int(est.reconstruction_ is not None),
-        operation="Selected-model diagnostics",
+        msg = "Selected numerical fit does not cover the validated feature layout"
+        raise RuntimeError(msg)
+    model = VBPCA(**source.get_params(deep=False))  # type: ignore[arg-type]
+    model.n_features_in_ = template.n_features_in_
+    if hasattr(template, "feature_names_in_"):
+        model.feature_names_in_ = template.feature_names_in_.copy()
+    model.components_ = source.components_.T
+    model.scores_ = source.scores_.T
+    model.mean_ = source.mean_.reshape(-1)
+    model.noise_variance_ = cast("float", source.noise_variance_)
+    model.rms_ = cast("float", source.rms_)
+    model.prms_ = cast("float", source.prms_)
+    model.cost_ = cast("float", source.cost_)
+    model.learning_curve_ = source.learning_curve_
+    model.n_iter_ = cast("int", source.n_iter_)
+    model.convergence_reason_ = cast("str", source.convergence_reason_)
+    model.converged_ = bool(source.converged_)
+    model.best_probe_iteration_ = source.best_probe_iteration_
+    model.best_probe_rms_ = source.best_probe_rms_
+    model.returned_iteration_ = source.returned_iteration_
+    model.runtime_report_ = source.runtime_report_
+    model.reconstruction_ = (
+        source.reconstruction_.T if source.reconstruction_ is not None else None
     )
-    from ._pca_full import FinalState  # noqa: PLC0415
-
-    final = FinalState(
-        a=est.components_,
-        s=est.scores_,
-        mu=est.mean_ if est.mean_ is not None else np.zeros(est.components_.shape[0]),
-        noise_var=est.noise_variance_ if est.noise_variance_ is not None else 0.0,
-        av=est._av,  # noqa: SLF001
-        sv=est._sv if est._sv is not None else [],  # noqa: SLF001
-        pattern_index=est._pattern_index,  # noqa: SLF001
-        muv=est._muv,  # noqa: SLF001
-        va=np.zeros(est.components_.shape[1]),
-        vmu=0.0,
-        lc={},
-        runtime_report=None,
+    model.variance_ = source.variance_.T if source.variance_ is not None else None
+    model.predictive_variance_ = (
+        source.predictive_variance_.T
+        if source.predictive_variance_ is not None
+        else None
     )
-    vr = _marginal_variance(final)
-    est.variance_ = vr
-    if est.noise_variance_ is not None:
-        est.predictive_variance_ = vr + float(est.noise_variance_)
-    return vr
-
-
-def _normalize_mask_for_selection(
-    x: InputMatrix,
-    mask: InputMask | None,
-    max_dense_bytes: int | None,
-    opts: dict[str, object],
-) -> MaskMatrix | None:
-    """Normalize mask to dense bool or CSR, enforcing budget for sparse inputs.
-
-    Returns:
-        Normalized mask (dense bool or CSR) or ``None`` when absent.
-
-    Raises:
-        ValueError: If mask sparsity is incompatible or exceeds the dense budget.
-    """
-    if not sp.issparse(x):
-        if mask is not None and sp.issparse(mask):
-            msg = "mask must be dense when x is dense"
-            raise ValueError(msg)
-        return None if mask is None else np.asarray(mask, dtype=bool)
-
-    if mask is None:
-        return None
-    if sp.issparse(mask):
-        return sp.csr_matrix(mask)
-
-    over, est_bytes = exceeds_budget(mask.shape, np.bool_, max_dense_bytes)
-    if over:
-        budget = 0 if max_dense_bytes is None else max_dense_bytes
-        msg = (
-            "Dense mask would exceed max_dense_bytes: "
-            f"{format_bytes(est_bytes)} > {format_bytes(int(budget))}"
-        )
-        raise ValueError(msg)
-
-    preflight = cast(
-        "list[dict[str, object]]", opts.setdefault("_runtime_preflight", [])
-    )
-    preflight.append({
-        "check": "dense_mask_budget",
-        "is_sparse_input": True,
-        "mask_sparse": False,
-        "estimate_bytes": int(est_bytes),
-        "max_dense_bytes": max_dense_bytes,
-        "over_budget": bool(over),
-        "context": "model_selection",
-    })
-    return np.asarray(mask, dtype=bool)
-
-
-def _ensure_metric_opts(
-    fit_opts: dict[str, object],
-    x_arr: InputMatrix,
-    mask: InputMask | None,
-    cfg: SelectionConfig,
-    seed: int | np.random.Generator | None = None,
-) -> None:
-    """Enable VBPCA options required by the chosen selection metric.
-
-    Mutates *fit_opts* in place:
-
-    * **record_cost** — historical full traces remain the default. Explicit
-      endpoint mode leaves cost recording disabled; the fitter rejects any
-      enabled event that requires a cost trace.
-    * **xprobe** — when no probe set has been supplied, a random hold-out
-      of observed entries is created when the selection metric is ``"prms"``
-      or the caller requested a positive ``xprobe_fraction``. The requested
-      fraction is used when present; ``"prms"`` otherwise falls back to the
-      historical 10 % default. Candidate fits receive the same explicit probe;
-      the estimator removes those entries from its training data and mask.
-
-    Raises:
-        ValueError: If the diagnostic mode is invalid or incompatible with the
-            selection metric.
-    """
-    if cfg.cost_diagnostics not in {"trace", "endpoint"}:
-        msg = "cost_diagnostics must be 'trace' or 'endpoint'"
-        raise ValueError(msg)
-    if cfg.cost_diagnostics == "endpoint" and cfg.metric == "cost":
-        msg = "cost selection requires cost_diagnostics='trace'"
-        raise ValueError(msg)
-    if cfg.cost_diagnostics == "trace":
-        fit_opts["record_cost"] = True
-    fit_opts["cost_diagnostics"] = cfg.cost_diagnostics
-
-    # --- prms: ensure xprobe is populated -----------------------------------
-    if fit_opts.get("xprobe") is not None:
-        return  # user already supplied a probe set
-
-    configured_fraction = _to_float(fit_opts.get("xprobe_fraction"))
-    has_configured_fraction = bool(
-        np.isfinite(configured_fraction) and configured_fraction > 0.0
-    )
-    if cfg.metric != "prms" and not has_configured_fraction:
-        return
-    probe_fraction = configured_fraction if has_configured_fraction else _PROBE_FRACTION
-
-    _x_masked, xprobe = make_xprobe_mask(
-        x_arr,
-        fraction=probe_fraction,
-        rng=np.random.default_rng(seed),
-        mask=mask,
-    )
-    fit_opts["xprobe"] = xprobe
-
-
-@dataclass(frozen=True, slots=True)
-class SweepInputs:
-    cfg: SelectionConfig
-    fit_opts: dict[str, object]
-    verbose_enabled: bool
-
-
-_RUNTIME_POLICY_OPTION_KEYS = (
-    "runtime_tuning",
-    "num_cpu",
-    "num_cpu_score_update",
-    "num_cpu_loadings_update",
-    "num_cpu_noise_update",
-    "num_cpu_rms",
-    "masked_batch_size",
-    "cov_writeback_mode",
-    "log_progress_stride",
-    "accessor_mode",
-    "auto_pattern_masked",
-    "uniquesv",
-    "algorithm",
-    "dense_sufficient_statistics",
-    "noise_sufficient_statistics",
-    "compat_mode",
-)
-
-
-def _component_regime(k: int) -> tuple[int, int]:
-    """Return a power-of-two rank band for runtime-policy reuse."""
-    rank = max(1, int(k))
-    lower = 1 << (rank.bit_length() - 1)
-    return lower, (2 * lower) - 1
-
-
-def _matrix_representation(x: InputMatrix | None) -> str:
-    if x is None:
-        return "none"
-    if sp.issparse(x):
-        return x.format
-    return "dense"
-
-
-def _selection_observed_count(x: InputMatrix, mask: InputMask | None) -> int:
-    if sp.issparse(x):
-        if sp.issparse(mask):
-            return int(np.count_nonzero(mask.data))
-        if mask is not None:
-            return int(np.count_nonzero(np.asarray(mask, dtype=bool)))
-        return int(x.nnz)
-
-    observed = np.isfinite(np.asarray(x))
-    if mask is not None:
-        observed &= np.asarray(mask, dtype=bool)
-    return int(np.count_nonzero(observed))
-
-
-def _runtime_policy_key(
-    *,
-    k: int,
-    x: InputMatrix,
-    mask: InputMask | None,
-    opts: Mapping[str, object],
-) -> tuple[object, ...]:
-    """Build a conservative compatibility key for measured runtime settings.
-
-    Returns:
-        Hashable key covering workload shape, representation, rank, and options.
-    """
-    option_signature = tuple(
-        (name, repr(opts.get(name))) for name in _RUNTIME_POLICY_OPTION_KEYS
-    )
-    return (
-        tuple(int(value) for value in x.shape),
-        _selection_observed_count(x, mask),
-        _matrix_representation(x),
-        _matrix_representation(mask),
-        _matrix_representation(cast("Matrix | None", opts.get("xprobe"))),
-        _component_regime(k),
-        (
-            _dense_complement_thresholds(k)
-            if not sp.issparse(x)
-            and x.shape[0] * x.shape[1] >= _DENSE_COMPLEMENT_MIN_CELLS
-            and str(opts.get("dense_sufficient_statistics", "auto")) == "auto"
-            else None
-        ),
-        k >= 8,
-        str(getattr(x, "strides", "sparse")),
-        option_signature,
-    )
-
-
-def _runtime_tuning_enabled(opts: Mapping[str, object]) -> bool:
-    raw = opts.get("runtime_tuning", "safe")
-    mode = "safe" if raw is None else str(raw).strip().lower()
-    return mode in {"safe", "aggressive"}
-
-
-def _runtime_policy_from_report(report: Mapping[str, object]) -> dict[str, object]:
-    kernel_values = report.get("kernel_values")
-    workload = report.get("workload")
-    if not isinstance(kernel_values, dict):
-        return {}
-
-    is_sparse = isinstance(workload, dict) and bool(workload.get("is_sparse"))
-    score_key = "score_update_sparse" if is_sparse else "score_update_dense"
-    loadings_key = "loadings_update_sparse" if is_sparse else "loadings_update_dense"
-    kernel_map = {
-        "num_cpu_score_update": score_key,
-        "num_cpu_loadings_update": loadings_key,
-        "num_cpu_noise_update": "noise_sxv_sum",
-        "num_cpu_rms": "rms",
-    }
-    policy: dict[str, object] = {
-        "runtime_tuning": "off",
-        "runtime_report": True,
-    }
-    for option_name, report_name in kernel_map.items():
-        value = kernel_values.get(report_name)
-        if isinstance(value, (int, np.integer)):
-            policy[option_name] = int(value)
-
-    for option_name in (
-        "cov_writeback_mode",
-        "log_progress_stride",
-        "accessor_mode",
-    ):
-        value = report.get(option_name)
-        if value is not None:
-            policy[option_name] = value
-
-    batch_report = report.get("autotune_masked_batch")
-    if isinstance(batch_report, dict):
-        best = batch_report.get("best")
-        if isinstance(best, dict):
-            batch_size = best.get("masked_batch_size")
-            if isinstance(batch_size, (int, np.integer)):
-                policy["masked_batch_size"] = int(batch_size)
-    return policy
-
-
-def _runtime_tuning_elapsed(report: Mapping[str, object]) -> float:
-    elapsed = 0.0
-    for key in (
-        "autotune_dense_masked",
-        "autotune_sparse",
-        "autotune_masked_batch",
-        "cov_writeback_autotune",
-    ):
-        section = report.get(key)
-        if isinstance(section, dict):
-            value = section.get("elapsed_sec", 0.0)
-            if isinstance(value, (float, int, np.floating, np.integer)):
-                elapsed += float(value)
-    return elapsed
-
-
-def _handle_metric_reversal(  # noqa: PLR0913
-    *,
-    state: _SweepState,
-    cfg: SelectionConfig,
-    prev_metric_val: float | None,
-    metric_val: float,
-    prev_entry: dict[str, object] | None,
-    best_est: VBPCA | None,
-    verbose_enabled: bool,
-    k: int,
-) -> bool:
-    if not (
-        cfg.stop_on_metric_reversal
-        and prev_metric_val is not None
-        and prev_entry is not None
-        and _is_metric_reversal(prev_metric_val, metric_val)
-    ):
-        return False
-
-    state.best_k = int(cast("int", prev_entry["k"]))
-    state.best_val = prev_metric_val
-    state.best_metrics = prev_entry
-    if cfg.return_best_model:
-        state.best_model = best_est
-    if verbose_enabled:
-        logger.info(
-            (
-                "Model selection stopping on metric reversal at k=%d; "
-                "selecting previous k=%d"
-            ),
-            k,
-            state.best_k,
-        )
-    return True
-
-
-def _handle_patience(
-    *, state: _SweepState, cfg: SelectionConfig, k: int, verbose_enabled: bool
-) -> bool:
-    required = max(1, int(cfg.patience)) if cfg.patience is not None else None
-    if required is None or state.no_improve < required:
-        return False
-    if verbose_enabled:
-        logger.info(
-            "Model selection stopping on patience at k=%d (best_k=%d)",
-            k,
-            state.best_k,
-        )
-    return True
-
-
-def _fit_with_reused_runtime_policy(
-    *,
-    k: int,
-    x: InputMatrix,
-    mask: InputMask | None,
-    inputs: SweepInputs,
-    cache: dict[tuple[object, ...], dict[str, object]],
-) -> tuple[dict[str, object], VBPCA | None]:
-    reuse = (
-        k > 0
-        and inputs.cfg.reuse_runtime_policy
-        and _runtime_tuning_enabled(inputs.fit_opts)
-    )
-    policy_key: tuple[object, ...] | None = None
-    cached_policy: dict[str, object] | None = None
-    candidate_opts = inputs.fit_opts
-
-    if reuse:
-        policy_key = _runtime_policy_key(
-            k=k,
-            x=x,
-            mask=mask,
-            opts=inputs.fit_opts,
-        )
-        cached_policy = cache.get(policy_key)
-        candidate_opts = dict(inputs.fit_opts)
-        candidate_opts["runtime_report"] = True
-        if cached_policy is not None:
-            candidate_opts.update(cached_policy)
-
-    entry, est = _fit_candidate(
-        k,
-        x,
-        mask,
-        inputs.cfg,
-        candidate_opts,
-    )
-    if policy_key is None or est is None:
-        return entry, est
-
-    lower, upper = _component_regime(k)
-    entry["runtime_policy_regime"] = f"{lower}-{upper}"
-    report = getattr(est, "runtime_report_", None)
-
-    if cached_policy is not None:
-        entry["runtime_policy_source"] = "selection_cache"
-        entry["runtime_tuning_sec"] = 0.0
-        if isinstance(report, dict):
-            report["runtime_policy_source"] = "selection_cache"
-            report["runtime_policy_regime"] = entry["runtime_policy_regime"]
-        return entry, est
-
-    if isinstance(report, dict):
-        policy = _runtime_policy_from_report(report)
-        if policy:
-            cache[policy_key] = policy
-        elapsed = _runtime_tuning_elapsed(report)
-        source = "measured" if elapsed > 0 else "resolved"
-        entry["runtime_policy_source"] = source
-        entry["runtime_tuning_sec"] = elapsed
-        report["runtime_policy_source"] = source
-        report["runtime_policy_regime"] = entry["runtime_policy_regime"]
-
-    return entry, est
-
-
-def _sweep_components(
-    k_values: Sequence[int],
-    x_arr: Matrix,
-    mask_arg: MaskMatrix | None,
-    inputs: SweepInputs,
-) -> tuple[int, dict[str, object], list[dict[str, object]], VBPCA | None, VBPCA | None]:
-    trace: list[dict[str, object]] = []
-    cfg = inputs.cfg
-    state = _SweepState(
-        best_k=k_values[0],
-        best_val=float("inf"),
-        best_metrics={
-            "rms": float("inf"),
-            "prms": float("inf"),
-            "cost": float("inf"),
-            "evr": None,
-        },
-        best_model=None,
-        no_improve=0,
-    )
-    prev_metric_val: float | None = None
-    prev_entry: dict[str, object] | None = None
-    best_est: VBPCA | None = None
-    runtime_policy_cache: dict[tuple[object, ...], dict[str, object]] = {}
-
-    for idx, k in enumerate(k_values):
-        if cfg.max_trials is not None and idx >= int(cfg.max_trials):
-            break
-
-        entry, est = _fit_with_reused_runtime_policy(
-            k=int(k),
-            x=x_arr,
-            mask=mask_arg,
-            inputs=inputs,
-            cache=runtime_policy_cache,
-        )
-        entry["cost_diagnostics"] = cfg.cost_diagnostics if k else "not_applicable"
-        trace.append(entry)
-
-        metric_val = _metric_value_from_entry(cfg.metric, entry)
-        if not np.isfinite(metric_val):
-            msg = (
-                f"selection metric {cfg.metric!r} is unavailable for k={k}; "
-                "configure the requested metric instead of relying on a substitute"
-            )
-            raise ValueError(msg)
-
-        if inputs.verbose_enabled:
-            logger.info(
-                (
-                    "Model selection k=%d done: rms=%.6g prms=%.6g "
-                    "cost=%.6g metric(=%s)=%.6g"
-                ),
-                k,
-                cast("float", entry["rms"]),
-                cast("float", entry["prms"]),
-                cast("float", entry["cost"]),
-                cfg.metric,
-                metric_val,
-            )
-
-        if _handle_metric_reversal(
-            state=state,
-            cfg=cfg,
-            prev_metric_val=prev_metric_val,
-            metric_val=metric_val,
-            prev_entry=prev_entry,
-            best_est=best_est,
-            verbose_enabled=inputs.verbose_enabled,
-            k=int(k),
-        ):
-            break
-
-        better_metric = metric_val < state.best_val or (
-            np.isclose(metric_val, state.best_val, equal_nan=False) and k < state.best_k
-        )
-        if better_metric:
-            state.best_k = int(k)
-            state.best_val = metric_val
-            state.best_metrics = entry
-            state.no_improve = 0
-            best_est = est
-            if cfg.return_best_model:
-                state.best_model = est
-        else:
-            state.no_improve += 1
-
-        if _handle_patience(
-            state=state, cfg=cfg, k=int(k), verbose_enabled=inputs.verbose_enabled
-        ):
-            break
-
-        prev_metric_val = metric_val
-        prev_entry = entry
-
-    return state.best_k, state.best_metrics, trace, state.best_model, best_est
+    model.explained_variance_ = source.explained_variance_
+    model.explained_variance_ratio_ = source.explained_variance_ratio_
+    model._av = source._av  # noqa: SLF001 - internal covariance axes are unchanged
+    model._sv = source._sv or []  # noqa: SLF001
+    model._muv = cast("Float64Array", source._muv)  # noqa: SLF001
+    model._pattern_index = source._pattern_index  # noqa: SLF001
+    model.prior_variances_ = cast("Float64Array", source.prior_variances_)
+    model.bias_prior_variance_ = cast("float", source.bias_prior_variance_)
+    model.component_relevance_ = cast("Float64Array", source.component_relevance_)
+    model.prior_trace_ = source.prior_trace_
+    return model
 
 
 def select_n_components(
-    x: InputMatrix,
+    x: object,
     *,
-    mask: InputMask | None = None,
+    mask: object | None = None,
     components: Iterable[int] | None = None,
     config: SelectionConfig | None = None,
     **opts: object,
 ) -> tuple[int, dict[str, object], list[dict[str, object]], VBPCA | None]:
-    """Select n_components by sweeping candidates and tracking end metrics.
+    """Select capacity from samples-by-features observations and aligned probes.
 
     Args:
-        x: Data matrix (dense or sparse).
-        mask: Optional boolean mask with the same shape as ``x``.
-        components: Candidate component counts. Include ``0`` to compare an
-            explicit mean-only model. Defaults to positive ranks
-            ``1..min(n_features, n_samples)``.
-        config: Selection parameters controlling metric, stopping behavior,
-            patience, trials, and whether to compute explained variance or
-            retain the best model. Requested selected-model diagnostics are
-            checked together against ``max_dense_bytes`` before the sweep.
-            Set ``compute_explained_variance=False`` and omit candidate
-            diagnostics for scalar-only selection.
-        **opts: Additional options forwarded to the ``VBPCA`` constructor and fit.
+        x: Native samples-by-features numeric observations, including named
+            tables or sparse stored-entry observations. NaNs are missing.
+        mask: Optional aligned observation mask; numeric zeros remain observed.
+        components: Nonnegative integral capacities within both dimensions.
+            Omission retains the positive default grid; explicit zero is a
+            closed-form mean-only candidate.
+        config: Existing endpoint metric, stopping and diagnostic policy.
+        **opts: Native fitting options. An explicit ``xprobe`` has the same
+            samples-by-features layout and feature names as ``x``. Warm-start
+            payloads retain their documented low-level axes. Modern mode is
+            the default; ``selection_verbose`` controls sweep logging.
 
     Returns:
-        Tuple ``(best_k, best_metrics, trace, best_model)`` where:
-        - ``best_k``: chosen component count.
-        - ``best_metrics``: scalar metrics for the best candidate.
-        - ``trace``: list of per-k endpoint metrics.
-        - ``best_model``: the best ``VBPCA`` instance, or ``None`` if it was
-          not requested or the mean-only candidate won.
+        ``(best_k, best_metrics, trace, best_model)``. A requested positive-rank
+        best model is a native VBPCA with conditional new-data projection;
+        rank zero retains the existing ``None`` model result. Requested dense
+        diagnostics use samples-by-features axes and the existing byte budget.
 
-    Raises:
-        ValueError: If ``metric`` is invalid or no valid ``components`` are provided.
+    Invalid inputs, capacities, metrics or diagnostics raise ValueError.
+    Cellwise PRMS/cost selection retains its existing target and fold/probe
+    definitions. Row-wise sklearn scoring evaluates a different target.
+    ``vbpca_py.legacy.select_n_components`` preserves feature-first callers.
     """
-    cfg = config or SelectionConfig()
-    if cfg.metric not in {"rms", "prms", "cost"}:
-        msg = f"metric must be one of rms, prms, cost (got {cfg.metric!r})"
-        raise ValueError(msg)
-    if cfg.patience is not None and int(cfg.patience) < 0:
-        msg = "patience must be a non-negative integer or None"
-        raise ValueError(msg)
-    k_values = _normalize_components(components, x.shape[0], x.shape[1])
-    max_dense_bytes = resolve_max_dense_bytes(
-        opts.get("max_dense_bytes", 2_000_000_000)
+    data, template, fit_options = _selection_input(x, mask, opts)
+    capacities = _native_capacities(components, data.shape)
+    best, metrics, trace, selected = _selection_core.select_n_components(
+        _transpose_matrix(data),
+        mask=None,
+        components=capacities,
+        config=config,
+        **fit_options,
     )
-    if any(k > 0 for k in k_values) and (
-        cfg.compute_explained_variance or bool(opts.get("return_diagnostics"))
-    ):
-        check_dense_output_budget(
-            (x.shape[0], x.shape[1]),
-            max_dense_bytes,
-            arrays=3,
-            operation="Selected-model diagnostics",
-        )
-    x_arr: Float64Array | sp.csr_matrix = (
-        sp.csr_matrix(x, copy=True) if sp.issparse(x) else np.array(x, dtype=float)
-    )
-    mask_arg = _normalize_mask_for_selection(
-        x,
-        mask,
-        max_dense_bytes,
-        opts,
-    )
-    if cfg.metric == "cost" and 0 in k_values:
-        msg = "rank zero has no variational cost; select it with metric='rms' or 'prms'"
-        raise ValueError(msg)
-
-    fit_opts: dict[str, object] = dict(opts)
-    verbose_enabled = _verbose_enabled(
-        fit_opts.pop("selection_verbose", fit_opts.get("verbose", 0))
-    )
-    fit_opts.setdefault("return_diagnostics", False)
-
-    # Record cost or prepare a probe set without changing convergence criteria.
-    _ensure_metric_opts(
-        fit_opts,
-        x_arr,
-        mask_arg,
-        cfg,
-        seed=cast("int | np.random.Generator | None", fit_opts.get("random_state")),
-    )
-
-    sweep_inputs = SweepInputs(
-        cfg=cfg,
-        fit_opts=fit_opts,
-        verbose_enabled=verbose_enabled,
-    )
-
-    (
-        best_k,
-        best_metrics,
-        trace,
-        best_model,
-        best_est,
-    ) = _sweep_components(
-        k_values,
-        x_arr,
-        mask_arg,
-        sweep_inputs,
-    )
-
-    if verbose_enabled:
-        logger.info("Model selection complete: best_k=%d", best_k)
-
-    if cfg.compute_explained_variance and best_est is not None:
-        evr = _compute_evr_for_best(
-            best_est,
-            solver=str(fit_opts.get("explained_var_solver", "auto")),
-            gram_ratio=float(
-                cast("_AllowedFloat", fit_opts.get("explained_var_gram_ratio", 4.0))
-            ),
-        )
-        _compute_variance_for_best(best_est)
-        best_metrics["evr"] = evr
-        for entry in trace:
-            if int(cast("int", entry.get("k", -1))) == best_k:
-                entry["evr"] = evr
-                break
-        if cfg.return_best_model and best_model is None:
-            best_model = best_est
-
-    return best_k, best_metrics, trace, best_model
-
-
-# ---------------------------------------------------------------------------
-# K-fold cross-validated model selection
-# ---------------------------------------------------------------------------
-
-
-@dataclass(slots=True)
-class CVConfig:
-    """Configuration for K-fold cross-validated component selection.
-
-    Attributes:
-        metric: Held-out selection metric: ``"prms"`` (per-indicator probe
-            RMS), or with ``feature_groups`` the categorical ``"brier"`` or
-            ``"log_score"`` (lower is better). With ``feature_groups`` every
-            result also reports ``brier``, ``log_score`` and ``accuracy``.
-        n_splits: Number of cross-validation folds.
-        one_se_rule: If ``True``, select the smallest *k* whose mean metric
-            is within one standard error of the global minimum. Ignored when
-            ``selection_rule`` is set.
-        seed: Random seed for fold partitioning and model fitting.
-        feature_groups: Optional variable label for every feature (row of
-            ``x``), for example an encoder's ``feature_groups_``. Folds then
-            hold out (variable, sample) cells, so every indicator of a
-            one-hot encoded variable is held out together.
-        selection_rule: ``"one_se"``, ``"minimum"`` or ``"first_minimum"``.
-            ``"first_minimum"`` selects the smallest *k* whose successor does
-            not lower the mean metric by more than the successor's standard
-            error. ``None`` follows ``one_se_rule``.
-        early_stop: With ``selection_rule="first_minimum"``, evaluate
-            capacities in increasing order across all folds and stop as soon
-            as the rule triggers, skipping every larger capacity.
-        encoding_schema: Fitted dense encoder metadata for categorical decoding.
-            Groups are derived from it unless explicitly supplied; an explicit
-            group list must match. Learned preprocessing is still
-            external to this encoded-array CV API.
-    """
-
-    metric: _CVMetric = "prms"
-    n_splits: int = 5
-    one_se_rule: bool = True
-    seed: int = 0
-    feature_groups: Sequence[object] | None = None
-    selection_rule: Literal["one_se", "minimum", "first_minimum"] | None = None
-    early_stop: bool = False
-    encoding_schema: EncodingSchema | None = None
-
-    def resolved_rule(self) -> str:
-        """Return the selection rule in effect.
-
-        Returns:
-            ``selection_rule``, or the rule implied by ``one_se_rule``.
-
-        Raises:
-            ValueError: If the rule is unknown or ``early_stop`` is requested
-                for a rule that needs the full sweep.
-        """
-        rule = self.selection_rule or ("one_se" if self.one_se_rule else "minimum")
-        if rule not in {"one_se", "minimum", "first_minimum"}:
-            msg = (
-                f"selection_rule must be one_se, minimum or first_minimum; got {rule!r}"
-            )
-            raise ValueError(msg)
-        if self.early_stop and rule != "first_minimum":
-            msg = "early_stop requires selection_rule='first_minimum'"
-            raise ValueError(msg)
-        return rule
-
-
-def _make_element_folds(
-    x: Float64Array,
-    n_splits: int,
-    rng: np.random.Generator,
-) -> list[tuple[IndexArray, IndexArray]]:
-    """Partition observed entries of *x* into *n_splits* folds.
-
-    Args:
-        x: Data matrix ``(n_features, n_samples)`` with ``NaN`` for
-            missing entries.
-        n_splits: Number of folds.
-        rng: NumPy random generator for reproducible shuffling.
-
-    Returns:
-        List of ``(probe_indices, train_indices)`` tuples where each
-        element is a 1-D array of flat indices into the observed-entry
-        array.
-
-    Raises:
-        ValueError: If there are too few observations or valid folds cannot
-            preserve training coverage in every non-empty row and column.
-    """
-    observed = ~np.isnan(x)
-    obs_rows, obs_cols = np.nonzero(observed)
-    n_obs = len(obs_rows)
-    support = _training_support_backbone(
-        obs_rows,
-        obs_cols,
-        n_rows=x.shape[0],
-        n_cols=x.shape[1],
-        rng=rng,
-    )
-    eligible = np.flatnonzero(~support)
-    if len(eligible) < n_splits:
-        msg = (
-            f"n_splits={n_splits} exceeds the {len(eligible)} validation-eligible "
-            f"observed entries after reserving {int(np.sum(support))} entries "
-            "that preserve training support in every non-empty row and column"
-        )
-        raise ValueError(msg)
-
-    probe_folds = [
-        np.asarray(part, dtype=int)
-        for part in np.array_split(rng.permutation(eligible), n_splits)
-    ]
-    return [
-        (
-            probe_sel,
-            np.setdiff1d(np.arange(n_obs), probe_sel, assume_unique=True),
-        )
-        for probe_sel in probe_folds
-    ]
-
-
-def _make_group_folds(
-    x: Float64Array,
-    groups: Sequence[object],
-    n_splits: int,
-    rng: np.random.Generator,
-) -> list[tuple[IndexArray, IndexArray]]:
-    """Partition observed (variable, sample) cells into *n_splits* folds.
-
-    Every observed entry belongs to the cell of its feature's group and its
-    sample; a held-out cell holds out all of its entries. A minimum edge
-    cover of cells stays in every training fold, as for entrywise folds.
-
-    Returns:
-        ``(probe_indices, train_indices)`` tuples indexing the observed-entry
-        arrays, as returned by ``_make_element_folds``.
-
-    Raises:
-        ValueError: If ``groups`` does not label every feature, too few cells
-            are eligible, or a fold would leave a feature without training
-            entries.
-    """
-    labels = np.asarray(groups)
-    if labels.shape != (x.shape[0],):
-        msg = f"feature_groups must label all {x.shape[0]} features"
-        raise ValueError(msg)
-    _, group_index = np.unique(labels, return_inverse=True)
-    n_groups = int(group_index.max()) + 1
-    obs_rows, obs_cols = np.nonzero(~np.isnan(x))
-    entry_cells = group_index[obs_rows] * x.shape[1] + obs_cols
-    cells = np.unique(entry_cells)
-    support = _training_support_backbone(
-        cells // x.shape[1],
-        cells % x.shape[1],
-        n_rows=n_groups,
-        n_cols=x.shape[1],
-        rng=rng,
-    )
-    eligible = cells[~support]
-    if len(eligible) < n_splits:
-        msg = (
-            f"n_splits={n_splits} exceeds the {len(eligible)} validation-eligible "
-            "variable cells"
-        )
-        raise ValueError(msg)
-    row_counts = np.bincount(obs_rows, minlength=x.shape[0])
-    col_counts = np.bincount(obs_cols, minlength=x.shape[1])
-    folds = []
-    for part in np.array_split(rng.permutation(eligible), n_splits):
-        probe_sel = np.flatnonzero(np.isin(entry_cells, part))
-        if not _fold_preserves_training_coverage(
-            probe_sel, obs_rows, obs_cols, row_counts, col_counts
-        ):
-            msg = "a variable-cell fold would leave a feature without training data"
-            raise ValueError(msg)
-        folds.append((
-            probe_sel,
-            np.setdiff1d(np.arange(len(obs_rows)), probe_sel, assume_unique=True),
-        ))
-    return folds
-
-
-def _first_minimum(cv_results: list[dict[str, object]], metric: str) -> int:
-    """Return the smallest *k* whose successor does not improve by an SE.
-
-    Returns:
-        The selected component count (the last one if every step improves).
-    """
-    for current, following in itertools.pairwise(cv_results):
-        if _first_minimum_stops(current, following, metric):
-            return int(cast("int", current["k"]))
-    return int(cast("int", cv_results[-1]["k"]))
-
-
-def _first_minimum_stops(
-    current: dict[str, object], following: dict[str, object], metric: str
-) -> bool:
-    mean_now = float(cast("float", current[f"mean_{metric}"]))
-    mean_next = float(cast("float", following[f"mean_{metric}"]))
-    se_next = float(cast("float", following[f"se_{metric}"]))
-    return mean_next >= mean_now - se_next
-
-
-def _training_support_backbone(
-    obs_rows: IndexArray,
-    obs_cols: IndexArray,
-    *,
-    n_rows: int,
-    n_cols: int,
-    rng: np.random.Generator,
-) -> BoolArray:
-    """Reserve a minimum edge cover of non-empty rows and columns.
-
-    The returned boolean vector indexes the observed-entry arrays. Reserved
-    entries remain in every training fold. A maximum bipartite matching is
-    extended to an edge cover, which guarantees support without a retry loop
-    and leaves as many observations as possible eligible for validation.
-    Random row and column permutations avoid systematic tie preference.
-
-    Returns:
-        Boolean vector marking the permanent training-support backbone.
-
-    Raises:
-        ValueError: If the observed row and column index shapes differ.
-    """
-    if obs_rows.shape != obs_cols.shape:
-        msg = "observed row and column index arrays must have matching shapes"
-        raise ValueError(msg)
-    support = np.zeros(len(obs_rows), dtype=bool)
-    if len(obs_rows) == 0:
-        return support
-
-    row_order = rng.permutation(n_rows)
-    col_order = rng.permutation(n_cols)
-    row_position = np.empty(n_rows, dtype=int)
-    col_position = np.empty(n_cols, dtype=int)
-    row_position[row_order] = np.arange(n_rows)
-    col_position[col_order] = np.arange(n_cols)
-    graph = sp.csr_matrix(
-        (
-            np.ones(len(obs_rows), dtype=np.int8),
-            (row_position[obs_rows], col_position[obs_cols]),
-        ),
-        shape=(n_rows, n_cols),
-    )
-    matched_columns = sp.csgraph.maximum_bipartite_matching(graph, perm_type="column")
-    edge_index = {
-        (int(row), int(column)): index
-        for index, (row, column) in enumerate(zip(obs_rows, obs_cols, strict=True))
-    }
-    for permuted_row, permuted_column in enumerate(matched_columns):
-        if permuted_column >= 0:
-            row = int(row_order[permuted_row])
-            column = int(col_order[permuted_column])
-            support[edge_index[row, column]] = True
-
-    row_covered = np.bincount(obs_rows[support], minlength=n_rows) > 0
-    col_covered = np.bincount(obs_cols[support], minlength=n_cols) > 0
-    row_counts = np.bincount(obs_rows, minlength=n_rows)
-    col_counts = np.bincount(obs_cols, minlength=n_cols)
-    for row in rng.permutation(np.flatnonzero((row_counts > 0) & ~row_covered)):
-        candidates = np.flatnonzero(obs_rows == row)
-        support[int(rng.choice(candidates))] = True
-    col_covered = np.bincount(obs_cols[support], minlength=n_cols) > 0
-    for column in rng.permutation(np.flatnonzero((col_counts > 0) & ~col_covered)):
-        candidates = np.flatnonzero(obs_cols == column)
-        support[int(rng.choice(candidates))] = True
-    return support
-
-
-def _fold_preserves_training_coverage(
-    probe_sel: IndexArray,
-    obs_rows: IndexArray,
-    obs_cols: IndexArray,
-    row_counts: IndexArray,
-    col_counts: IndexArray,
-) -> bool:
-    """Return whether one holdout leaves every observed row and column covered."""
-    heldout_rows = np.bincount(obs_rows[probe_sel], minlength=len(row_counts))
-    heldout_cols = np.bincount(obs_cols[probe_sel], minlength=len(col_counts))
-    return bool(
-        np.all(heldout_rows[row_counts > 0] < row_counts[row_counts > 0])
-        and np.all(heldout_cols[col_counts > 0] < col_counts[col_counts > 0])
-    )
-
-
-_TRACKED_METRICS: tuple[str, ...] = ("rms", "prms", "cost")
-"""Metrics recorded from each candidate fit for CV aggregation."""
-
-_CONVERGENCE_FIELDS: tuple[str, ...] = (
-    "n_iter",
-    "converged",
-    "convergence_reason",
-)
-"""Scalar convergence diagnostics retained for each candidate and fold."""
-
-
-def _run_fold(  # noqa: PLR0913
-    fold_i: int,
-    x_base: Float64Array,
-    obs_rows: IndexArray,
-    obs_cols: IndexArray,
-    probe_sel: IndexArray,
-    *,
-    k_list: list[int],
-    opts: dict[str, object],
-    seed: int,
-    n_splits: int = 1,
-    verbose: int = 0,
-) -> dict[int, dict[str, object]]:
-    """Run one fold: mask probe entries, sweep all *k* values, return metrics.
-
-    Args:
-        fold_i: Zero-based fold index (for logging).
-        x_base: Original data matrix ``(n_features, n_samples)``.
-        obs_rows: Row indices of all observed entries.
-        obs_cols: Column indices of all observed entries.
-        probe_sel: Indices into ``obs_rows``/``obs_cols`` for this fold's
-            held-out probe entries.
-        k_list: Candidate component counts to evaluate.
-        opts: Options forwarded to ``select_n_components``.
-        seed: Base seed used to derive a deterministic seed for this fold.
-        n_splits: Total number of folds (for log messages).
-        verbose: Verbosity level.
-
-    Returns:
-        Dict mapping each *k* to tracked metrics and convergence diagnostics.
-    """
-    if verbose:
-        logger.info("  Fold %d/%d ...", fold_i + 1, n_splits)
-
-    x_fold = x_base.copy()
-    x_fold[obs_rows[probe_sel], obs_cols[probe_sel]] = np.nan
-
-    xprobe = np.full(x_fold.shape, np.nan, dtype=float)
-    xprobe[obs_rows[probe_sel], obs_cols[probe_sel]] = x_base[
-        obs_rows[probe_sel], obs_cols[probe_sel]
-    ]
-
-    fold_opts = dict(opts)
-    fold_opts["xprobe"] = xprobe
-    fold_opts["random_state"] = seed + fold_i
-
-    _best_k, _best_metrics, trace, _model = select_n_components(
-        x_fold,
-        components=k_list,
-        config=SelectionConfig(
-            metric="prms",
-            patience=None,
-            max_trials=len(k_list),
-            compute_explained_variance=False,
-            return_best_model=False,
-            cost_diagnostics=cast(
-                "Literal['trace', 'endpoint']",
-                fold_opts.pop("cost_diagnostics", "trace"),
-            ),
-        ),
-        **fold_opts,  # type: ignore[arg-type]
-    )
-
-    return {
-        int(cast("int", t["k"])): {
-            **{
-                m: float(cast("float", t[m]))
-                for m in t
-                if m in {*_TRACKED_METRICS, *CATEGORICAL_METRICS}
-                or m.startswith("rmse_variable_")
-            },
-            "n_iter": int(cast("int", t["n_iter"])),
-            "converged": bool(t["converged"]),
-            "convergence_reason": str(t["convergence_reason"]),
-            "cost_diagnostics": str(t.get("cost_diagnostics", "trace")),
-        }
-        for t in trace
-    }
-
-
-def _add_cv_convergence_summary(
-    entry: dict[str, object],
-    k: int,
-    fold_metrics: Sequence[dict[int, dict[str, object]]],
-) -> None:
-    """Add per-fold and aggregate convergence diagnostics for one candidate."""
-    candidate_folds = [fold[k] for fold in fold_metrics if k in fold]
-    iterations = [int(cast("int", fold["n_iter"])) for fold in candidate_folds]
-    converged = [bool(fold["converged"]) for fold in candidate_folds]
-    reasons = [str(fold["convergence_reason"]) for fold in candidate_folds]
-    reason_counts = {reason: reasons.count(reason) for reason in sorted(set(reasons))}
-
-    entry["mean_n_iter"] = float(np.mean(iterations)) if iterations else float("nan")
-    entry["max_n_iter"] = max(iterations, default=0)
-    entry["convergence_rate"] = float(np.mean(converged)) if converged else float("nan")
-    entry["convergence_reason_counts"] = reason_counts
-    diagnostic_modes = {
-        str(fold.get("cost_diagnostics", "trace")) for fold in candidate_folds
-    }
-    entry["cost_diagnostics"] = (
-        next(iter(diagnostic_modes)) if len(diagnostic_modes) == 1 else "mixed"
-    )
-    for fold_index, fold in enumerate(candidate_folds, start=1):
-        for field in _CONVERGENCE_FIELDS:
-            entry[f"{field}_fold_{fold_index}"] = fold[field]
-
-
-def _aggregate_cv_results(
-    k_list: list[int],
-    fold_metrics: list[dict[int, dict[str, object]]],
-    selection_metric: _CVMetric,
-    extra_metrics: Sequence[str] = (),
-) -> tuple[int, list[dict[str, object]]]:
-    """Aggregate fold metrics and select *k* via the 1-SE rule.
-
-    All tracked metrics (rms, prms, cost) are aggregated.  The 1-SE rule
-    is applied to *selection_metric*.
-
-    Args:
-        k_list: Candidate component counts.
-        fold_metrics: Per-fold dicts mapping *k* to a dict of all tracked
-            metric values.
-        selection_metric: The metric used for the 1-SE selection rule.
-        extra_metrics: Additional per-variable scores; summaries omit folds
-            without a finite score and record the number of contributing folds.
-
-    Returns:
-        Tuple ``(best_k, cv_results)`` where *cv_results* is a list of
-        dicts with keys ``k``, per-metric ``mean_<m>``, ``std_<m>``,
-        ``se_<m>`` columns, per-fold values, and convergence summaries.
-    """
-    cv_results: list[dict[str, object]] = []
-
-    present = {m for fold in fold_metrics for values in fold.values() for m in values}
-    metrics = [
-        m
-        for m in (*_TRACKED_METRICS, *CATEGORICAL_METRICS, *extra_metrics)
-        if m in present
-    ]
-    for k in k_list:
-        entry: dict[str, object] = {"k": k}
-        for m in metrics:
-            vals = [
-                float(cast("_AllowedFloat", fold[k][m]))
-                for fold in fold_metrics
-                if k in fold and m in fold[k]
-            ]
-            if m in extra_metrics:
-                vals = [v for v in vals if np.isfinite(v)]
-                entry[f"n_folds_{m}"] = len(vals)
-            n = len(vals)
-            std_val = float(np.std(vals, ddof=1)) if n > 1 else 0.0
-            entry[f"mean_{m}"] = float(np.mean(vals)) if n > 0 else float("nan")
-            entry[f"std_{m}"] = std_val
-            entry[f"se_{m}"] = std_val / np.sqrt(n) if n > 1 else 0.0
-            for i, fold in enumerate(fold_metrics):
-                entry[f"{m}_fold_{i + 1}"] = fold.get(k, {}).get(m, float("nan"))
-        _add_cv_convergence_summary(entry, k, fold_metrics)
-        cv_results.append(entry)
-
-    # Apply 1-SE rule on the selection metric
-    means = np.array([
-        float(cast("float", r[f"mean_{selection_metric}"])) for r in cv_results
-    ])
-    min_idx = int(np.argmin(means))
-    threshold = means[min_idx] + float(
-        cast("float", cv_results[min_idx][f"se_{selection_metric}"])
-    )
-
-    eligible = [
-        r
-        for r in cv_results
-        if float(cast("float", r[f"mean_{selection_metric}"])) <= threshold
-    ]
-    if eligible:
-        best = min(eligible, key=lambda r: int(cast("int", r["k"])))
-        return int(cast("int", best["k"])), cv_results
-
-    return int(cast("int", cv_results[min_idx]["k"])), cv_results
-
-
-def _cv_sweep(  # noqa: PLR0913
-    x_arr: Float64Array,
-    folds: list[tuple[IndexArray, IndexArray]],
-    k_list: list[int],
-    *,
-    config: CVConfig,
-    opts: dict[str, object],
-    verbose: int,
-) -> tuple[list[int], list[dict[int, dict[str, object]]]]:
-    """Evaluate candidates on every fold, stopping early when requested.
-
-    Returns:
-        The candidates evaluated and the per-fold metrics.
-    """
-    obs_rows, obs_cols = np.nonzero(~np.isnan(x_arr))
-
-    def run_folds(candidates: list[int]) -> list[dict[int, dict[str, object]]]:
-        return [
-            _run_fold(
-                fold_i=fold_i,
-                x_base=x_arr,
-                obs_rows=obs_rows,
-                obs_cols=obs_cols,
-                probe_sel=probe_sel,
-                k_list=candidates,
-                opts=opts,
-                seed=config.seed,
-                n_splits=config.n_splits,
-                verbose=verbose,
-            )
-            for fold_i, (probe_sel, _train_sel) in enumerate(folds)
-        ]
-
-    if not config.early_stop:
-        return k_list, run_folds(k_list)
-    evaluated: list[int] = []
-    fold_metrics: list[dict[int, dict[str, object]]] = [{} for _ in folds]
-    for k in k_list:
-        for metrics, new in zip(fold_metrics, run_folds([k]), strict=True):
-            metrics.update(new)
-        evaluated.append(k)
-        _, partial = _aggregate_cv_results(evaluated, fold_metrics, config.metric)
-        if len(partial) > 1 and _first_minimum_stops(
-            partial[-2], partial[-1], config.metric
-        ):
-            break
-    return evaluated, fold_metrics
-
-
-def _apply_rule(
-    one_se_k: int, cv_results: list[dict[str, object]], rule: str, metric: str
-) -> int:
-    """Return the capacity chosen by ``rule``.
-
-    Returns:
-        ``one_se_k`` for the one-SE rule, otherwise the first-minimum or
-        minimum-error capacity.
-    """
-    if rule == "first_minimum":
-        return _first_minimum(cv_results, metric)
-    if rule == "minimum":
-        best_entry = min(
-            cv_results,
-            key=lambda r: (
-                float(cast("float", r[f"mean_{metric}"])),
-                int(cast("int", r["k"])),
-            ),
-        )
-        return int(cast("int", best_entry["k"]))
-    return one_se_k
+    model = _native_selected_model(selected, template) if selected is not None else None
+    return best, metrics, trace, model
 
 
 def cross_validate_components(
-    x: InputMatrix,
+    x: object,
     *,
-    mask: InputMask | None = None,
+    mask: object | None = None,
     components: Iterable[int] | None = None,
     config: CVConfig | None = None,
     **opts: object,
 ) -> tuple[int, list[dict[str, object]]]:
-    """K-fold cross-validated model selection for VBPCA.
-
-    Partitions observed entries into *n_splits* folds. By default, every
-    candidate is fitted on every fold and the one-standard-error rule selects
-    the smallest capacity within one standard error of the global minimum.
-    ``CVConfig(selection_rule="first_minimum", early_stop=True)`` instead
-    evaluates candidates sequentially across all folds and stops after the
-    first successor whose improvement is no greater than that successor's
-    standard error. Its result is the preceding capacity; if no successor
-    confirms a stop, it evaluates the full grid and returns its last capacity.
-    A later dip can change the global minimum and one-SE decision. This prefix
-    rule therefore targets first minimum and does not certify global one-SE
-    equivalence, a downstream signal rank or calibrated significance tests.
-
-    All tracked metrics (rms, prms, cost) and convergence diagnostics are
-    recorded per fold regardless of which metric is used for selection, so
-    callers can compare selection criteria and audit fit quality without
-    re-running.
+    """Select capacity using existing cellwise CV on samples-by-features input.
 
     Args:
-        x: Dense data matrix with shape ``(n_features, n_samples)``.
-        mask: Optional boolean mask with the same shape as ``x``.
-        components: Candidate component counts. Include ``0`` to compare an
-            explicit mean-only model. Defaults to positive ranks
-            ``1 .. min(n_features, n_samples)``.
-        config: Cross-validation parameters.  Uses ``CVConfig()``
-            defaults when ``None``.
-        **opts: Additional options forwarded to ``select_n_components``
-            and ultimately to the ``VBPCA`` constructor / fit.
+        x: Dense samples-by-features numeric observations; NaNs are missing.
+        mask: Optional aligned observation mask.
+        components: Nonnegative integral capacities within both dimensions.
+        config: Cellwise fold, metric and selection policy. Feature groups and
+            encoding-schema columns refer to the input feature axis.
+        **opts: Fitting options, with modern mode as the default. This helper
+            constructs its own probes; do not supply ``xprobe`` or a positive
+            ``xprobe_fraction``. Warm starts retain their low-level axes.
 
     Returns:
-        Tuple ``(best_k, cv_results)`` where:
-
-        - ``best_k``: selected component count.
-        - ``cv_results``: list of dicts (one per candidate *k*) with keys
-          ``k``, ``mean_<m>``, ``std_<m>``, ``se_<m>`` for each metric,
-          and ``<m>_fold_<i>`` per-fold values. Each entry also includes
-          per-fold ``n_iter``, ``converged``, and ``convergence_reason`` plus
-          candidate-level mean/max iterations, convergence rate, and reason
-          counts.
+        Selected capacity and the existing aggregate/per-fold metric records.
+        Full-grid one-SE and optional first-minimum selection remain distinct.
 
     Raises:
-        ValueError: If the input is sparse, ``metric`` is not ``"prms"``, no
-            valid ``components`` are provided, folds cannot preserve row and
-            column coverage, or ``n_splits < 2``.
+        ValueError: Inputs, capacities, fold support or metric rules are invalid.
 
-    Example:
-        >>> best_k, cv = cross_validate_components(
-        ...     X, components=range(1, 6), config=CVConfig(n_splits=5)
-        ... )
+    This is cellwise capacity CV, separate from sklearn's row-wise CV and the
+    estimator's marginal likelihood score. Use the explicit legacy helper for
+    historical feature-first inputs and defaults.
     """
-    cv_cfg = config or CVConfig()
-
-    if cv_cfg.metric not in {"prms", "brier", "log_score"}:
-        msg = (
-            "cross-validation metric must be 'prms', 'brier' or 'log_score'; "
-            "cost is a training objective, not a held-out fold metric"
-        )
+    if "xprobe" in opts or cast("float", opts.get("xprobe_fraction", 0.0)) != 0:
+        msg = "cellwise CV constructs its own probes; do not supply probe options"
         raise ValueError(msg)
-    if cv_cfg.n_splits < 2:
-        msg = f"n_splits must be >= 2 (got {cv_cfg.n_splits})"
-        raise ValueError(msg)
-
-    if sp.issparse(x):
-        msg = (
-            "cross_validate_components currently supports dense input only; "
-            "sparse input would lose structural missingness when materialized"
-        )
-        raise ValueError(msg)
-    if mask is not None and sp.issparse(mask):
-        msg = "mask must be dense when cross-validation input is dense"
-        raise ValueError(msg)
-
-    x_arr = np.array(x, dtype=float)
-    if mask is not None:
-        mask_arr = np.asarray(mask, dtype=bool)
-        if mask_arr.shape != x_arr.shape:
-            msg = "mask must have the same shape as x"
-            raise ValueError(msg)
-        x_arr[~mask_arr] = np.nan
-
-    groups = _cv_groups(cv_cfg, x_arr)
-
-    rule = cv_cfg.resolved_rule()
-    k_list = _normalize_components(components, x_arr.shape[0], x_arr.shape[1])
-    fold_rng = np.random.default_rng(cv_cfg.seed)
-    folds = (
-        _make_element_folds(x_arr, cv_cfg.n_splits, fold_rng)
-        if groups is None
-        else _make_group_folds(x_arr, groups, cv_cfg.n_splits, fold_rng)
+    data, _template, fit_options = _selection_input(x, mask, opts)
+    return _selection_core.cross_validate_components(
+        _transpose_matrix(data),
+        mask=None,
+        components=_native_capacities(components, data.shape),
+        config=config,
+        **fit_options,
     )
-
-    fit_opts: dict[str, object] = dict(opts)
-    verbose_level = int(
-        cast(
-            "SupportsIndex | str | bytes | bytearray",
-            fit_opts.pop("selection_verbose", fit_opts.get("verbose", 0)),
-        )
-    )
-    fit_opts["verbose"] = 0
-    if groups is not None:
-        fit_opts["_cell_groups"] = list(groups)
-    if cv_cfg.encoding_schema is not None:
-        fit_opts["_encoding_schema"] = cv_cfg.encoding_schema
-
-    k_list, all_fold_metrics = _cv_sweep(
-        x_arr,
-        folds,
-        k_list,
-        config=cv_cfg,
-        opts=fit_opts,
-        verbose=verbose_level,
-    )
-    best_k, cv_results = _aggregate_cv_results(k_list, all_fold_metrics, cv_cfg.metric)
-    best_k = _apply_rule(best_k, cv_results, rule, cv_cfg.metric)
-
-    if verbose_level:
-        min_entry = min(
-            cv_results,
-            key=lambda r: float(cast("float", r[f"mean_{cv_cfg.metric}"])),
-        )
-        logger.info(
-            "CV result: best_k=%d (min mean %s=%.6g +/- %.6g at k=%d)",
-            best_k,
-            cv_cfg.metric,
-            cast("float", min_entry[f"mean_{cv_cfg.metric}"]),
-            cast("float", min_entry[f"se_{cv_cfg.metric}"]),
-            cast("int", min_entry["k"]),
-        )
-
-    return best_k, cv_results
-
-
-def _cv_groups(config: CVConfig, x: Float64Array) -> Sequence[object] | None:
-    """Resolve and validate the encoding contract before fitting candidates.
-
-    Returns:
-        Variable labels, derived from the schema when provided.
-
-    Raises:
-        ValueError: If categorical selection lacks groups or suitable targets,
-            or schema metadata does not match the input.
-    """
-    groups = config.feature_groups
-    if config.encoding_schema is not None:
-        config.encoding_schema.validate(x.shape[0])
-        if groups is None:
-            groups = config.encoding_schema.feature_groups
-        scores = categorical_scores(x, x, groups, schema=config.encoding_schema)
-        if config.metric != "prms" and not np.isfinite(scores[config.metric]):
-            msg = "categorical selection needs observed categorical cells in the schema"
-            raise ValueError(msg)
-    if config.metric != "prms" and groups is None:
-        msg = (
-            f"metric={config.metric!r} needs CVConfig.feature_groups or encoding_schema"
-        )
-        raise ValueError(msg)
-    if (
-        config.metric != "prms"
-        and config.encoding_schema is None
-        and groups is not None
-    ):
-        validate_legacy_categorical_input(x, groups)
-    return groups

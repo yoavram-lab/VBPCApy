@@ -52,6 +52,13 @@ observation semantics. `scores_` contains joint training variational means;
 `vbpca_py.legacy.VBPCA` adapter preserves the feature-first API and historical
 default. See the [migration guide](docs/api/migration-05.md).
 
+Public `select_n_components` and `cross_validate_components` also consume
+samples x features with aligned masks. Explicit probe tables supplied to
+`select_n_components` use those axes too; CV constructs its own probes. Requested
+positive-rank selected models are native `VBPCA` instances. Feature-first
+selection remains available explicitly from `vbpca_py.legacy`. See the
+[executed selection example](scripts/example_component_selection.py).
+
 ## Features
 
 For sparse observations whose values include zero, use `compat_mode="modern"`

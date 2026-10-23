@@ -1,5 +1,16 @@
 # Model Selection
 
+Public selection inputs and masks use **samples x features**. Explicit
+`xprobe` tables supplied to `select_n_components` use those axes too; CV
+constructs its own probes. Modern observation semantics are the default. A
+requested positive-rank selected model is a native `VBPCA`: its public arrays,
+conditional new-data projection and names/containers follow the
+[0.5 contract](../api/migration-05.md). The numerical selection targets are
+unchanged. For feature-first inputs and historical defaults, import the helpers
+from `vbpca_py.legacy`; do not infer orientation from a matrix's dimensions.
+The [native selection example](https://github.com/yoavram-lab/VBPCApy/blob/main/scripts/example_component_selection.py)
+is executed in the test suite.
+
 ## Cost diagnostic modes
 
 Selection preserves full per-iteration cost traces by default, including when
@@ -122,6 +133,11 @@ as a training diagnostic but is not presented as a held-out CV metric. Fold
 construction preserves at least one training observation in every non-empty
 row and column.
 
+CV constructs its own probes: do not pass `xprobe` or a positive
+`xprobe_fraction`. Explicit capacities must be integral, nonnegative and no
+larger than either data dimension. The legacy helpers preserve the previous
+capacity handling for compatibility.
+
 ```python
 from vbpca_py import cross_validate_components, CVConfig
 
@@ -181,7 +197,7 @@ from vbpca_py import AutoEncoder, CVConfig, cross_validate_components
 encoder = AutoEncoder(binary="both", handle_unknown="raise")
 Z = encoder.fit_transform(X)  # samples x features
 best_k, cv = cross_validate_components(
-    Z.T,
+    Z,
     components=range(10),
     config=CVConfig(
         encoding_schema=encoder.encoding_schema_,
@@ -255,6 +271,13 @@ shares that cell's observation mask. The same fitted encoder is reused for all
 candidate ranks, including early stopping. The three return values are selected
 capacity, aggregate records and `PreprocessedFold` audit objects. To inspect
 preprocessing alone, call `prepare_raw_cv_folds` with the same inputs.
+
+Each fold's `training` and `held_out` arrays have shape
+`(n_samples, n_encoded_features)`. `numeric_scores(prediction)` accepts that
+same shape; raw masks remain `(n_samples, n_original_variables)`. Serialized
+folds carry an explicit layout marker. Rebuild pre-0.5 prepared-fold artifacts
+rather than guessing their axes. Raw selection defaults to modern mode too;
+an explicit `compat_mode` retains its numerical meaning.
 
 Use `column_levels` for vocabularies and ordinal order declared independently
 of these held-out data, such as a survey codebook. A `None` entry learns levels
