@@ -129,9 +129,9 @@ configuration/data/runtime split before typed configuration is implemented.
 All native public preprocessors are included: standard/min-max scaling,
 dense/sparse one-hot, ordinal and automatic encoding, log/power transforms and
 winsorization. Fit/transform signatures accept y where required and use
-keyword-only masks. Constructor values remain inspectable. Sparse one-hot's
-current single-column restriction must be reconciled with its advertised
-native-transformer contract before its estimator checks can pass.
+keyword-only masks. Constructor values remain inspectable. Sparse one-hot
+now supports multiple numeric categorical columns with independent category
+blocks, preserving its flat category list and output-to-input group metadata.
 
 Capture string feature names through validation; reject ambiguous duplicate
 names and inconsistent names/order at inference. Array inputs use stable
@@ -261,12 +261,20 @@ the explicit legacy adapter and migration guide. Typed solver configuration
 guards now prevent incomplete diagnostics at native, legacy and low-level
 boundaries (#339).
 
-The nine preprocessors now keep learned state out of constructors and clear
-old/partial state when fitting fails or is interrupted. This lifecycle increment
-preserves the numerical transforms. Native input validation, sparse one-hot's
-single-column limitation, tags/names/containers, mask routing and selection
-layout/composition remain open; constructor checks alone do not establish full
-estimator conformance.
+The nine preprocessors keep learned state out of constructors and clear
+old/partial state when fitting fails or is interrupted (#340). Native input
+validation now checks dimensions, dtypes, feature counts/names, masks and
+inverse widths. Sparse one-hot supports multiple independent input columns;
+all preprocessors declare their tested sparse/NaN/category input tags. The
+default preprocessors pass all applicable generic checks on minimum/current
+sklearn without skips or expected failures. Frozen synthetic transforms,
+inverse outputs and fitted metadata remain unchanged for existing valid cases.
+
+Mask routing, generated output names/container wrapping, strict mixed numeric
+encoding-schema validation and selection layout/composition remain open.
+Passing generic checks does not establish these integration contracts. Complete
+#178/#179/#39 and the remaining examples/migration/release gates before the
+single 0.5 release.
 
 The preimplementation/boundary probes identified the prerequisites below,
 which have since been addressed before the native estimator migration.

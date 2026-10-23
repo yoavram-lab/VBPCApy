@@ -282,7 +282,7 @@ def test_nonfinite_observed_numeric_values_cannot_silently_leave_the_holdout():
     x = _data()
     first = prepare_raw_cv_folds(x, encoder_factory=_encoder)[0]
     x[np.flatnonzero(first.heldout_mask[:, 2])[0], 2] = np.inf
-    with pytest.raises(ValueError, match="finite encoded values"):
+    with pytest.raises(ValueError, match="infinity in observed entries"):
         prepare_raw_cv_folds(x, encoder_factory=_encoder)
 
 

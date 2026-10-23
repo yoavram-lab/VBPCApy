@@ -163,7 +163,8 @@ def prepare_raw_cv_folds(
             held_out = np.asarray(encoder.transform(raw, mask=held), dtype=float).T
         except ValueError as error:
             msg = (
-                f"fold {fold_index} cannot encode held-out levels; declare external "
+                f"fold {fold_index} cannot encode held-out observations; check input "
+                "values and, for unseen categorical levels, declare external "
                 f"vocabularies with column_levels: {error}"
             )
             raise ValueError(msg) from error

@@ -56,7 +56,10 @@ def check_configuration_types(estimator: VBPCA) -> None:
 
 
 def check_preprocessor_parameter_types() -> None:
+    import scipy.sparse as sp
+
     from vbpca_py import MissingAwareLogTransformer, MissingAwareStandardScaler
+    from vbpca_py.preprocessing import MissingAwareSparseOneHotEncoder
 
     scaler = MissingAwareStandardScaler()
     assert_type(scaler.get_params(), dict[str, object])
@@ -66,6 +69,11 @@ def check_preprocessor_parameter_types() -> None:
     assert_type(transform.set_params(offset=2.0), MissingAwareLogTransformer)
     MissingAwareLogTransformer(offset="two")  # type: ignore[arg-type]
     MissingAwareStandardScaler(misspelled=True)  # type: ignore[call-arg]
+    encoder = MissingAwareSparseOneHotEncoder()
+    assert_type(encoder.fit([[0.0], [1.0]]), MissingAwareSparseOneHotEncoder)
+    assert_type(encoder.fit_transform([[0.0], [1.0]]), sp.csr_matrix)
+    assert_type(encoder.transform(np.ones((2, 1))), sp.csr_matrix)
+    assert_type(encoder.inverse_transform(sp.csr_matrix((2, 1))), sp.csr_matrix)
 
 
 def check_numerical_helper_contracts() -> None:

@@ -50,9 +50,8 @@ def test_sparse_one_hot_encoder_error_paths_and_roundtrip() -> None:
     with pytest.raises(ValueError):
         enc.fit(data, mask=np.ones((3, 1)))
 
-    bad_shape = sp.csr_matrix(np.ones((3, 2)))
-    with pytest.raises(ValueError):
-        enc.fit(bad_shape)
+    multi_column = sp.csr_matrix(np.ones((3, 2)))
+    assert enc.fit_transform(multi_column).shape == (3, 2)
 
     enc_unknown = MissingAwareSparseOneHotEncoder(handle_unknown="raise")
     enc_unknown.fit(data)
