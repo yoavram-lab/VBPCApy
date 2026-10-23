@@ -6,9 +6,11 @@ import argparse
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 EXAMPLES = (
     (
@@ -63,14 +65,14 @@ def _record_table(records):
     return "\n".join(lines)
 
 
-def build_gallery(root, destination):
+def _execute_gallery(root, destination):
     """Execute scripts in child processes; propagate errors and timeouts.
 
     Returns:
         A relative-path manifest for source and generated artifacts.
 
     Raises:
-        RuntimeError: An example changes during execution or emits no figures.
+        RuntimeError: An example changes or omits its result summary/figures.
     """
     destination.mkdir(parents=True, exist_ok=True)
     manifest = []
@@ -93,6 +95,8 @@ def build_gallery(root, destination):
         if source_path.read_text() != source:
             raise RuntimeError(f"Example source changed while executing: {filename}")
         (directory / filename).write_text(source)
+        if not (directory / "summary.json").is_file():
+            raise RuntimeError(f"Example produced no result summary: {filename}")
         summary = json.loads((directory / "summary.json").read_text())
         figures = sorted(path.name for path in directory.glob("*.png"))
         if not figures:
@@ -123,6 +127,25 @@ def build_gallery(root, destination):
     (destination / "manifest.json").write_text(
         json.dumps(manifest, indent=2, allow_nan=False) + "\n"
     )
+    return manifest
+
+
+def build_gallery(root, destination):
+    """Execute in fresh storage before replacing previous successful output.
+
+    Returns:
+        The manifest for this successful execution.
+    """
+    destination.mkdir(parents=True, exist_ok=True)
+    with TemporaryDirectory(prefix="vbpca-gallery-build-") as staging:
+        generated = Path(staging)
+        manifest = _execute_gallery(root, generated)
+        for record in manifest:
+            target = destination / record["slug"]
+            if target.exists():
+                shutil.rmtree(target)
+            shutil.copytree(generated / record["slug"], target)
+        shutil.copyfile(generated / "manifest.json", destination / "manifest.json")
     return manifest
 
 

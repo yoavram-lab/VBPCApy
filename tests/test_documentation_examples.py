@@ -20,6 +20,7 @@ def test_public_api_and_actual_quickstart_migration_examples():
     assert all(count > 0 for count in counts.values())
 
 
+@pytest.mark.docs
 def test_executed_gallery_preserves_demonstrated_observation_and_score_targets(
     tmp_path,
 ):
@@ -64,6 +65,44 @@ def test_executed_gallery_preserves_demonstrated_observation_and_score_targets(
             row["mean_rmse_variable_2"],
         ]).all()
     assert len(records["plots"]["component_zero_loadings"]) == 5
+
+
+@pytest.mark.parametrize("new_output", ["nothing", "summary_only"])
+def test_reused_builder_cannot_accept_old_summary_or_old_figures(
+    tmp_path, monkeypatch, new_output
+):
+    module = runpy.run_path(str(ROOT / "scripts/build_gallery.py"))
+    builder = module["build_gallery"]
+    monkeypatch.setitem(
+        builder.__globals__, "EXAMPLES", (("demo", "Demo", "demo.py", "Demo output"),)
+    )
+    root = tmp_path / "project"
+    scripts = root / "scripts"
+    scripts.mkdir(parents=True)
+    script = scripts / "demo.py"
+    script.write_text(
+        "import sys\nfrom pathlib import Path\n"
+        "output = Path(sys.argv[-1])\n"
+        "(output / 'summary.json').write_text('{}')\n"
+        "(output / 'demo.png').write_bytes(b'example figure')\n"
+    )
+    destination = tmp_path / "gallery"
+    builder(root, destination)
+    original_manifest = (destination / "manifest.json").read_bytes()
+    original_source = (destination / "demo/demo.py").read_bytes()
+    if new_output == "nothing":
+        script.write_text("print('successful exit without new artifacts')\n")
+    else:
+        script.write_text(
+            "import sys\nfrom pathlib import Path\n"
+            "(Path(sys.argv[-1]) / 'summary.json').write_text('{}')\n"
+        )
+    with pytest.raises(
+        RuntimeError, match=r"produced no result summary|produced no figures"
+    ):
+        builder(root, destination)
+    assert (destination / "manifest.json").read_bytes() == original_manifest
+    assert (destination / "demo/demo.py").read_bytes() == original_source
 
 
 @pytest.fixture(scope="module")
