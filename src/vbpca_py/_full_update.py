@@ -706,9 +706,9 @@ def _prepare_dense_with_mask_override(
 
     mask_arr = np.asarray(mask_override, dtype=bool)
     x_arr = np.asarray(x_data, dtype=float)
-    eps = np.finfo(float).eps if compat_mode == "strict_legacy" else 0.0
-    zero_mask = np.isclose(x_arr, 0.0)
-    x_arr[zero_mask] = eps
+    if compat_mode == "strict_legacy":
+        zero_mask = np.isclose(x_arr, 0.0)
+        x_arr[zero_mask] = np.finfo(float).eps
     x_arr[np.isnan(x_arr)] = 0.0
 
     x_probe_out: Matrix | None = None
@@ -716,8 +716,9 @@ def _prepare_dense_with_mask_override(
     if x_probe is not None:
         x_probe_arr = np.asarray(x_probe, dtype=float)
         mask_probe = ~np.isnan(x_probe_arr)
-        zero_mask_probe = np.isclose(x_probe_arr, 0.0)
-        x_probe_arr[zero_mask_probe] = eps
+        if compat_mode == "strict_legacy":
+            zero_mask_probe = np.isclose(x_probe_arr, 0.0)
+            x_probe_arr[zero_mask_probe] = np.finfo(float).eps
         x_probe_arr[np.isnan(x_probe_arr)] = 0.0
         x_probe_out = x_probe_arr
 

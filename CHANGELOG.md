@@ -13,6 +13,10 @@ The development version is not a release announcement.
 
 ### Added
 
+- Document strict-legacy versus modern observation, epsilon and update-order
+  policies, their defaults at each entry point, and an executed migration
+  example. Clarify prior-variance versus observation-noise ordering.
+
 - Complete the executed mixed-data Pipeline example with independent new rows,
   inverse decoding through the fitted model/encoder portion, row validation,
   GridSearchCV and default/pandas/Polars output. Document mask routing and
@@ -48,6 +52,10 @@ The development version is not a release announcement.
   Initialization continues to accept warm-start mappings and MAT filenames.
 
 ### Changed
+
+- Preserve finite near-zero training/probe values in modern dense explicit-mask
+  fits, matching the equivalent NaN-observation fit. Keep historical epsilon
+  replacement in strict-legacy mode.
 
 - Reject raw observed sparse infinity at native fit/projection/scoring and
   component-selection boundaries before conversion can combine duplicates into

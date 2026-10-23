@@ -83,6 +83,7 @@ nav:
     - Sparse Data Workflows: tutorials/sparse-data.md
     - Cross-Validation & Diagnostics: tutorials/cv-diagnostics.md
   - How-To Guides:
+    - Compatibility Modes: howto/compatibility-modes.md
     - Convergence Tuning: howto/convergence.md
     - Runtime & Threading: howto/runtime-tuning.md
     - Numerical Validation: howto/numerical-validation.md

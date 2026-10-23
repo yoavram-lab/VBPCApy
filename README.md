@@ -59,6 +59,19 @@ positive-rank selected models are native `VBPCA` instances. Feature-first
 selection remains available explicitly from `vbpca_py.legacy`. See the
 [executed selection example](scripts/example_component_selection.py).
 
+## Compatibility modes
+
+The native 0.5 estimator and public selection helpers default to `modern`;
+the explicit legacy adapter, low-level solver and `PCAOptions()` default to
+`strict_legacy`. Modern mode uses observation masks/stored sparse entries,
+preserves finite zeros and small values, and selects post-factor mean and
+post-rotation prior-variance updates when their ordering options are `auto`.
+Strict-legacy mode retains signed-sum sparse empty-axis detection, historical
+near-zero/epsilon handling and legacy update orders. Changing mode can change
+fitted results; it does not change input orientation. See the
+[mode comparison and migration example](docs/howto/compatibility-modes.md)
+before changing an established workflow.
+
 ## Features
 
 For sparse observations whose values include zero, use `compat_mode="modern"`

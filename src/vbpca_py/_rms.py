@@ -42,7 +42,8 @@ def compute_rms(
 
     Notes:
         - For sparse, the observation set is the sparsity pattern of ``data``.
-          (Observed zeros must be stored explicitly as eps, as in legacy code.)
+          Numeric zeros must remain explicitly stored. Historical strict-legacy
+          preparation substitutes machine epsilon; modern preparation retains zeros.
 
     Returns:
         rms: Root-mean-squared reconstruction error.
