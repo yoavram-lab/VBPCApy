@@ -5,7 +5,8 @@ import warnings
 import numpy as np
 import pytest
 
-from vbpca_py import VBPCA, recommend_config
+from vbpca_py import recommend_config
+from vbpca_py.legacy import VBPCA
 
 
 def test_recommend_config_buckets_by_p() -> None:

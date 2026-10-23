@@ -20,7 +20,16 @@ import numpy as np
 import scipy
 
 import vbpca_py
-from vbpca_py import VBPCA, AutoEncoder, CVConfig, cross_validate_components
+from vbpca_py import AutoEncoder, CVConfig, cross_validate_components
+
+# A deliberate version boundary: compare historical feature-first fits in both
+# environments, including installations that predate the explicit legacy API.
+try:
+    from vbpca_py.legacy import VBPCA
+except ModuleNotFoundError as error:
+    if error.name != "vbpca_py.legacy":
+        raise
+    from vbpca_py import VBPCA
 
 if TYPE_CHECKING:
     from types import ModuleType

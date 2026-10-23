@@ -107,3 +107,11 @@ uv sync --extra dev --extra data --extra benchmark
 # Include Octave Python bridge (optional)
 uv sync --extra dev --extra data --extra benchmark --extra octave
 ```
+
+## 0.5 development dependency boundary
+
+Native estimators require scikit-learn >=1.8 at runtime. Minimum and current
+versions are qualified separately. Python remains >=3.11,<3.15. The optional
+no-op estimator fallback has been removed. Low-level `pca_full` retains its
+feature-first numerical interface; importing the package requires the declared
+runtime dependencies. See the [migration guide](../api/migration-05.md).

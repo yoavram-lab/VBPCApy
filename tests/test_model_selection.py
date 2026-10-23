@@ -4,7 +4,7 @@ import scipy.sparse as sp
 from numpy.testing import assert_allclose
 
 import vbpca_py.model_selection as ms
-from vbpca_py import VBPCA
+from vbpca_py.legacy import VBPCA
 from vbpca_py.model_selection import (
     CVConfig,
     SelectionConfig,

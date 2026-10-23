@@ -8,9 +8,10 @@ import numpy as np
 import pytest
 import scipy.sparse as sp
 
-from vbpca_py import VBPCA, recommend_config
+from vbpca_py import recommend_config
 from vbpca_py._converge import DEFAULT_CRITERION_ORDER, convergence_check
 from vbpca_py._pca_full import _build_options, pca_full
+from vbpca_py.legacy import VBPCA
 
 
 def test_live_options_disable_unavailable_rule_without_mutating_input() -> None:

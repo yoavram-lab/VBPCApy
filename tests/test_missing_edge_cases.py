@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from vbpca_py import VBPCA
+from vbpca_py.legacy import VBPCA
 
 
 def _make_low_rank(

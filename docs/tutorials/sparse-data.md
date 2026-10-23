@@ -1,5 +1,8 @@
 # Sparse Data Workflows
 
+These feature-first examples use the explicit pre-0.5 compatibility adapter.
+For the native samples-first estimator, see the [0.5 migration guide](../api/migration-05.md).
+
 This tutorial shows how to use VBPCApy when stored sparse entries are observed
 and unstored positions are genuinely missing. Sparse storage is appropriate
 only when that structural pattern matches the intended observation model.
@@ -47,7 +50,7 @@ observation set. Entries not stored in the CSR/CSC structure are treated as
 This means you generally do **not** need to pass a separate mask:
 
 ```python
-from vbpca_py import VBPCA
+from vbpca_py.legacy import VBPCA
 
 model = VBPCA(n_components=4, maxiters=200, verbose=1)
 scores = model.fit_transform(X_sparse)

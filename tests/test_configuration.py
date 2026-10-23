@@ -138,16 +138,15 @@ def test_native_sklearn_clone_and_grid_search():
     from sklearn.base import BaseEstimator, clone
     from sklearn.model_selection import GridSearchCV
 
-    assert VBPCA.get_params is BaseEstimator.get_params
-    assert VBPCA.set_params is BaseEstimator.set_params
+    assert issubclass(VBPCA, BaseEstimator)
+    assert VBPCA(1).get_params() == BaseEstimator.get_params(VBPCA(1))
     estimator = VBPCA(1, **_settings(), convergence_criteria={"angle": False})
     cloned = clone(estimator)
     assert cloned.get_params() == estimator.get_params()
     assert cloned.convergence_criteria is not estimator.convergence_criteria
     cloned.convergence_criteria["angle"] = True
     assert estimator.convergence_criteria["angle"] is False
-    # This tests sklearn parameter plumbing only. The current wrapper still uses
-    # features x samples; statistical held-out projection is separate work.
+    # Exercise native parameter plumbing with row-wise train/test splitting.
     search = GridSearchCV(
         estimator,
         {"maxiters": [2, 3], "algorithm": [Algorithm.VB, Algorithm.MAP]},
@@ -308,22 +307,14 @@ def test_legacy_numeric_fallbacks_and_generator_boundary():
         PCAOptions.from_kwargs(convergence_criteria={"angle": 1})
 
 
-def test_parameter_api_works_without_optional_sklearn():
-    script = """
-import sys
-sys.modules["sklearn"] = None
-from vbpca_py import VBPCA
-model = VBPCA(1, verbose=True)
-assert model.get_params()["verbose"] is True
-assert model.set_params(maxiters=2) is model
-try:
-    model.set_params(misspelled=1)
-except ValueError:
-    pass
-else:
-    raise AssertionError("unknown parameter accepted")
-"""
-    subprocess.run([sys.executable, "-c", script], check=True, capture_output=True)
+def test_required_sklearn_has_no_silent_fallback():
+    script = "import sys; sys.modules['sklearn'] = None; import vbpca_py"
+    completed = subprocess.run(
+        [sys.executable, "-c", script], check=False, capture_output=True, text=True
+    )
+    assert completed.returncode != 0
+    assert "ModuleNotFoundError" in completed.stderr
+    assert "sklearn" in completed.stderr
 
 
 def test_options_guide_examples_execute():

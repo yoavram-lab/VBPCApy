@@ -25,10 +25,10 @@ pip install vbpca-py
 import numpy as np
 from vbpca_py import VBPCA
 
-x = np.random.randn(50, 200)  # 50 features × 200 samples
+x = np.random.randn(200, 50)  # 200 samples x 50 features
 model = VBPCA(n_components=5, maxiters=100)
 scores = model.fit_transform(x)
-recon = model.inverse_transform()
+recon = model.inverse_transform(scores)
 ```
 
 ## Next steps

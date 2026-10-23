@@ -1,5 +1,8 @@
 # Genomics dosage data
 
+These feature-first examples use the explicit pre-0.5 compatibility adapter.
+For the native samples-first estimator, see the [0.5 migration guide](../api/migration-05.md).
+
 Genotype dosage matrices contain many zeros, but those zeros are measured
 values. VBPCApy's sparse solver assigns a different meaning to an unstored
 entry: it is missing. Use a dense floating-point array and an explicit
@@ -18,7 +21,8 @@ evaluation.
 ```python
 import numpy as np
 
-from vbpca_py import MissingAwareStandardScaler, VBPCA, check_data, make_xprobe_mask
+from vbpca_py import MissingAwareStandardScaler, check_data, make_xprobe_mask
+from vbpca_py.legacy import VBPCA
 
 # dosage has shape (n_samples, n_variants) and contains 0, 1, 2, or NaN.
 dosage = np.asarray(dosage, dtype=np.float64)

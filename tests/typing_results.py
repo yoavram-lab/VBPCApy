@@ -4,7 +4,7 @@ from typing import assert_type
 
 import numpy as np
 
-from vbpca_py import Float64Array, LearningCurve, PCAResult
+from vbpca_py import Float64Array, LearningCurve, PCAResult, ProjectionPosterior
 from vbpca_py._pca_full import pca_full
 from vbpca_py.estimators import VBPCA
 
@@ -156,3 +156,15 @@ def check_numerical_helper_contracts() -> None:
     floating_values: Float64Array = np.ones((2, 3), dtype=np.float64)
     observed = floating_values  # type: ignore[assignment]
     assert_type(observed, BoolArray)
+
+
+def check_native_projection_types(estimator: VBPCA) -> None:
+    assert_type(estimator.transform(np.ones((3, 4))), Float64Array)
+    assert_type(estimator.inverse_transform(np.ones((3, 1))), Float64Array)
+    assert_type(estimator.transform_posterior(np.ones((3, 4))), ProjectionPosterior)
+    posterior = estimator.transform_posterior(np.ones((3, 4)))
+    assert_type(posterior.mean, Float64Array)
+    assert_type(posterior.covariance, Float64Array)
+    assert_type(estimator.score_samples(np.ones((3, 4))), Float64Array)
+    assert_type(estimator.score(np.ones((3, 4))), float)
+    posterior.mean = np.zeros((3, 1))  # type: ignore[misc]

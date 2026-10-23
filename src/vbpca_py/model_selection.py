@@ -49,7 +49,7 @@ if TYPE_CHECKING:  # pragma: no cover
 
     from ._pca_full import Matrix
     from .encoding import EncodingSchema
-    from .estimators import VBPCA
+    from .legacy import VBPCA
 
 __all__ = [
     "RANK_ZERO_SELECTION_SUPPORTED",
@@ -168,7 +168,7 @@ def _fit_candidate(
     cfg: SelectionConfig,
     opts: Mapping[str, object],
 ) -> tuple[dict[str, object], VBPCA | None]:
-    from .estimators import VBPCA  # noqa: PLC0415 - avoid circular dependency
+    from .legacy import VBPCA  # noqa: PLC0415 - avoid circular dependency
 
     _ = cfg  # keep signature compatibility for injected stubs during tests
 

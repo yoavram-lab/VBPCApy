@@ -1,92 +1,70 @@
 # Quick Start
 
-## Dense data
+The native 0.5 development estimator consumes **samples x features** and defaults
+to modern observation semantics. Dense NaNs are missing; numeric zeros are
+observed. For the pre-0.5 feature-first API, use the explicit
+[legacy adapter](../api/migration-05.md#explicit-legacy-api-and-serialized-models).
 
-VBPCApy expects data in **features × samples** layout (each column is one observation).
+## Fit, project and reconstruct
 
 ```python
 import numpy as np
 from vbpca_py import VBPCA
 
-# 50 features, 200 samples
-x = np.random.randn(50, 200)
-
-model = VBPCA(n_components=5, maxiters=100)
-scores = model.fit_transform(x)
-recon = model.inverse_transform()
-
-# Learned attributes
-print("Components shape:", model.components_.shape)   # (50, 5)
-print("Scores shape:", model.scores_.shape)            # (5, 200)
-print("RMS:", model.rms_)
-print("Final cost:", model.cost_)
+X = np.random.default_rng(23).normal(size=(12, 4))
+X[0, 0] = np.nan
+model = VBPCA(2, maxiters=4, niter_broadprior=0, verbose=0,
+              random_state=23, num_cpu=1, runtime_tuning="off")
+Z = model.fit_transform(X)
+reconstruction = model.inverse_transform(Z)
+assert Z.shape == (12, 2)
+assert reconstruction.shape == X.shape
+assert model.components_.shape == (2, 4)
 ```
 
-### With missing entries
+These short fixed-iteration examples demonstrate the API. They do not establish
+posterior convergence. `scores_` retains joint variational training means;
+`fit_transform(X)` returns the same conditional projections as `fit(X).transform(X)`.
 
-Pass a boolean mask where `True` = observed, `False` = missing:
+New samples use the fitted state without refitting:
 
 ```python
-mask = np.ones_like(x, dtype=bool)
-mask[x < -2] = False  # mask some entries
-
-model = VBPCA(n_components=5, maxiters=100)
-scores = model.fit_transform(x, mask=mask)
-
-# Reconstruction and marginal variance
-recon = model.reconstruction_
-var = model.variance_
+new_scores = model.transform(X[:3])
+posterior = model.transform_posterior(X[:3])
+assert new_scores.shape == (3, 2)
+assert posterior.covariance.shape == (3, 2, 2)
 ```
 
-### Preprocessing pipeline
+## Explicit observations
 
-For mixed categorical + continuous data, use `AutoEncoder` to encode before fitting:
+Direct masks and probes follow the sample-first layout:
 
 ```python
-from vbpca_py import AutoEncoder
-
-auto = AutoEncoder(cardinality_threshold=10, continuous_scaler="standard")
-z = auto.fit_transform(x, mask=mask)
-
-model = VBPCA(n_components=5, maxiters=100)
-scores = model.fit_transform(z, mask=np.ones_like(z, dtype=bool))
-
-# Round-trip back to original space
-z_recon = model.inverse_transform()
-x_recon = auto.inverse_transform(z_recon)
+mask = np.ones_like(X, dtype=bool)
+mask[1, 2] = False
+model.fit(X, mask=mask)
+masked_scores = model.transform(X, mask=mask)
+assert masked_scores.shape == (12, 2)
 ```
 
-## Sparse data
-
-Sparse inputs must be CSR or CSC. The stored entries define the observation set (including stored zeros):
+Sparse stored entries, including stored zeros, are observations; absent entries
+are missing. Construct coordinates explicitly when zeros are observed:
 
 ```python
-import scipy.sparse as sp
-from vbpca_py import VBPCA
+from scipy.sparse import csr_matrix
 
-x_sparse = sp.csr_matrix([[1.0, 0.0], [0.0, 2.0]])
-
-# Mask must match spones(X); omit to infer from X
-mask = x_sparse.copy()
-mask.data[:] = 1.0
-
-model = VBPCA(n_components=2, maxiters=100)
-scores = model.fit_transform(x_sparse, mask=mask)
+values = np.array([[0.0, 1.0, 2.0], [2.0, 0.0, 3.0], [1.0, 2.0, 0.0]])
+rows, columns = np.indices(values.shape)
+sparse = csr_matrix((values.ravel(), (rows.ravel(), columns.ravel())),
+                    shape=values.shape)
+sparse_model = VBPCA(1, maxiters=4, niter_broadprior=0, verbose=0,
+                     random_state=23, num_cpu=1, runtime_tuning="off").fit(sparse)
+assert sparse_model.transform(sparse).shape == (3, 1)
 ```
 
-!!! note "Dense vs sparse masks"
-    - **Dense:** pass a boolean mask of 0/1 with the same shape.
-    - **Sparse:** the observation set is the stored entries of `X` (including stored zeros). If you pass a mask it must match `spones(X)` exactly.
-
-## Key options
-
-| Option | Description | Default |
-|--------|-------------|---------|
-| `n_components` | Number of latent components | *required* |
-| `bias` | Estimate per-feature mean | `True` |
-| `maxiters` | Maximum EM iterations | `1000` |
-| `rmsstop` | RMS plateau rule `[window, abs_tol, rel_tol]` | `[100, 1e-4, 1e-3]` |
-| `verbose` | Logging verbosity (0, 1, or 2) | `0` |
-| `xprobe_fraction` | Fraction of entries to hold out as probe | `0.0` |
-
-See [VBPCA API reference](../api/vbpca.md) for the complete list.
+A sparse constructor applied directly to a dense table can discard observed
+zeros. See [data conventions](../concepts/data-convention.md) and the
+[migration guide](../api/migration-05.md) for sparse masks, output budgets,
+rank zero, serialized artifacts and the temporarily feature-first cellwise
+selection helpers. Full preprocessing/Pipeline conformance remains tracked by
+#180; a width-changing encoder must not receive a stale raw mask downstream.
