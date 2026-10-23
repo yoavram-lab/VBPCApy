@@ -24,6 +24,17 @@ The development version is not a release announcement.
 
 ### Changed
 
+- Validate all nine preprocessors at their public boundaries: nonempty 2-D
+  input, numeric/category dtypes, feature counts/names, inverse output width,
+  masks and observed finite values. Declare tested sparse/NaN/category tags.
+  Generalize sparse one-hot encoding to independent blocks for multiple input
+  columns, retaining observed zeros, absent-entry missingness and the existing
+  flat category metadata. Accept dense numeric categorical input as well.
+  Reject sparse masks instead of silently ignoring them, and drop stored NaNs
+  from sparse observation structure. Mixed inverse masks describe original
+  variables and are applied after decoding. Pipeline mask routing and output
+  container support remain separate work.
+
 - Store only constructor parameters in all nine preprocessors. Create learned
   fields during fitting, clear previous/partial state on refit failures or
   cancellation, and raise scikit-learn's `NotFittedError` before inference.

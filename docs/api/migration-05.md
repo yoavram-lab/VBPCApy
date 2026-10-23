@@ -108,10 +108,44 @@ compatible older preprocessor artifacts and treats old unfitted `None`
 defaults as unfitted. Native `VBPCA`'s separate serialized-layout rules are
 described below.
 
-Input dtype/feature validation, metadata routing, names and output containers
-remain under #36/#38/#178/#179. The lifecycle change alone does not establish
-full preprocessor or Pipeline conformance. A width-changing encoder must not
-receive a stale raw mask downstream.
+All nine preprocessors now validate nonempty 2-D input, appropriate numeric or
+categorical dtypes, fitted feature counts and supplied string feature names/order.
+Duplicate names, observed infinity and raw complex input are rejected. Inverse
+transforms validate the fitted encoded width before decoding. Wholly missing
+columns retain their existing behavior, including zero-width categorical
+blocks. Named inputs capture `feature_names_in_`; transformed output names and
+pandas/polars wrapping remain separate work under #179.
+
+Sparse preprocessing accepts CSR, CSC and COO matrices/arrays with valid
+structure. Stored NaNs become missing entries without eliminating stored
+zeros. Duplicate coordinates are summed on owned storage. Explicit masks on
+sparse preprocessing are rejected: scalers previously ignored them silently.
+Normalize sparse observations before these transformers rather than passing an
+extra mask. Dense inverse masks for one-hot and automatic encoding have the
+original variable width, not the expanded indicator width.
+Automatic encoders retain the plans learned for their fitted dense/sparse
+representation; cross-representation categorical composition is not qualified
+by this increment.
+
+`MissingAwareSparseOneHotEncoder` now supports multiple numeric categorical
+columns. Each has an independent, sorted, full-category block; `categories_`
+keeps its flat output-column list and `feature_groups_` identifies each input
+variable. Single-column artifacts retain the same metadata meaning. Dense
+numeric input is also supported, with every non-NaN value observed, including
+zeros. Ignored unknown categories have no stored indicator. Centering changes
+stored indicators without filling absent entries.
+The existing configurable complex indicator dtype remains supported for
+real-valued indicators with finite zero imaginary components; the encoder's
+NaN-plus-NaN-imaginary missing sentinel is also retained. Inverse validation
+uses real views and decoder scratch blocks; it does not enable complex-valued
+raw categories or model inputs.
+
+The default preprocessors pass all applicable generic estimator checks on the
+minimum/current supported sklearn versions without skips or expected failures.
+These checks do not establish Pipeline mask routing or CV leakage prevention.
+Those integration gates remain under #178/#39; a width-changing encoder must
+not receive a stale raw mask downstream. Strict mixed numeric encoding-schema
+validation remains tracked under #38.
 
 ## Scoring and cellwise selection
 

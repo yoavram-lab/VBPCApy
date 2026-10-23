@@ -158,6 +158,7 @@ jobs:
           tests/test_native_estimator.py tests/test_configuration.py
           tests/test_sklearn_compat.py tests/test_probe_coverage.py
           tests/test_preprocessor_state.py
+          tests/test_preprocessor_validation.py
 
   numerical-reference:
     runs-on: ubuntu-latest

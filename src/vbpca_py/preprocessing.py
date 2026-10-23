@@ -6,6 +6,7 @@ from __future__ import annotations
 import warnings as _warnings_mod
 from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
+from itertools import pairwise
 from typing import TYPE_CHECKING, Literal, Protocol, Self, TypedDict, cast
 
 import numpy as np
@@ -27,7 +28,6 @@ if TYPE_CHECKING:
 from ._encoding_checks import detect_one_hot_blocks, encoding_warnings
 from ._missingness_checks import mcar_screen, missingness_summary, scale_warnings
 from ._preprocessing_state import PreprocessorState
-from ._sparsity import validate_mask_compatibility
 from .encoding import EncodedVariable, EncodingSchema
 
 __all__ = [
@@ -234,6 +234,8 @@ class MissingAwareOneHotEncoder(PreprocessorState):
     is fitted once; transforming new data retains those means.
     """
 
+    _numeric_input = False
+
     block_weights_: Float64Array | None
     categories_: list[list[object]]
     feature_names_out_: list[str]
@@ -265,12 +267,13 @@ class MissingAwareOneHotEncoder(PreprocessorState):
 
     def fit(
         self,
-        x: InputArray,
+        x: object,
         y: object = None,  # noqa: ARG002 - unsupervised transformer protocol
         *,
         mask: Mask | None = None,
     ) -> MissingAwareOneHotEncoder:
         with self._fitting():
+            x = cast("InputArray", self._validate_input(x, mask, reset=True))
             if self.binary not in {"single", "both"}:
                 msg = f"binary must be 'single' or 'both', got {self.binary!r}"
                 raise ValueError(msg)
@@ -335,7 +338,7 @@ class MissingAwareOneHotEncoder(PreprocessorState):
         ):
             stop = start + width
             offset = (
-                tuple(float(v) for v in self.column_means_[start:stop])
+                tuple(float(np.real(v)) for v in self.column_means_[start:stop])
                 if self.column_means_ is not None
                 else (0.0,) * width
             )
@@ -454,8 +457,9 @@ class MissingAwareOneHotEncoder(PreprocessorState):
         names = [f"col{j}_{c}" for c in cats[first:]]
         return out, names, means
 
-    def transform(self, x: InputArray, mask: Mask | None = None) -> InputArray:
+    def transform(self, x: object, mask: Mask | None = None) -> InputArray:
         self._check_fitted()
+        x = cast("InputArray", self._validate_input(x, mask, reset=False))
         if self.n_features_in_ is None:
             raise RuntimeError("Encoder not fitted")
         x_arr = np.asarray(x)
@@ -476,15 +480,24 @@ class MissingAwareOneHotEncoder(PreprocessorState):
         )
 
     def fit_transform(
-        self, x: InputArray, y: object = None, *, mask: Mask | None = None
+        self, x: object, y: object = None, *, mask: Mask | None = None
     ) -> InputArray | sp.csr_matrix:
         return self.fit(x, y, mask=mask).transform(x, mask)
 
-    def inverse_transform(self, z: InputArray, mask: Mask | None = None) -> InputArray:
+    def inverse_transform(self, z: object, mask: Mask | None = None) -> InputArray:
         self._check_fitted()
+        z = cast(
+            "InputArray",
+            self._validate_inverse(
+                z,
+                mask,
+                width=sum(self._output_widths),
+                mask_widths=self._output_widths,
+            ),
+        )
         if self.n_features_in_ is None:
             raise RuntimeError("Encoder not fitted")
-        z_arr: EncodedArray = np.asarray(z, dtype=self.dtype)
+        z_arr = cast("EncodedArray", np.asarray(z))
         obs_mask = None
         if mask is not None:
             obs_mask = np.asarray(mask, dtype=bool)
@@ -497,7 +510,9 @@ class MissingAwareOneHotEncoder(PreprocessorState):
             if n_cats == 0:
                 out_cols.append(np.full(z_arr.shape[0], np.nan))
                 continue
-            block = z_arr[:, col_start : col_start + width].copy()
+            block: EncodedArray = np.array(
+                z_arr[:, col_start : col_start + width], dtype=self.dtype, copy=True
+            )
             if self.block_weights_ is not None:
                 block /= self.block_weights_[j]
             if self.mean_center and self.column_means_ is not None:
@@ -564,36 +579,39 @@ class _BaseScaler(PreprocessorState):
     n_features_in_: int | None
 
     def fit(
-        self, x: ArrayLike, y: object = None, *, mask: Mask | None = None
+        self, x: object, y: object = None, *, mask: Mask | None = None
     ) -> _BaseScaler:
         raise NotImplementedError
 
     def transform(
-        self, x: ArrayLike, mask: Mask | None = None
+        self, x: object, mask: Mask | None = None
     ) -> Float64Array | sp.csr_matrix:
         raise NotImplementedError
 
     def inverse_transform(
-        self, z: ArrayLike, mask: Mask | None = None
+        self, z: object, mask: Mask | None = None
     ) -> Float64Array | sp.csr_matrix:
         raise NotImplementedError
 
     def fit_transform(
-        self, x: ArrayLike, y: object = None, *, mask: Mask | None = None
+        self, x: object, y: object = None, *, mask: Mask | None = None
     ) -> Float64Array | sp.csr_matrix:
         return self.fit(x, y, mask=mask).transform(x, mask)
 
 
 class MissingAwareSparseOneHotEncoder(PreprocessorState):
-    """Sparse one-hot encoder for categorical columns.
+    """Encode numeric categorical columns into sparse indicator blocks.
 
-    Assumptions:
-        - Input is sparse (CSR/CSC) with one column.
-        - Observed entries are stored; missing entries are absent.
-        - Categories must be numeric to round-trip through sparse matrices.
-        - ``mean_center`` adjusts stored values per category without
-          densifying.
+    CSR/CSC/COO input stores observations explicitly, including zeros; absent
+    entries and stored NaNs are missing. Dense input treats every non-NaN
+    value as observed, including zero. Each input column has its own sorted
+    category block, with no reference drop. ``categories_`` retains the flat
+    output-column category list; ``feature_groups_`` maps each output column
+    to its input variable. Missing/ignored unknown values have no stored
+    indicator. Centering adjusts stored indicators without densifying.
     """
+
+    _accept_sparse = True
 
     categories_: list[float]
     feature_names_out_: list[str]
@@ -614,118 +632,115 @@ class MissingAwareSparseOneHotEncoder(PreprocessorState):
         self.mean_center = mean_center
         self.dtype = dtype
 
+    @staticmethod
+    def _observed_csr(x: ArrayLike) -> sp.csr_matrix:
+        if sp.issparse(x):
+            return _to_csr(x)
+        values = np.asarray(x, dtype=float)
+        rows, columns = np.nonzero(~np.isnan(values))
+        return sp.csr_matrix(
+            (values[rows, columns], (rows, columns)), shape=values.shape
+        )
+
     def fit(
         self,
-        x: sp.spmatrix,
+        x: object,
         y: object = None,  # noqa: ARG002 - unsupervised transformer protocol
         *,
         mask: Mask | None = None,
     ) -> MissingAwareSparseOneHotEncoder:
         with self._fitting():
+            x = self._validate_input(x, mask, reset=True)
             if mask is not None:
                 msg = "mask must be None for sparse one-hot encoder"
                 raise ValueError(msg)
-            x_csr = _to_csr(x)
-            if x_csr.shape[1] != 1:
-                msg = "sparse one-hot encoder expects a single column"
+            if self.handle_unknown not in {"ignore", "raise"}:
+                msg = "handle_unknown must be 'ignore' or 'raise'"
                 raise ValueError(msg)
-
-            if x_csr.data.size == 0:
-                self.categories_ = []
-                self.feature_names_out_ = []
-                self.column_means_ = np.array([], dtype=self.dtype)
-                self.n_features_in_ = 1
-                self._output_width = 0
-                self.feature_groups_ = np.zeros(0, dtype=int)
-                self.feature_kinds_ = ["categorical"]
-                return self
-
-            # Require numeric categories to round-trip through sparse matrices.
-            cats = np.unique(np.asarray(x_csr.data, dtype=float))
-            self.categories_ = [float(c) for c in cats.tolist()]
-            self.feature_names_out_ = [f"col0_{c}" for c in self.categories_]
+            x_csc = self._observed_csr(x).tocsc()
+            self.categories_ = []
+            self.feature_names_out_ = []
+            widths = []
+            means = []
+            for j in range(x_csc.shape[1]):
+                values = x_csc.data[x_csc.indptr[j] : x_csc.indptr[j + 1]]
+                cats, counts = np.unique(
+                    np.asarray(values, dtype=float), return_counts=True
+                )
+                categories = [float(c) for c in cats.tolist()]
+                self.categories_.extend(categories)
+                self.feature_names_out_.extend(f"col{j}_{c}" for c in categories)
+                widths.append(len(categories))
+                means.extend((counts / float(x_csc.shape[0])).tolist())
+            self.column_means_ = np.asarray(means, dtype=self.dtype)
+            self.n_features_in_ = x_csc.shape[1]
             self._output_width = len(self.categories_)
-
-            n_rows = x_csr.shape[0]
-            counts = np.zeros(len(self.categories_), dtype=float)
-            cat_to_idx = {cat: idx for idx, cat in enumerate(self.categories_)}
-            for val in x_csr.data:
-                counts[cat_to_idx[float(val)]] += 1.0
-            means_arr: InputArray = (counts / float(max(n_rows, 1))).astype(
-                self.dtype, copy=False
-            )
-            self.column_means_ = means_arr
-            self.n_features_in_ = 1
-            self.feature_groups_ = np.zeros(self._output_width, dtype=int)
-            self.feature_kinds_ = ["categorical"]
+            self.feature_groups_ = np.repeat(np.arange(self.n_features_in_), widths)
+            self.feature_kinds_ = ["categorical"] * self.n_features_in_
             return self
 
-    def transform(self, x: sp.spmatrix, mask: Mask | None = None) -> sp.csr_matrix:
+    def transform(self, x: object, mask: Mask | None = None) -> sp.csr_matrix:
         self._check_fitted()
-        if self.n_features_in_ is None:
-            raise RuntimeError("Encoder not fitted")
+        x = self._validate_input(x, mask, reset=False)
         if mask is not None:
             msg = "mask must be None for sparse one-hot encoder"
             raise ValueError(msg)
-        x_csr = _to_csr(x)
-        if x_csr.shape[1] != 1:
-            msg = "sparse one-hot encoder expects a single column"
-            raise ValueError(msg)
+        x_csr = self._observed_csr(x)
+        return self._transform_multicat_sparse(x_csr, x_csr.shape[0])
 
-        n_rows = x_csr.shape[0]
-        n_cats = len(self.categories_)
-        if n_cats == 0:
-            return sp.csr_matrix((n_rows, 0), dtype=self.dtype)
-        return self._transform_multicat_sparse(x_csr, n_rows)
-
-    def inverse_transform(
-        self, z: sp.spmatrix, mask: Mask | None = None
+    def fit_transform(
+        self, x: object, y: object = None, *, mask: Mask | None = None
     ) -> sp.csr_matrix:
+        return self.fit(x, y, mask=mask).transform(x, mask=mask)
+
+    def inverse_transform(self, z: object, mask: Mask | None = None) -> sp.csr_matrix:
         self._check_fitted()
-        if self.n_features_in_ is None:
-            raise RuntimeError("Encoder not fitted")
+        z = self._validate_inverse(z, mask, width=len(self.categories_))
         if mask is not None:
             msg = "mask must be None for sparse one-hot encoder"
             raise ValueError(msg)
         z_csr = _to_csr(z)
-        n_rows, n_cols = z_csr.shape
-        expected_width = len(self.categories_)
-        if n_cols != expected_width:
-            msg = "Input width must match fitted categories"
-            raise ValueError(msg)
-        return self._inverse_multicat_sparse(z_csr, n_rows)
+        return self._inverse_multicat_sparse(z_csr, z_csr.shape[0])
 
     def _transform_multicat_sparse(
         self, x_csr: sp.csr_matrix, n_rows: int
     ) -> sp.csr_matrix:
+        if self.feature_groups_ is None or self.n_features_in_ is None:
+            raise RuntimeError("Encoder not fitted")
+        widths = np.bincount(self.feature_groups_, minlength=self.n_features_in_)
+        offsets = np.concatenate(([0], np.cumsum(widths)))
+        lookups = [
+            {cat: start + k for k, cat in enumerate(self.categories_[start:stop])}
+            for start, stop in pairwise(offsets)
+        ]
         rows: list[int] = []
         cols: list[int] = []
-        data: list[float] = []
-        cat_to_idx = {cat: idx for idx, cat in enumerate(self.categories_)}
-        coo = x_csr.tocoo()
-        for row, val in zip(coo.row, np.asarray(coo.data, dtype=float), strict=False):
-            cat_idx = cat_to_idx.get(val, -1)
+        coo = x_csr.tocoo(copy=False)
+        for row, column, val in zip(coo.row, coo.col, coo.data, strict=True):
+            cat_idx = lookups[column].get(float(val), -1)
             if cat_idx < 0:
                 if self.handle_unknown == "raise":
-                    msg = f"Unknown category {val!r} in sparse one-hot encoder"
+                    msg = f"Unknown category {val!r} in sparse column {column}"
                     raise ValueError(msg)
                 continue
             rows.append(int(row))
-            cols.append(cat_idx)
-            data.append(1.0)
-
+            cols.append(int(cat_idx))
         out: sp.csr_matrix = sp.csr_matrix(
-            (np.array(data, dtype=self.dtype), (rows, cols)),
+            (np.ones(len(rows), dtype=self.dtype), (rows, cols)),
             shape=(n_rows, len(self.categories_)),
         )
-        if self.mean_center and self.column_means_ is not None and out.data.size > 0:
+        if self.mean_center and self.column_means_ is not None and out.data.size:
             out.data -= self.column_means_[out.indices]
         return out
 
     def _inverse_binary_sparse(
         self, z_csr: sp.csr_matrix, n_rows: int
     ) -> sp.csr_matrix:
-        means = self.column_means_ if self.mean_center else None
+        means = (
+            cast("EncodedArray | None", self.column_means_)
+            if self.mean_center
+            else None
+        )
         data_out: list[float] = []
         row_idx_out: list[int] = []
         for row in range(n_rows):
@@ -751,30 +766,40 @@ class MissingAwareSparseOneHotEncoder(PreprocessorState):
     def _inverse_multicat_sparse(
         self, z_csr: sp.csr_matrix, n_rows: int
     ) -> sp.csr_matrix:
-        means = self.column_means_ if self.mean_center else None
+        if self.feature_groups_ is None or self.n_features_in_ is None:
+            raise RuntimeError("Encoder not fitted")
+        means = (
+            cast("EncodedArray | None", self.column_means_)
+            if self.mean_center
+            else None
+        )
         data_out: list[float] = []
         row_idx_out: list[int] = []
+        col_idx_out: list[int] = []
         for row in range(n_rows):
             start, end = z_csr.indptr[row], z_csr.indptr[row + 1]
-            if end <= start:
-                continue  # missing row -> no stored entry
-            row_indices = z_csr.indices[start:end]
-            row_data = z_csr.data[start:end].copy()
+            indices = z_csr.indices[start:end]
+            if not indices.size:
+                continue
+            values: EncodedArray = np.array(
+                z_csr.data[start:end], dtype=self.dtype, copy=True
+            )
             if means is not None:
-                row_data += means[row_indices]
-            max_pos = int(np.argmax(row_data))
-            cat_idx = int(row_indices[max_pos])
-            cat_val = self.categories_[cat_idx]
-            row_idx_out.append(row)
-            data_out.append(cat_val)
-
-        if not data_out:
-            return sp.csr_matrix((n_rows, 1), dtype=self.dtype)
-
-        cols_out = np.zeros(len(data_out), dtype=int)
+                values += means[indices]
+            groups = self.feature_groups_[indices]
+            boundaries = np.concatenate((
+                [0],
+                np.flatnonzero(np.diff(groups)) + 1,
+                [len(groups)],
+            ))
+            for first, last in pairwise(boundaries):
+                chosen = first + int(np.argmax(values[first:last]))
+                row_idx_out.append(row)
+                col_idx_out.append(int(groups[first]))
+                data_out.append(self.categories_[indices[chosen]])
         return sp.csr_matrix(
-            (np.array(data_out, dtype=self.dtype), (np.array(row_idx_out), cols_out)),
-            shape=(n_rows, 1),
+            (np.asarray(data_out, dtype=self.dtype), (row_idx_out, col_idx_out)),
+            shape=(n_rows, self.n_features_in_),
         )
 
 
@@ -787,6 +812,8 @@ class MissingAwareStandardScaler(_BaseScaler):
     unit denominator; wholly missing columns retain NaN moments.
     """
 
+    _accept_sparse = True
+
     mean_: Float64Array | None
     scale_: Float64Array | None
     var_: Float64Array | None
@@ -796,12 +823,13 @@ class MissingAwareStandardScaler(_BaseScaler):
 
     def fit(
         self,
-        x: InputArray | sp.spmatrix,
+        x: object,
         y: object = None,  # noqa: ARG002 - unsupervised transformer protocol
         *,
         mask: Mask | None = None,
     ) -> MissingAwareStandardScaler:
         with self._fitting():
+            x = self._validate_input(x, mask, reset=True)
             if _is_sparse(x):
                 x_csc = _to_csc(x)
                 self.n_features_in_ = x_csc.shape[1]
@@ -831,9 +859,10 @@ class MissingAwareStandardScaler(_BaseScaler):
             return self
 
     def transform(
-        self, x: InputArray | sp.spmatrix, mask: Mask | None = None
+        self, x: object, mask: Mask | None = None
     ) -> Float64Array | sp.csr_matrix:
         self._check_fitted()
+        x = self._validate_input(x, mask, reset=False)
         if self.mean_ is None or self.scale_ is None:
             raise RuntimeError("Scaler not fitted")
         if _is_sparse(x):
@@ -852,9 +881,10 @@ class MissingAwareStandardScaler(_BaseScaler):
         return z
 
     def inverse_transform(
-        self, z: InputArray | sp.spmatrix, mask: Mask | None = None
+        self, z: object, mask: Mask | None = None
     ) -> Float64Array | sp.csr_matrix:
         self._check_fitted()
+        z = self._validate_inverse(z, mask, width=cast("int", self.n_features_in_))
         if self.mean_ is None or self.scale_ is None:
             raise RuntimeError("Scaler not fitted")
         if _is_sparse(z):
@@ -879,6 +909,8 @@ class MissingAwareMinMaxScaler(_BaseScaler):
     columns retain NaN extrema.
     """
 
+    _accept_sparse = True
+
     data_min_: Float64Array | None
     data_max_: Float64Array | None
     data_range_: Float64Array | None
@@ -888,12 +920,13 @@ class MissingAwareMinMaxScaler(_BaseScaler):
 
     def fit(
         self,
-        x: InputArray | sp.spmatrix,
+        x: object,
         y: object = None,  # noqa: ARG002 - unsupervised transformer protocol
         *,
         mask: Mask | None = None,
     ) -> MissingAwareMinMaxScaler:
         with self._fitting():
+            x = self._validate_input(x, mask, reset=True)
             if _is_sparse(x):
                 x_csc = _to_csc(x)
                 self.n_features_in_ = x_csc.shape[1]
@@ -924,9 +957,10 @@ class MissingAwareMinMaxScaler(_BaseScaler):
             return self
 
     def transform(
-        self, x: InputArray | sp.spmatrix, mask: Mask | None = None
+        self, x: object, mask: Mask | None = None
     ) -> Float64Array | sp.csr_matrix:
         self._check_fitted()
+        x = self._validate_input(x, mask, reset=False)
         if self.data_min_ is None or self.data_range_ is None:
             raise RuntimeError("Scaler not fitted")
         if _is_sparse(x):
@@ -945,9 +979,10 @@ class MissingAwareMinMaxScaler(_BaseScaler):
         return z
 
     def inverse_transform(
-        self, z: InputArray | sp.spmatrix, mask: Mask | None = None
+        self, z: object, mask: Mask | None = None
     ) -> Float64Array | sp.csr_matrix:
         self._check_fitted()
+        z = self._validate_inverse(z, mask, width=cast("int", self.n_features_in_))
         if self.data_min_ is None or self.data_range_ is None:
             raise RuntimeError("Scaler not fitted")
         if _is_sparse(z):
@@ -986,6 +1021,8 @@ class MissingAwareOrdinalEncoder(PreprocessorState):
     ``feature_kinds_`` is ``"ordinal"`` for every column.
     """
 
+    _numeric_input = False
+
     levels_: list[list[object]]
     feature_names_out_: list[str]
     feature_groups_: IndexArray | None
@@ -1022,12 +1059,13 @@ class MissingAwareOrdinalEncoder(PreprocessorState):
 
     def fit(
         self,
-        x: InputArray,
+        x: object,
         y: object = None,  # noqa: ARG002 - unsupervised transformer protocol
         *,
         mask: Mask | None = None,
     ) -> MissingAwareOrdinalEncoder:
         with self._fitting():
+            x = cast("InputArray", self._validate_input(x, mask, reset=True))
             if self.scaler not in {"standard", "minmax"}:
                 msg = f"scaler must be 'standard' or 'minmax', got {self.scaler!r}"
                 raise ValueError(msg)
@@ -1067,8 +1105,9 @@ class MissingAwareOrdinalEncoder(PreprocessorState):
             self.feature_kinds_ = ["ordinal"] * n_features
             return self
 
-    def transform(self, x: InputArray, mask: Mask | None = None) -> Float64Array:
+    def transform(self, x: object, mask: Mask | None = None) -> Float64Array:
         self._check_fitted()
+        x = cast("InputArray", self._validate_input(x, mask, reset=False))
         if self._scaler is None:
             raise RuntimeError("Encoder not fitted")
         x_arr = np.asarray(x)
@@ -1076,12 +1115,16 @@ class MissingAwareOrdinalEncoder(PreprocessorState):
         return np.asarray(self._scaler.transform(scores, mask=known))
 
     def fit_transform(
-        self, x: InputArray, y: object = None, *, mask: Mask | None = None
+        self, x: object, y: object = None, *, mask: Mask | None = None
     ) -> Float64Array:
         return self.fit(x, y, mask=mask).transform(x, mask)
 
-    def inverse_transform(self, z: InputArray, mask: Mask | None = None) -> ObjectArray:
+    def inverse_transform(self, z: object, mask: Mask | None = None) -> ObjectArray:
         self._check_fitted()
+        z = cast(
+            "InputArray",
+            self._validate_inverse(z, mask, width=cast("int", self.n_features_in_)),
+        )
         if self._scaler is None:
             raise RuntimeError("Encoder not fitted")
         z_arr = np.asarray(z, dtype=float)
@@ -1146,6 +1189,9 @@ class AutoEncoder(PreprocessorState):
     ``column_levels`` declares external nominal vocabularies or ordinal level
     orders; leave continuous columns and training-inferred vocabularies ``None``.
     """
+
+    _numeric_input = False
+    _accept_sparse = True
 
     n_features_in_: int | None
     feature_names_out_: list[str]
@@ -1217,12 +1263,13 @@ class AutoEncoder(PreprocessorState):
 
     def fit(  # noqa: PLR0915 - routing stages share one fit transaction
         self,
-        x: InputArray | sp.spmatrix,
+        x: object,
         y: object = None,  # noqa: ARG002 - unsupervised transformer protocol
         *,
         mask: Mask | None = None,
     ) -> AutoEncoder:
         with self._fitting():
+            x = self._validate_input(x, mask, reset=True)
             is_sparse = _is_sparse(x)
             self.encoding_schema_ = None
             if self.column_levels is not None and (
@@ -1401,9 +1448,10 @@ class AutoEncoder(PreprocessorState):
         self.feature_kinds_ = [plan.kind for plan in self._plan]
 
     def transform(
-        self, x: InputArray | sp.spmatrix, mask: Mask | None = None
+        self, x: object, mask: Mask | None = None
     ) -> InputArray | sp.spmatrix:
         self._check_fitted()
+        x = self._validate_input(x, mask, reset=False)
         if self.n_features_in_ is None:
             raise RuntimeError("AutoEncoder not fitted")
         is_sparse = _is_sparse(x)
@@ -1435,14 +1483,20 @@ class AutoEncoder(PreprocessorState):
         return np.concatenate(tuple(parts_dense), axis=1)
 
     def fit_transform(
-        self, x: InputArray | sp.spmatrix, y: object = None, *, mask: Mask | None = None
+        self, x: object, y: object = None, *, mask: Mask | None = None
     ) -> InputArray | sp.spmatrix:
         return self.fit(x, y, mask=mask).transform(x, mask)
 
     def inverse_transform(
-        self, z: InputArray | sp.spmatrix, mask: Mask | None = None
+        self, z: object, mask: Mask | None = None
     ) -> InputArray | sp.csr_matrix:
         self._check_fitted()
+        z = self._validate_inverse(
+            z,
+            mask,
+            width=sum(plan.slice_end - plan.slice_start for plan in self._plan),
+            mask_widths=[plan.slice_end - plan.slice_start for plan in self._plan],
+        )
         if self.n_features_in_ is None:
             raise RuntimeError("AutoEncoder not fitted")
         if _is_sparse(z):
@@ -1476,19 +1530,14 @@ class AutoEncoder(PreprocessorState):
             return cast("sp.csr_matrix", sp.hstack(col_blocks, format="csr"))
 
         z_arr = np.asarray(z)
-        if mask is not None:
-            validate_mask_compatibility(
-                z_arr,
-                mask,
-                allow_sparse_mask_for_dense=False,
-                allow_dense_mask_for_sparse=False,
-                context="autoencoder.inverse_transform",
-            )
         out_cols: list[InputArray] = []
-        for plan in self._plan:
+        for j, plan in enumerate(self._plan):
             block = z_arr[:, plan.slice_start : plan.slice_end]
+            inverse_mask = (
+                None if mask is None else np.asarray(mask, dtype=bool)[:, [j]]
+            )
             inv_dense = cast("DenseColumnEncoder", plan.encoder).inverse_transform(
-                block, mask=None
+                block, mask=inverse_mask
             )
             out_cols.append(cast("InputArray", inv_dense)[:, 0])
         return np.column_stack(out_cols)
@@ -1516,22 +1565,24 @@ class MissingAwareLogTransformer(PreprocessorState):
 
     def fit(
         self,
-        x: InputArray,
+        x: object,
         y: object = None,  # noqa: ARG002 - unsupervised transformer protocol
         *,
-        mask: Mask | None = None,  # noqa: ARG002
+        mask: Mask | None = None,
     ) -> MissingAwareLogTransformer:
         """Record input width (stateless transform)."""
         with self._fitting():
+            x = cast("InputArray", self._validate_input(x, mask, reset=True))
             if self.offset <= 0:
                 msg = "offset must be positive"
                 raise ValueError(msg)
             self.n_features_in_ = np.asarray(x).shape[1]
             return self
 
-    def transform(self, x: InputArray, mask: Mask | None = None) -> Float64Array:
+    def transform(self, x: object, mask: Mask | None = None) -> Float64Array:
         """Apply ``log(x + offset)`` to observed entries."""
         self._check_fitted()
+        x = cast("InputArray", self._validate_input(x, mask, reset=False))
         if self.n_features_in_ is None:
             raise RuntimeError("Transformer not fitted")
         x_arr = np.asarray(x, dtype=float)
@@ -1541,15 +1592,17 @@ class MissingAwareLogTransformer(PreprocessorState):
         return out
 
     def fit_transform(
-        self, x: InputArray, y: object = None, *, mask: Mask | None = None
+        self, x: object, y: object = None, *, mask: Mask | None = None
     ) -> Float64Array:
         return self.fit(x, y, mask=mask).transform(x, mask)
 
-    def inverse_transform(
-        self, z: InputArray, mask: Mask | None = None
-    ) -> Float64Array:
+    def inverse_transform(self, z: object, mask: Mask | None = None) -> Float64Array:
         """Reverse via ``exp(z) - offset``."""
         self._check_fitted()
+        z = cast(
+            "InputArray",
+            self._validate_inverse(z, mask, width=cast("int", self.n_features_in_)),
+        )
         if self.n_features_in_ is None:
             raise RuntimeError("Transformer not fitted")
         z_arr = np.asarray(z, dtype=float)
@@ -1590,13 +1643,14 @@ class MissingAwareWinsorizer(PreprocessorState):
 
     def fit(
         self,
-        x: InputArray,
+        x: object,
         y: object = None,  # noqa: ARG002 - unsupervised transformer protocol
         *,
         mask: Mask | None = None,
     ) -> MissingAwareWinsorizer:
         """Compute per-column clipping bounds from observed values."""
         with self._fitting():
+            x = cast("InputArray", self._validate_input(x, mask, reset=True))
             if not 0.0 <= self.lower_quantile < self.upper_quantile <= 1.0:
                 msg = "quantiles must satisfy 0 <= lower < upper <= 1"
                 raise ValueError(msg)
@@ -1616,9 +1670,10 @@ class MissingAwareWinsorizer(PreprocessorState):
             self.upper_ = hi
             return self
 
-    def transform(self, x: InputArray, mask: Mask | None = None) -> Float64Array:
+    def transform(self, x: object, mask: Mask | None = None) -> Float64Array:
         """Clip observed entries to fitted bounds."""
         self._check_fitted()
+        x = cast("InputArray", self._validate_input(x, mask, reset=False))
         if self.lower_ is None or self.upper_ is None:
             raise RuntimeError("Transformer not fitted")
         x_arr = np.asarray(x, dtype=float)
@@ -1630,20 +1685,24 @@ class MissingAwareWinsorizer(PreprocessorState):
         return out
 
     def fit_transform(
-        self, x: InputArray, y: object = None, *, mask: Mask | None = None
+        self, x: object, y: object = None, *, mask: Mask | None = None
     ) -> Float64Array:
         return self.fit(x, y, mask=mask).transform(x, mask)
 
     def inverse_transform(
         self,
-        z: InputArray,
-        mask: Mask | None = None,  # noqa: ARG002
+        z: object,
+        mask: Mask | None = None,
     ) -> Float64Array:
         """No-op: winsorization is lossy.
 
         Returns a copy of the input unchanged.
         """
         self._check_fitted()
+        z = cast(
+            "InputArray",
+            self._validate_inverse(z, mask, width=cast("int", self.n_features_in_)),
+        )
         return np.asarray(z, dtype=float).copy()
 
 
@@ -1723,13 +1782,14 @@ class MissingAwarePowerTransformer(PreprocessorState):
 
     def fit(
         self,
-        x: InputArray,
+        x: object,
         y: object = None,  # noqa: ARG002 - unsupervised transformer protocol
         *,
         mask: Mask | None = None,
     ) -> MissingAwarePowerTransformer:
         """Estimate per-column Yeo-Johnson lambda by profile MLE."""
         with self._fitting():
+            x = cast("InputArray", self._validate_input(x, mask, reset=True))
             from scipy.optimize import minimize_scalar  # noqa: PLC0415
 
             x_arr = np.asarray(x, dtype=float)
@@ -1771,9 +1831,10 @@ class MissingAwarePowerTransformer(PreprocessorState):
             out[col_obs, j] = self._yj_transform(x[col_obs, j], self.lambdas_[j])
         return out
 
-    def transform(self, x: InputArray, mask: Mask | None = None) -> Float64Array:
+    def transform(self, x: object, mask: Mask | None = None) -> Float64Array:
         """Apply Yeo-Johnson transform and optional standardisation."""
         self._check_fitted()
+        x = cast("InputArray", self._validate_input(x, mask, reset=False))
         if self.lambdas_ is None:
             raise RuntimeError("Transformer not fitted")
         x_arr = np.asarray(x, dtype=float)
@@ -1785,15 +1846,17 @@ class MissingAwarePowerTransformer(PreprocessorState):
         return out
 
     def fit_transform(
-        self, x: InputArray, y: object = None, *, mask: Mask | None = None
+        self, x: object, y: object = None, *, mask: Mask | None = None
     ) -> Float64Array:
         return self.fit(x, y, mask=mask).transform(x, mask)
 
-    def inverse_transform(
-        self, z: InputArray, mask: Mask | None = None
-    ) -> Float64Array:
+    def inverse_transform(self, z: object, mask: Mask | None = None) -> Float64Array:
         """Reverse transform: un-standardise then invert Yeo-Johnson."""
         self._check_fitted()
+        z = cast(
+            "InputArray",
+            self._validate_inverse(z, mask, width=cast("int", self.n_features_in_)),
+        )
         if self.lambdas_ is None:
             raise RuntimeError("Transformer not fitted")
         z_arr = np.asarray(z, dtype=float)
