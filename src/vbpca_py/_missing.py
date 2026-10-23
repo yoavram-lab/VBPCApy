@@ -16,6 +16,7 @@ import numpy as np
 import scipy.sparse as sp
 
 from ._types import Float64Array, IndexArray, InputArray, InputMask, InputMatrix
+from .options import CompatMode
 
 logger = logging.getLogger(__name__)
 
@@ -115,6 +116,8 @@ def _xprobe_sparse(
     fraction: float,
     rng: np.random.Generator,
     mask: InputMask | None = None,
+    *,
+    compat_mode: CompatMode = CompatMode.MODERN,
 ) -> tuple[sp.csr_matrix, sp.csr_matrix]:
     """Hold out probe entries from a sparse matrix.
 
@@ -125,6 +128,8 @@ def _xprobe_sparse(
         ValueError: If the mask shape is invalid or has no observed entries.
     """
     x_csr = sp.csr_matrix(x, copy=True)
+    if compat_mode == CompatMode.MODERN:
+        x_csr.sum_duplicates()
     if mask is None:
         observed = x_csr.copy()
         observed.data = np.ones(observed.nnz, dtype=bool)
@@ -143,6 +148,12 @@ def _xprobe_sparse(
         raise ValueError(msg)
 
     rows, cols = observed.nonzero()
+    if compat_mode == CompatMode.MODERN and len(rows):
+        # A mask can request absent zeros, but stored NaNs remain missing.
+        observed.sum_duplicates()
+        rows, cols = observed.nonzero()
+        present = ~np.isnan(np.asarray(x_csr[rows, cols]).ravel())
+        rows, cols = rows[present], cols[present]
     n_observed = len(rows)
     if n_observed == 0:
         msg = "cannot create a probe set from data with no observed entries"
@@ -150,18 +161,30 @@ def _xprobe_sparse(
     n_probe = min(n_observed, max(1, round(n_observed * fraction)))
     probe_idx = rng.choice(n_observed, size=n_probe, replace=False)
 
-    sp_rows = rows[probe_idx]
-    sp_cols = cols[probe_idx]
-    sp_vals = np.array(x_csr[sp_rows, sp_cols]).ravel()
+    rows, cols = rows[probe_idx], cols[probe_idx]
+    sp_vals = np.array(x_csr[rows, cols]).ravel()
 
     # Construct directly from coordinates so explicitly observed zero values
     # remain structurally present in the sparse probe matrix.
-    xprobe = sp.csr_matrix((sp_vals, (sp_rows, sp_cols)), shape=x_csr.shape)
+    xprobe = sp.csr_matrix((sp_vals, (rows, cols)), shape=x_csr.shape)
 
-    probe_indicator = xprobe.copy()
-    probe_indicator.data = np.ones(probe_indicator.nnz, dtype=float)
-    x_csr -= x_csr.multiply(probe_indicator)
-    x_csr.eliminate_zeros()
+    if compat_mode == CompatMode.MODERN:
+        # Import locally because solver preparation also imports this module.
+        from ._full_update import _filter_csr_entries  # noqa: PLC0415
+
+        coordinates = x_csr.tocoo(copy=False)
+        probe_indicator = xprobe.copy()
+        probe_indicator.data = np.ones(probe_indicator.nnz, dtype=bool)
+        held_out = np.asarray(
+            probe_indicator[coordinates.row, coordinates.col], dtype=bool
+        ).ravel()
+        x_csr = _filter_csr_entries(x_csr, ~held_out)
+    else:
+        # Retain historical subtraction/zero removal for frozen reproductions.
+        probe_indicator = xprobe.copy()
+        probe_indicator.data = np.ones(probe_indicator.nnz, dtype=float)
+        x_csr -= x_csr.multiply(probe_indicator)
+        x_csr.eliminate_zeros()
     x_csr.sort_indices()
     return x_csr, xprobe
 
@@ -215,17 +238,18 @@ def make_xprobe_mask(
     rng: np.random.Generator | None = None,
     *,
     mask: InputMask | None = None,
+    compat_mode: str | CompatMode = CompatMode.MODERN,
 ) -> tuple[Float64Array | sp.csr_matrix, Float64Array | sp.csr_matrix]:
     """Hold out a fraction of observed entries as probe data.
 
     Selects a random subset of observed entries (non-NaN for dense,
-    structurally non-zero for sparse) and returns a modified data matrix
+    stored non-NaN entries for sparse) and returns a modified data matrix
     with those entries masked out plus a probe matrix containing only the
     held-out values.
 
     Args:
-        x: Data matrix of shape ``(n_features, n_samples)``.
-            Dense or sparse (CSR).
+        x: Two-dimensional dense or sparse data. The returned matrices keep
+            the same orientation; use the layout required by the consuming API.
         fraction: Fraction of observed entries to hold out (default 0.10).
             Must be in ``(0, 1)``.
         rng: NumPy random generator.  If ``None``, a new default generator
@@ -233,6 +257,12 @@ def make_xprobe_mask(
         mask: Optional observation mask. When supplied, probe entries are
             sampled only from positions marked observed, including explicitly
             stored zero values in sparse data.
+            This restricts probe sampling; unselected entries outside the mask
+            remain in the returned training copy.
+        compat_mode: ``"modern"`` (default) preserves unselected stored zeros
+            and excludes sparse NaNs from sampling. ``"strict_legacy"`` retains
+            historical sparse sampling/subtraction, which can remove unselected
+            zeros and sample NaNs. Dense sampling is the same in both modes.
 
     Returns:
         x_masked: Copy of *x* with probe entries set to NaN (dense) or
@@ -242,8 +272,10 @@ def make_xprobe_mask(
             absent (sparse).
 
     Raises:
-        ValueError: If *fraction* is not in ``(0, 1)``.
-    """
+        ValueError: If *fraction* is not in ``(0, 1)``, the mode is unknown,
+            the mask is invalid, or there are no eligible observations.
+        TypeError: If the mode is not a string.
+    """  # noqa: DOC502 - TypeError is raised by CompatMode.parse.
     if not 0.0 < fraction < 1.0:
         msg = f"fraction must be in (0, 1), got {fraction}"
         raise ValueError(msg)
@@ -251,6 +283,8 @@ def make_xprobe_mask(
     if rng is None:
         rng = np.random.default_rng()
 
+    mode = CompatMode.parse(compat_mode)
+
     if sp.issparse(x):
-        return _xprobe_sparse(sp.csr_matrix(x), fraction, rng, mask)
+        return _xprobe_sparse(sp.csr_matrix(x), fraction, rng, mask, compat_mode=mode)
     return _xprobe_dense(np.asarray(x), fraction, rng, mask)

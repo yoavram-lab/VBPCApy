@@ -125,6 +125,12 @@ when zero is an observed value. Strict-legacy mode retains the historical
 normalization and probe handling. The modes can give different fitted results;
 record the choice with your analysis settings.
 
+Automatic probes on the modern legacy adapter retain all unselected stored
+zeros. The public `make_xprobe_mask` helper also defaults to modern splitting;
+pass `compat_mode="strict_legacy"` for its historical sparse subtraction.
+See the [probe policy comparison](../howto/compatibility-modes.md#split-automatic-probes-without-losing-observed-zeros)
+before reproducing an older helper-based workflow.
+
 ## Dense vs sparse comparison
 
 ```python

@@ -25,6 +25,9 @@ jobs:
           filters: |
             octave:
               - 'src/vbpca_py/_full_update.py'
+              - 'src/vbpca_py/_missing.py'
+              - 'src/vbpca_py/legacy.py'
+              - 'src/vbpca_py/_selection_core.py'
               - 'src/vbpca_py/_rotate.py'
               - 'src/vbpca_py/_remove_empty.py'
               - 'src/vbpca_py/_monitoring.py'
@@ -165,6 +168,7 @@ jobs:
           tests/test_native_sparse_validation.py
           tests/test_pipeline_example.py
           tests/test_modern_small_values.py
+          tests/test_sparse_probe_partition.py
 
   numerical-reference:
     runs-on: ubuntu-latest

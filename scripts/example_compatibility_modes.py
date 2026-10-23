@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 from scipy.sparse import csr_matrix
 
-from vbpca_py import VBPCA, PCAOptions
+from vbpca_py import VBPCA, PCAOptions, make_xprobe_mask
 from vbpca_py.legacy import VBPCA as LegacyVBPCA  # noqa: N811
 
 
@@ -44,6 +44,18 @@ def run_example():
     np.testing.assert_allclose(
         native.mean_, modern_sparse.mean_, rtol=1e-10, atol=1e-14
     )
+    probe_values = np.arange(9.0).reshape(3, 3)
+    probe_rows, probe_cols = np.indices(probe_values.shape)
+    probe_input = csr_matrix((
+        probe_values.ravel(),
+        (probe_rows.ravel(), probe_cols.ravel()),
+    ))
+    train, probe = make_xprobe_mask(probe_input, 0.1, np.random.default_rng(19))
+    strict_train, _ = make_xprobe_mask(
+        probe_input, 0.1, np.random.default_rng(19), compat_mode="strict_legacy"
+    )
+    np.testing.assert_equal((train.nnz, probe.nnz, strict_train.nnz), (8, 1, 7))
+    np.testing.assert_equal(train.data[0], 0)
     return {
         "native": native,
         "modern_legacy": modern_legacy,

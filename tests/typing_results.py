@@ -9,6 +9,20 @@ from vbpca_py._pca_full import pca_full
 from vbpca_py.estimators import VBPCA
 
 
+def check_probe_helper_types() -> None:
+    import scipy.sparse as sp
+
+    from vbpca_py import make_xprobe_mask
+    from vbpca_py.options import CompatMode
+
+    assert_type(
+        make_xprobe_mask(sp.csr_matrix((2, 2)), compat_mode=CompatMode.MODERN),
+        tuple[Float64Array | sp.csr_matrix, Float64Array | sp.csr_matrix],
+    )
+    make_xprobe_mask(np.ones((2, 2)), compat_mode="strict_legacy")
+    make_xprobe_mask(np.ones((2, 2)), compat_mode=123)  # type: ignore[arg-type]
+
+
 def check_selection_types() -> None:
     from vbpca_py import (
         CVConfig,

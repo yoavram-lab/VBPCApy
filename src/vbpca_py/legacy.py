@@ -32,7 +32,7 @@ from vbpca_py._selection_core import (
     select_n_components,
 )
 from vbpca_py.configuration import PCAOptions
-from vbpca_py.options import (  # noqa: TC001 - public runtime type-hint resolution
+from vbpca_py.options import (
     AccessorMode,
     Algorithm,
     BiasUpdateOrder,
@@ -387,6 +387,7 @@ class VBPCA(TypedEstimator):
                 fraction=self.xprobe_fraction,
                 rng=np.random.default_rng(self.random_state),
                 mask=mask,
+                compat_mode=options.compat_mode,
             )
             options = replace(options, xprobe=xprobe_gen)
 
@@ -424,12 +425,28 @@ class VBPCA(TypedEstimator):
                 if mask_csr.shape != x_sparse.shape:
                     msg = "mask must have the same shape as x"
                     raise ValueError(msg)
-                x_pattern = x_sparse.copy()
-                x_pattern.data = np.ones_like(x_pattern.data)
-                missing_pattern = mask_csr - mask_csr.multiply(x_pattern)
-                if missing_pattern.nnz:
-                    eps = np.finfo(float).eps
-                    x_sparse += missing_pattern.multiply(eps)
+                if options.compat_mode == CompatMode.MODERN:
+                    # Construct requested zeros directly: sparse addition can
+                    # erase unrelated stored zeros, including after a split.
+                    mask_csr = sp.csr_matrix(mask_csr, dtype=bool, copy=True)
+                    mask_csr.sum_duplicates()
+                    mask_csr.eliminate_zeros()
+                    rows, cols = mask_csr.nonzero()
+                    values = (
+                        np.asarray(x_sparse[rows, cols]).ravel()
+                        if len(rows)
+                        else np.empty(0, dtype=float)
+                    )
+                    x_sparse = sp.csr_matrix(
+                        (values, (rows, cols)), shape=x_sparse.shape
+                    )
+                else:
+                    x_pattern = x_sparse.copy()
+                    x_pattern.data = np.ones_like(x_pattern.data)
+                    missing_pattern = mask_csr - mask_csr.multiply(x_pattern)
+                    if missing_pattern.nnz:
+                        eps = np.finfo(float).eps
+                        x_sparse += missing_pattern.multiply(eps)
                 mask_param = mask_csr
             data_for_fit = x_sparse
         else:
