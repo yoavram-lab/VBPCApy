@@ -144,6 +144,11 @@ These behaviors use the
 
 ## Fitted encoding metadata
 
+For a complete fit/search/new-data/reconstruction workflow, see the
+[missing-aware Pipeline tutorial](../tutorials/missing-aware-pipeline.md).
+Its inverse uses the fitted model/encoder portion of the Pipeline; the leading
+masker cannot reconstruct excluded input values or an original observation mask.
+
 `schema.validate(n_features)` checks feature coverage and categorical decoding
 metadata. For a mixed schema, use
 `schema.validate(n_features, strict_numeric=True)` to also check numeric inverse

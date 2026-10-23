@@ -13,6 +13,11 @@ The development version is not a release announcement.
 
 ### Added
 
+- Complete the executed mixed-data Pipeline example with independent new rows,
+  inverse decoding through the fitted model/encoder portion, row validation,
+  GridSearchCV and default/pandas/Polars output. Document mask routing and
+  rowwise scoring; verify fold-specific scaling and reconstruction in input units.
+
 - Add `get_feature_names_out` and native sklearn pandas/Polars output wrapping
   for VBPCA and all ten preprocessing transformers. Preserve pandas indices,
   row order and zero-column dense outputs; refuse sparse table conversion

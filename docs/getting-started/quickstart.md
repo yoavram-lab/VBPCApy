@@ -65,6 +65,9 @@ assert sparse_model.transform(sparse).shape == (3, 1)
 A sparse constructor applied directly to a dense table can discard observed
 zeros. See [data conventions](../concepts/data-convention.md) and the
 [migration guide](../api/migration-05.md) for sparse masks, output budgets,
-rank zero, serialized artifacts and the temporarily feature-first cellwise
-selection helpers. Full preprocessing/Pipeline conformance remains tracked by
-#180; a width-changing encoder must not receive a stale raw mask downstream.
+rank zero and serialized artifacts. Public component-selection helpers also
+consume samples x features. The
+[complete mixed-data Pipeline example](../tutorials/missing-aware-pipeline.md)
+demonstrates raw-mask routing, row validation, GridSearchCV, named output,
+new-row projection and inverse reconstruction. A width-changing encoder must
+not receive a stale raw mask downstream.

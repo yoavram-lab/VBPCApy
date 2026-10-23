@@ -6,8 +6,7 @@ and fitted state through its native validation helpers. This follows the
 [scikit-learn estimator contract](https://scikit-learn.org/stable/developers/develop.html)
 and [`validate_data`](https://scikit-learn.org/stable/modules/generated/sklearn.utils.validation.validate_data.html).
 The package is still in unreleased 0.5 development. Native preprocessing,
-selection and sklearn composition are qualified; remaining complete examples,
-migration/release checks are tracked by #180.
+selection and sklearn composition use the contracts described here.
 
 | API | Data | Components | Joint training scores | Mean |
 | --- | --- | --- | --- | --- |
@@ -176,8 +175,9 @@ receive deterministic suffixes. In a mixed raw-data Pipeline using Polars for
 numerical outputs, keep the leading masker in pandas mode. Polars input nulls
 are missing observations. See the [preprocessing API](preprocessing.md) for the
 optional extras, configuration and supported dtype boundaries. Inverse and
-posterior-record output remain unchanged. The complete inverse-reconstruction
-example remains under #14.
+posterior-record output remain unchanged. The complete
+[Pipeline example](../tutorials/missing-aware-pipeline.md) demonstrates new-row
+projection and inverse reconstruction through the fitted model/encoder portion.
 
 ## Scoring and cellwise selection
 
