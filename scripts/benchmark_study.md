@@ -51,10 +51,11 @@ and prints the fold-specific numeric training statistics. The new path leaves
 the encoded-array API and locked 0.4.5 publication settings in place; adopting
 fold-local preprocessing is a separately registered methodology change.
 
-The `just bench-study-full`, `just bench-study-summary`, and
-`just bench-study-paper` sequence referenced in CONTRIBUTING.md has no recipes
-in the current justfile. Current benchmark recipes are listed by `just --list`;
-use the commands above for this scoring change.
+The former `bench-study-full`, `bench-study-summary` and `bench-study-paper`
+recipes are retired. CONTRIBUTING.md now points to supported checks and
+`just --list`; use the commands above for this scoring change. Bounded native
+gallery demonstrations use `just example`, `just example-sparse` and
+`just example-raw-cv`; these do not replace registered study protocols.
 
 For the 0.4.6 patch, [release validation](../docs/releases/0.4.6.md) adds the
 paired fixed-policy fitting check against 0.4.5. Both snapshots must use the

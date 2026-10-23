@@ -91,6 +91,7 @@ benchmark = [
     "seaborn>=0.13",
 ]
 docs = [
+    "mkdocs>=1.6,<2",
     "mkdocs-material>=9.5",
     "mkdocstrings[python]>=0.24",
     "pymdown-extensions>=10.0",
@@ -111,11 +112,12 @@ testpaths = ["tests"]
 addopts = """
     -ra
     --strict-markers
-    -m "not perf and not octave"
+    -m "not perf and not octave and not docs"
 """
 markers = [
     "perf: performance benchmarks (run explicitly with -m perf)",
     "octave: Octave/Matlab parity tests (run explicitly with -m octave)",
+    "docs: executable site checks requiring the docs extra (run with -m docs)",
 ]
 
 [tool.ruff.format]

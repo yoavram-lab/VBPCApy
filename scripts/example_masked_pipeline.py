@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import json
+from pathlib import Path
 
 import numpy as np
 from sklearn import config_context
@@ -115,11 +117,50 @@ def run_example(output="default"):
     }
 
 
+def export_gallery(result, output_dir):
+    """Render learned fold offsets and original-unit reconstruction summaries."""
+    import matplotlib.pyplot as plt
+
+    fitted = result["search"].best_estimator_
+    encoder = fitted.named_steps["encode"]
+    schema = encoder.encoding_schema_
+    schema.validate(len(encoder.get_feature_names_out()), strict_numeric=True)
+    offsets = [
+        fold.named_steps["encode"].encoding_schema_.variables[1].offset[0]
+        for fold in result["cv"]["estimator"]
+    ]
+    fig, ax = plt.subplots(figsize=(6, 3.5))
+    ax.bar(range(len(offsets)), offsets)
+    ax.set(
+        xlabel="Row-validation fold",
+        ylabel="Training-only size offset (input units)",
+        xticks=range(len(offsets)),
+        title="Preprocessing is fitted on each training split",
+    )
+    fig.tight_layout()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output_dir / "pipeline.png", dpi=130)
+    plt.close(fig)
+    summary = {
+        "training_shape": list(result["data"].shape),
+        "new_rows": len(result["new_data"]),
+        "encoded_features": encoder.get_feature_names_out().tolist(),
+        "schema_kinds": [v.kind for v in schema.variables],
+        "fold_training_offsets": offsets,
+        "selected_capacity": result["search"].best_params_["model__n_components"],
+        "decoded_size_input_units": result["reconstructed"][:, 1]
+        .astype(float)
+        .tolist(),
+    }
+    (output_dir / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--output", choices=["default", "pandas", "polars"], default="default"
     )
+    parser.add_argument("--output-dir", type=Path)
     args = parser.parse_args()
     result = run_example(args.output)
     fitted = result["search"].best_estimator_
@@ -132,6 +173,8 @@ def main() -> None:
     print("Reconstructed rows (region, size):")
     print(result["reconstructed"])
     print("Masked Pipeline, row CV, GridSearchCV and new-row projection passed")
+    if args.output_dir is not None:
+        export_gallery(result, args.output_dir)
 
 
 if __name__ == "__main__":

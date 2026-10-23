@@ -145,7 +145,8 @@ class EncodingSchema:
         """Check that metadata describes every encoded feature exactly once.
 
         Args:
-            n_features: Number of rows of the model's features-by-samples input.
+            n_features: Number of encoded features (columns in native
+                samples-by-features input).
             strict_numeric: Also require continuous and ordinal variables to
                 have exactly one column, one finite real scalar fitted offset
                 and a positive finite real scalar weight. The default checks

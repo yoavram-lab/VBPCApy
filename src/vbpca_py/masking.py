@@ -49,6 +49,20 @@ class ObservationMasker(PreprocessorState):
     Masked dense output owns its array; integer/Boolean input becomes float64
     and floating input retains its dtype. Sparse normalization uses storage
     proportional to input/mask entries and never densifies a sparse mask.
+
+    Examples:
+        >>> import numpy as np
+        >>> from vbpca_py import ObservationMasker
+        >>> raw = np.array([["west", 10.0], ["placeholder", 20.0]], dtype=object)
+        >>> mask = np.array([[True, True], [False, True]])
+        >>> observed = ObservationMasker().fit_transform(raw, mask=mask)
+        >>> bool(np.isnan(observed[1, 0])), raw[1, 0]
+        (True, 'placeholder')
+        >>> bool(np.shares_memory(raw, observed))
+        False
+
+        Supply the original-variable mask to this first Pipeline step. The
+        encoder and model then infer missingness in their own feature layout.
     """
 
     _numeric_input = False

@@ -286,8 +286,14 @@ qualifies default/pandas/Polars outputs. The mode comparison and executed
 migration source cover #19. Native raw sparse validation (#347) preserves
 observations before coalescing; modern dense explicit-mask preparation also
 preserves finite near-zero training/probe values (#350), while the historical
-strict-legacy epsilon policy is retained. Complete the remaining #25/#319
-gallery/docstring examples and #314 release qualification before the single
+strict-legacy epsilon policy is retained. Sparse automatic-probe correction
+#353 preserves unselected modern zeros and explicit strict-legacy reproduction.
+The #25/#319 gallery executes six bounded native scripts during strict site
+builds, with source-matched downloads, outputs, figures and candidate tables.
+Public docstring examples and actual quickstart/migration blocks execute from
+installed wheels on minimum/current sklearn; plotting and table dependencies
+are explicit. Source archives include the documentation build inputs. Final
+#314 qualification and release-note reconciliation remain before the single
 0.5 release. Frozen scientific registrations and study outcomes are not
 migrated by these engineering changes.
 

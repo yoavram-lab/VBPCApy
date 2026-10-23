@@ -38,13 +38,16 @@ plugins:
             members_order: source
             show_root_heading: true
             show_root_full_path: false
-            docstring_style: numpy
+            docstring_style: google
             merge_init_into_class: true
             show_signature_annotations: true
             separate_signature: true
 
 not_in_nav: |
   IMPLEMENTATION_PLAN.md
+
+hooks:
+  - scripts/docs_gallery_hook.py
 
 markdown_extensions:
   - admonition
@@ -88,6 +91,14 @@ nav:
     - Runtime & Threading: howto/runtime-tuning.md
     - Numerical Validation: howto/numerical-validation.md
     - Plotting: howto/plotting.md
+  - Example Gallery:
+    - Overview: gallery/index.md
+    - Missing Dense Observations: gallery/dense/index.md
+    - Sparse Observations: gallery/sparse/index.md
+    - Mixed-data Pipeline: gallery/pipeline/index.md
+    - Cost versus Probe RMS: gallery/selection/index.md
+    - Original-variable Cell Validation: gallery/raw-cv/index.md
+    - Plotting Utilities: gallery/plots/index.md
   - Concepts:
     - Algorithm Overview: concepts/algorithm.md
     - Data Convention: concepts/data-convention.md

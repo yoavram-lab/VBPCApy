@@ -189,6 +189,22 @@ If your changes affect the public API or usage:
 - Add examples if appropriate
 - Update the API reference section
 
+### Execute documentation
+
+`just docs` installs the documentation and plotting extras and executes all
+six bounded gallery scripts during the strict MkDocs build. `just docs-check`
+also executes public API doctests collected from their source, runs the actual
+quickstart/migration Python blocks and verifies rendered/downloaded source,
+result summaries and generated figures. `just docs-serve` uses the same hook.
+Generated gallery files stay in build storage; do not commit them.
+
+Run `uv run --extra dev --extra docs --extra plot pytest -q -m docs
+tests/test_documentation_examples.py` for site and failure-propagation checks.
+The dedicated CI matrix builds and installs a wheel, checks that runtime
+imports come from that installation, executes the source examples on sklearn
+1.8/current and tests the default/pandas/Polars Pipeline/GridSearchCV modes
+with their explicit optional dependencies.
+
 ### Benchmark and manuscript reproducibility updates
 
 If your changes affect benchmark methodology, model-selection behavior, runtime
@@ -196,10 +212,12 @@ controls, outputs, or paper figures/tables:
 
 - Update both `README.md` and `scripts/benchmark_study.md` in the same PR.
 - Keep `justfile` benchmark recipes and documentation in sync.
-- Document the exact reproducible command sequence:
-   - `just bench-study-full`
-   - `just bench-study-summary`
-   - `just bench-study-paper`
+- Document exact supported commands for the affected workflow. Use
+  `just --list` to inspect available recipes; the old `bench-study-full`,
+  `bench-study-summary` and `bench-study-paper` recipes are retired.
+  `just numerical-reference`, `just bench-study-repro` and the commands in
+  `scripts/benchmark_study.md` describe current checks. A validation command
+  is not a replacement for an approved scientific run protocol.
 - Do not commit generated benchmark artifacts (`results/*.csv`, `results/paper/*.png`, etc.);
   reproducibility should rely on deterministic commands and seeds.
 - Clearly state whether changes alter locked publication settings or only pilot

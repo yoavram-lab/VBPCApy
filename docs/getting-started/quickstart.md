@@ -62,6 +62,36 @@ sparse_model = VBPCA(1, maxiters=4, niter_broadprior=0, verbose=0,
 assert sparse_model.transform(sparse).shape == (3, 1)
 ```
 
+## Encode mixed original variables
+
+Consume a raw-variable mask before expanding categories. The encoder and
+native model both use samples × features; the inverse decoder accepts the
+model's reconstructed encoded features directly.
+
+```python
+from vbpca_py import AutoEncoder, ObservationMasker
+
+raw = np.array([["west", 10.], ["east", np.nan], ["north", 30.],
+                ["west", 40.], ["east", 50.], ["north", 60.]], dtype=object)
+raw_mask = np.ones(raw.shape, dtype=bool)
+raw_mask[0, 0] = False
+observed_raw = ObservationMasker().fit_transform(raw, mask=raw_mask)
+encoder = AutoEncoder(column_types=["categorical", "continuous"])
+encoded = encoder.fit_transform(observed_raw)
+mixed_model = VBPCA(1, maxiters=4, niter_broadprior=0, verbose=0,
+                    random_state=23, num_cpu=1, runtime_tuning="off").fit(encoded)
+decoded = encoder.inverse_transform(
+    mixed_model.inverse_transform(mixed_model.transform(encoded)))
+assert encoded.shape == (6, 4)
+assert np.isnan(encoded[0, :3]).all()
+assert decoded.shape == raw.shape
+```
+
+The encoder inverse restores original variables and continuous input units.
+Reconstruction predicts values; it does not restore missing placeholders.
+For validation, fit preprocessing within each training split as in the
+[executed gallery](../gallery/index.md).
+
 A sparse constructor applied directly to a dense table can discard observed
 zeros. See [data conventions](../concepts/data-convention.md) and the
 [migration guide](../api/migration-05.md) for sparse masks, output budgets,

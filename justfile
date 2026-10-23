@@ -66,17 +66,17 @@ bench-save:
 bench-compare:
 	uv run pytest -q -m perf --benchmark-only --benchmark-compare --benchmark-sort=mean
 
-# Run the quick-start missing-data example.
+# Run the bounded native missing-data gallery example.
 example:
-	uv run python scripts/example_missing_pca.py
+	uv run --extra plot python scripts/gallery_dense.py --output-dir results/gallery/dense
 
 # Run the sparse CSR workflow example.
 example-sparse:
-	uv run python scripts/example_sparse_pca.py
+	uv run --extra plot python scripts/gallery_sparse.py --output-dir results/gallery/sparse
 
 # Run mixed raw-cell CV with training-only preprocessing.
 example-raw-cv:
-	uv run python scripts/example_raw_cell_cv.py
+	uv run --extra plot python scripts/gallery_raw_cv.py --output-dir results/gallery/raw-cv
 
 # Ensure Octave + mkoctfile are installed for full legacy parity tests.
 check-octave:
@@ -211,11 +211,16 @@ trade-a-compare-full fmt="png":
 
 # Build documentation site.
 docs:
-	uv run --extra docs mkdocs build --strict
+	uv run --extra docs --extra plot mkdocs build --strict
+
+# Execute actual API/page sources and verify the built gallery.
+docs-check: docs
+	uv run --extra docs --extra plot python scripts/check_public_examples.py
+	uv run --extra docs --extra plot python scripts/check_gallery_site.py
 
 # Serve documentation with live reload.
 docs-serve:
-	uv run --extra docs mkdocs serve
+	uv run --extra docs --extra plot mkdocs serve
 
 # Verify package, citation, changelog, and inferred release tag metadata.
 release-check:

@@ -97,7 +97,7 @@ class BiasUpdateOrder(_StringOption):
 
 
 class VarianceUpdateOrder(_StringOption):
-    """Requested noise-update order; auto resolves from compatibility mode."""
+    """Requested prior-variance update order; auto resolves from compatibility."""
 
     AUTO = "auto"
     LEGACY = "legacy"
