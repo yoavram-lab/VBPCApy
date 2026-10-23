@@ -323,3 +323,8 @@ minimum/current sklearn versions. #314 prepares the reconciled 0.5.0 change
 notes, citation and dependency/artifact checks. Production publication follows
 qualification of the exact release source and every advertised wheel; this
 checkpoint does not record a completed publication.
+
+Cold wheel qualification exposed an Eigen 3.3.4 empty-solve crash at rank zero.
+The independently reviewed correction #358 returns validated empty outputs in
+all six native update entry points and adds an older-header CI gate. Final
+release qualification includes that correction before any publication.
