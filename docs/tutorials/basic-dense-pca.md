@@ -1,5 +1,8 @@
 # Basic Dense PCA
 
+These feature-first examples use the explicit pre-0.5 compatibility adapter.
+For the native samples-first estimator, see the [0.5 migration guide](../api/migration-05.md).
+
 This tutorial walks through the simplest VBPCApy workflow: fitting a
 Variational Bayesian PCA model to fully-observed dense data.
 
@@ -30,7 +33,7 @@ X = W_true @ S_true + noise_std * rng.standard_normal((n_features, n_samples))
 ## Fit the model
 
 ```python
-from vbpca_py import VBPCA
+from vbpca_py.legacy import VBPCA
 
 model = VBPCA(n_components=5, maxiters=200, verbose=1)
 scores = model.fit_transform(X)

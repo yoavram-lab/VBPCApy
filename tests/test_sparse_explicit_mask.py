@@ -2,8 +2,8 @@ import numpy as np
 import pytest
 import scipy.sparse as sp
 
-from vbpca_py import VBPCA
 from vbpca_py._full_update import _build_masks_and_counts, _prepare_data
+from vbpca_py.legacy import VBPCA
 
 
 def test_sparse_explicit_mask_counts_and_zero_preserved():

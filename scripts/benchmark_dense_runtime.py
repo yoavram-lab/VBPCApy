@@ -16,7 +16,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from vbpca_py import VBPCA
+from vbpca_py.legacy import VBPCA
 
 
 def _parse_shape(raw: str) -> tuple[int, int]:

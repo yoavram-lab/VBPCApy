@@ -1,104 +1,84 @@
-# Data Convention
+# Data orientation and observations
 
-## Matrix layout
+Native `vbpca_py.VBPCA` consumes **samples x features**. The explicit
+`vbpca_py.legacy.VBPCA` adapter and low-level `pca_full` retain **features x
+samples**. Axes are selected by API, never inferred from matrix dimensions.
+See the [0.5 migration guide](../api/migration-05.md) for the transition.
 
-VBPCApy follows the convention from the original MATLAB implementation:
+| Boundary | Input | Latent output | Components | Mean |
+| --- | --- | --- | --- | --- |
+| Native estimator | `(n_samples, n_features)` | `(n_samples, q)` | `(q, n_features)` | `(n_features,)` |
+| Legacy adapter | `(n_features, n_samples)` | `(q, n_samples)` | `(n_features, q)` | historical column layout |
+| Low-level solver | `(n_features, n_samples)` | result `S: (q,n_samples)` | result `A: (n_features,q)` | historical result keys |
 
-$$
-X \in \mathbb{R}^{D \times N}
-$$
+The native estimator defaults to `compat_mode="modern"`. The legacy adapter
+and low-level solver retain `strict_legacy` as their default. Selecting an
+explicit compatibility mode also selects its documented numerical and
+observation semantics. Frozen environments retain their registered versions.
 
-where $D$ = number of features (rows) and $N$ = number of samples (columns).
+## Dense observations
 
-!!! warning "This differs from scikit-learn"
-    scikit-learn uses samples × features (each *row* is an observation). If your
-    data is in sklearn layout, **transpose before passing to VBPCA**:
+Under modern semantics, a finite numeric zero is observed and NaN is missing.
+An entry-wise mask passed as `mask=...` marks observations in the same layout
+as the input. A masked placeholder is excluded before projection or fitting.
+Infinity at an observed position is rejected. A native fit rejects entirely
+unobserved features; individual missing sample rows are supported.
 
-    ```python
-    model.fit(X.T)
-    ```
-
-### AutoEncoder convention
-
-`AutoEncoder` (and the other `MissingAware*` preprocessors) expect
-**samples × features** — the sklearn convention. This means a typical pipeline
-looks like:
-
-```python
-auto = AutoEncoder(cardinality_threshold=10)
-z = auto.fit_transform(x_samples_by_features)
-
-model = VBPCA(n_components=5)
-model.fit(z.T)  # transpose to features × samples
-
-z_recon = model.inverse_transform().T  # back to samples × features
-x_recon = auto.inverse_transform(z_recon)
-```
-
-## Dense data with missing entries
-
-Dense `np.ndarray` inputs can use NaN for missing entries. An optional Boolean
-mask marks which values are observed:
+Preprocessors consume samples x features. They preserve missingness through
+NaNs, so native estimator composition needs no transpose:
 
 ```python
-x = np.array([[1.0, np.nan, 3.0],
-              [4.0, 5.0,    np.nan]])
+import numpy as np
+from sklearn.pipeline import Pipeline
+from vbpca_py import MissingAwareStandardScaler, VBPCA
 
-mask = ~np.isnan(x)  # True = observed, False = missing
-
-model = VBPCA(n_components=2)
-model.fit(x, mask=mask)
+X = np.random.default_rng(23).normal(size=(12, 4))
+X[0, 0] = np.nan
+pipeline = Pipeline([
+    ("scale", MissingAwareStandardScaler()),
+    ("pca", VBPCA(2, maxiters=4, niter_broadprior=0, verbose=0,
+                  random_state=23, num_cpu=1, runtime_tuning="off")),
+])
+Z = pipeline.fit_transform(X)
+assert Z.shape == (12, 2)
+reconstruction = pipeline.inverse_transform(Z)
+assert reconstruction.shape == X.shape
 ```
 
-- `mask` must have the same shape as `x`.
-- `True` (or 1) means **observed**; `False` (or 0) means **missing**.
-- Without a mask, NaNs are missing and other values, including zero, are observed.
+A raw mask cannot be blindly forwarded across an encoder that changes feature
+width. The mask-routing and complete preprocessor conformance work is tracked
+by #178/#36. Direct preprocessing fits accept `y=None` and keyword-only `mask`.
 
-## Sparse data
+## Sparse observations
 
-For `scipy.sparse.csr_matrix` or `csc_matrix` input, the **stored entries**
-(including stored zeros) define the observation set:
+Sparse **stored entries are observed**, including stored zeros; absent entries
+are missing. Construct sparse coordinates explicitly when zero observations
+must be retained. Constructing CSR directly from a dense table generally drops
+numeric zeros and changes the observation set. Converting/slicing a sparse
+container must preserve stored zeros to retain this contract.
 
-```python
---8<-- "scripts/snippets/stored_observations.py"
-```
+Native direct calls also accept explicit sparse masks, or a dense mask within
+the configured budget. A true mask coordinate absent from input storage means
+an observed zero value; it need not equal `spones(X)`. Duplicate mask entries
+combine as Boolean observations. NaN values remain missing, and entries outside
+the mask are excluded. CSR matrices and supported SciPy sparse arrays normalize
+to the same checked CSR boundary.
 
-Constructing CSR directly from a dense array would discard its zeros and store
-only two observations in this example. Explicit coordinate construction keeps
-all four. The example source above is also executed in the test suite.
+Automatic native probes partition the observation coordinates without removing
+unselected stored zeros. Sparse explicit probes retain their stored zero values.
+A fully missing new row projects to the latent prior; an entirely unobserved
+scoring table is rejected.
 
-If you pass a mask for sparse data, it must match `spones(X)` exactly — same
-sparsity pattern with all stored values set to 1.
+## Training scores, projection and selection
 
-### When to use sparse vs dense
+Native `scores_` stores joint variational training means. `transform(X_new)`
+conditions new rows under the fitted state. `fit_transform(X)` is exactly
+`fit(X).transform(X)`; it need not equal `scores_`. `transform_posterior` exposes
+conditional score covariances, and `inverse_transform(Z)` returns samples x
+features, including rank-zero mean-only models.
 
-| Scenario | Format | Why |
-|----------|--------|-----|
-| Unstored positions are genuinely unobserved | **Sparse CSR/CSC** | The sparse structure is the observation mask |
-| Zero is an observed value, including genotype dosage and count data | **Dense + explicit mask** | Ordinary CSR conversion drops observed zeros and changes the likelihood |
-| Moderate dimensions with random missingness (NaN-masked tabular data) | **Dense + explicit mask** | Dense kernels benefit from BLAS; mask is straightforward |
-
-Sparse storage is not determined by the numerical fraction of zeros alone. If
-zero carries information, every observed zero would need to be stored
-explicitly in CSR/CSC. At ordinary genotype density this usually costs at least
-as much memory as a dense float64 array plus a boolean mask. See the
-[genomics dosage tutorial](../tutorials/genomics-dosage.md) for the recommended
-workflow.
-
-## Compatibility modes
-
-The `compat_mode` option controls how empty rows/columns and sparse masks are
-handled:
-
-- `"strict_legacy"` (default): matches the original MATLAB reference behaviour.
-- `"modern"`: emptiness follows observed entries. Stored numeric zeros are
-  observations, stored NaNs are missing, and an observed constant-zero feature
-  is retained.
-
-An explicit observation mask uses Boolean values in either mode. A false mask
-entry is unobserved even when it occupies a stored sparse position.
-
-Compatibility mode also resolves automatic mean/noise update orders. It is a
-numerical policy choice, not a matrix-layout switch. Axis detection avoids a
-full-shape dense mask; subsequent SciPy slicing can still allocate indexing
-metadata proportional to an axis length.
+The existing cellwise selection helpers currently retain their feature-first
+boundary and compatibility-model return values while #180 integration proceeds.
+Transpose explicitly at that documented boundary, rather than changing the
+layout used by native estimators or preprocessors. Their PRMS/Brier selection
+target differs from native row-wise marginal Gaussian scoring.

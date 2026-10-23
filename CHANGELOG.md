@@ -24,6 +24,25 @@ The development version is not a release announcement.
 
 ### Changed
 
+- Introduce the native samples-by-features `VBPCA` estimator with components
+  `(q,p)`, joint training scores `(n,q)` and a flat feature mean. Default native
+  fits to modern observation semantics, as approved for 0.5. Retain the explicit
+  `vbpca_py.legacy.VBPCA` feature-first adapter and its historical default.
+- Add conditional `transform(X_new)` and `transform_posterior`, preserving full
+  VB loading second moments and latent priors for empty new rows. Keep joint
+  training means distinct from `fit_transform` projections. Add plug-in row
+  Gaussian scoring with scoring-only row weights and rank-sized solves.
+- Require scikit-learn >=1.8 at runtime and remove optional/no-op estimator
+  bases. Use native validation, transactional fitted-state cleanup and explicit
+  parameter signatures. Preprocessing accepts unsupervised `y` and keyword-only
+  masks; remaining preprocessor conformance and selection migration are tracked
+  by the 0.5 roadmap. Qualify estimator contracts on sklearn 1.8.0 and 1.9.1.
+- Version native serialized layouts and explicitly reject unmarked pre-0.5
+  estimator pickles. Preserve old feature-first characterization tests and
+  versioned engineering runners through explicit legacy imports. See the
+  migration guide for axes, observations, scoring, serialization and the
+  remaining development boundaries.
+
 - Propagate numerical dtype contracts through solver state, covariance helpers,
   bindings, encoding, preprocessing and selection. Keep raw inputs and dynamic
   encoder dtypes distinct from float64 working parameters; preserve Boolean

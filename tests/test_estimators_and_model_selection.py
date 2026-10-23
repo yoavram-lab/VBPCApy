@@ -7,7 +7,7 @@ import pytest
 import scipy.sparse as sp
 
 import vbpca_py.model_selection as ms
-from vbpca_py.estimators import VBPCA
+from vbpca_py.legacy import VBPCA
 from vbpca_py.model_selection import SelectionConfig, select_n_components
 
 
@@ -48,7 +48,7 @@ def test_vbpca_transform_and_inverse_errors(monkeypatch: pytest.MonkeyPatch) -> 
             "ExplainedVarRatio": np.ones(n_components),
         }
 
-    monkeypatch.setattr("vbpca_py.estimators.pca_full", stub_pca_full)
+    monkeypatch.setattr("vbpca_py.legacy.pca_full", stub_pca_full)
     x = np.ones((2, 3))
     est_fitted = VBPCA(1, bias=False)
     est_fitted.fit(x)

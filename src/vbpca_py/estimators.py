@@ -1,29 +1,34 @@
-"""Scikit-learn-like estimator wrappers for VB-PCA."""
+"""Native samples-by-features variational PCA estimator."""
 
 from __future__ import annotations
 
-import warnings
-from collections.abc import Mapping  # noqa: TC003 - public runtime type-hint resolution
+from collections.abc import Mapping  # noqa: TC003 - runtime annotation resolution
 from dataclasses import replace
-from pathlib import Path  # noqa: TC003 - public runtime type-hint resolution
-from typing import TYPE_CHECKING, cast
+from pathlib import Path  # noqa: TC003 - runtime annotation resolution
+from typing import Self, cast
 
 import numpy as np
 import numpy.typing as npt
 import scipy.sparse as sp
+from sklearn.base import TransformerMixin  # type: ignore[import-untyped]
+from sklearn.utils import Tags  # type: ignore[import-untyped]  # noqa: TC002 - runtime annotation resolution
+from sklearn.utils.validation import check_array, check_is_fitted, validate_data  # type: ignore[import-untyped]
 
-from vbpca_py._memory import (
-    check_dense_output_budget,
-    exceeds_budget,
-    format_bytes,
-    resolve_max_dense_bytes,
+from ._full_update import _covariances_list
+from ._memory import check_dense_output_budget, resolve_max_dense_bytes
+from ._native import TypedEstimator
+from ._pca_full import pca_full
+from ._projection import ProjectionPosterior, project_rows, row_log_likelihood
+from ._types import Float64Array, InputMask, InputMatrix, Matrix  # noqa: TC001 - runtime annotation resolution
+from ._validation import (
+    make_native_probe,
+    observed_matrix,
+    require_training_observations,
+    validate_rank,
 )
-from vbpca_py._missing import make_xprobe_mask
-from vbpca_py._pca_full import Matrix, pca_full
-from vbpca_py._sklearn_compat import BaseEstimator
-from vbpca_py.configuration import PCAOptions
-from vbpca_py.model_selection import SelectionConfig, select_n_components
-from vbpca_py.options import (  # noqa: TC001 - public runtime type-hint resolution
+from .configuration import PCAOptions
+from .legacy import _component_relevance, _warn_deprecated_tol
+from .options import (  # noqa: TC001 - runtime annotation resolution
     AccessorMode,
     Algorithm,
     BiasUpdateOrder,
@@ -35,28 +40,30 @@ from vbpca_py.options import (  # noqa: TC001 - public runtime type-hint resolut
     StatisticsMode,
     VarianceUpdateOrder,
 )
-
-from ._types import BoolArray, Float64Array, IndexArray, InputMask, InputMatrix  # noqa: TC001 - runtime annotation resolution
-
-if TYPE_CHECKING:
-    from vbpca_py.results import LearningCurve
+from .results import LearningCurve, PCAResult  # noqa: TC001 - runtime annotation resolution
 
 __all__ = ["VBPCA"]
 
-_TOL_DEPRECATION_MESSAGE = (
-    "tol is deprecated and has no effect; configure rmsstop, "
-    "cfstop_rel, or minangle explicitly"
-)
 
+class VBPCA(TransformerMixin, TypedEstimator):  # type: ignore[misc]
+    """Variational PCA on samples  x  features, including missing observations.
 
-def _warn_deprecated_tol(tol: float | None) -> None:
-    """Warn when the retained compatibility parameter is set."""
-    if tol is not None:
-        warnings.warn(_TOL_DEPRECATION_MESSAGE, FutureWarning, stacklevel=3)
+    ``scores_`` contains joint variational training means. ``transform`` returns
+    conditional new-row means under the fixed fitted state; these need not equal
+    the joint means. Use ``vbpca_py.legacy.VBPCA`` for the pre-0.5 layout/API.
+    """
 
-
-class VBPCA(BaseEstimator):
-    """Variational Bayesian PCA with a sklearn-like interface."""
+    components_: Float64Array
+    scores_: Float64Array
+    mean_: Float64Array
+    noise_variance_: float
+    learning_curve_: LearningCurve | None
+    reconstruction_: Float64Array | None
+    variance_: Float64Array | None
+    predictive_variance_: Float64Array | None
+    explained_variance_: Float64Array | None
+    explained_variance_ratio_: Float64Array | None
+    _av: list[Float64Array] | None
 
     def __init__(  # noqa: PLR0913, PLR0915
         self,
@@ -109,7 +116,7 @@ class VBPCA(BaseEstimator):
         display: bool = False,
         bias_update_order: BiasUpdateOrder | str = "auto",
         variance_update_order: VarianceUpdateOrder | str = "auto",
-        compat_mode: CompatMode | str = "strict_legacy",
+        compat_mode: CompatMode | str = "modern",
         return_diagnostics: bool = True,
         runtime_report: bool = False,
         explained_var_solver: ExplainedVarianceSolver | str = "auto",
@@ -257,42 +264,6 @@ class VBPCA(BaseEstimator):
         self.runtime_report = runtime_report
         self.explained_var_solver = explained_var_solver
         self.explained_var_gram_ratio = explained_var_gram_ratio
-        self.components_: Float64Array | None = None
-        self.scores_: Float64Array | None = None
-        self.mean_: Float64Array | None = None
-        self.rms_: float | None = None
-        self.prms_: float | None = None
-        self.noise_variance_: float | None = None
-        self.cost_: float | None = None
-        self.n_iter_: int | None = None
-        self.convergence_reason_: str | None = None
-        self.converged_: bool | None = None
-        self.best_probe_iteration_: int | None = None
-        self.best_probe_rms_: float | None = None
-        self.returned_iteration_: int | None = None
-        self.learning_curve_: LearningCurve | None = None
-        self.runtime_report_: dict[str, object] | None = None
-        self.reconstruction_: Float64Array | None = None
-        # Posterior variance of the denoised reconstruction E[AS + mu]:
-        # epistemic uncertainty in the latent mean, excluding observation noise.
-        self.variance_: Float64Array | None = None
-        # Predictive variance for a new observed entry: variance_ + noise_variance_.
-        # Use this for calibrated prediction intervals / coverage of noisy data.
-        self.predictive_variance_: Float64Array | None = None
-        self.explained_variance_: Float64Array | None = None
-        self.explained_variance_ratio_: Float64Array | None = None
-        self.n_features_in_: int | None = None
-        # ARD state: final loading prior variances, the bias prior variance,
-        # each returned component's share of reconstruction energy, and the
-        # per-iteration prior variances when ``record_prior_trace=True``.
-        self.prior_variances_: Float64Array | None = None
-        self.bias_prior_variance_: float | None = None
-        self.component_relevance_: Float64Array | None = None
-        self.prior_trace_: Float64Array | None = None
-        self._av: list[Float64Array] | None = None
-        self._sv: list[Float64Array] | None = None
-        self._pattern_index: IndexArray | None = None
-        self._muv: Float64Array | None = None
 
     def _solver_kwargs(self) -> dict[str, object]:
         """Gather stored arguments without changing constructor identities.
@@ -326,355 +297,372 @@ class VBPCA(BaseEstimator):
         """
         return PCAOptions.from_kwargs(**self._solver_kwargs())
 
-    def fit(  # noqa: C901, PLR0912, PLR0914, PLR0915
-        self,
-        x: InputMatrix,
-        mask: InputMask | None = None,
-        xprobe: Matrix | None = None,
-    ) -> VBPCA:
-        """
-        Fit the model to data, optionally supplying a mask.
-
-        Args:
-            x: Data matrix of shape (n_features, n_samples).
-            mask: Optional boolean mask of the same shape as x, where True
-                indicates observed entries.
-            xprobe: Optional probe matrix of the same shape as x used for
-                early-stopping diagnostics.  Entries that are not ``NaN``
-                (dense) or explicitly stored (sparse) are treated as held-out
-                observations.  When provided, the model monitors probe-RMS
-                and can stop early before ARD over-prunes components.
+    def __getstate__(self) -> dict[str, object]:
+        """Serialize an explicit layout version without modifying live state.
 
         Returns:
-            The fitted estimator instance.
+            Native estimator state with a samples-first layout marker.
+        """
+        state = cast("dict[str, object]", super().__getstate__()).copy()
+        state["_vbpca_layout_version"] = "samples-first-1"
+        return state
+
+    def __setstate__(self, state: dict[str, object]) -> None:
+        """Refuse unmarked pre-0.5 artifacts instead of guessing array axes.
 
         Raises:
-            ValueError: If ``mask`` shape does not match ``x`` or requested
-                dense diagnostics exceed ``max_dense_bytes``.
+            ValueError: The artifact lacks the current native layout marker.
         """
-        _warn_deprecated_tol(self.tol)
+        if state.get("_vbpca_layout_version") != "samples-first-1":
+            msg = (
+                "Incompatible VBPCA artifact layout. Pre-0.5 estimator pickles "
+                "must be opened in their original environment; refit with the "
+                "native 0.5 API or the explicit vbpca_py.legacy adapter."
+            )
+            raise ValueError(msg)
+        restored = state.copy()
+        restored.pop("_vbpca_layout_version")
+        super().__setstate__(restored)
+
+    def __sklearn_tags__(self) -> Tags:  # noqa: PLW3201 - sklearn protocol
+        """Advertise the implemented sparse, missing-data and float64 contracts.
+
+        Returns:
+            Native sklearn tags reflecting actual input/output behavior.
+        """
+        tags = cast("Tags", super().__sklearn_tags__())
+        tags.input_tags.sparse = True
+        tags.input_tags.allow_nan = True
+        tags.transformer_tags.preserves_dtype = ["float64"]
+        return tags
+
+    def _validate_observations(
+        self, X: object, mask: object | None, *, reset: bool
+    ) -> Matrix:
+        """Validate names/dimensions, then normalize observed values.
+
+        Returns:
+            Float64 observations with canonical missingness.
+
+        Raises:
+            ValueError: Feature names, dimensions or observations are invalid.
+        """
+        checked = cast(
+            "InputMatrix",
+            validate_data(
+                self,
+                X,
+                reset=reset,
+                accept_sparse=["csr", "csc"],
+                dtype="numeric",
+                ensure_all_finite=False,
+            ),
+        )
+        names = getattr(self, "feature_names_in_", None)
+        if names is not None and np.unique(names).size != len(names):
+            msg = "X has duplicate feature names"
+            raise ValueError(msg)
+        return observed_matrix(
+            checked,
+            cast("InputMask | None", mask),
+            resolve_max_dense_bytes(self.max_dense_bytes),
+        )
+
+    def fit(
+        self,
+        X: object,
+        y: object = None,  # noqa: ARG002 - unsupervised estimator protocol
+        *,
+        mask: object | None = None,
+        xprobe: object | None = None,
+    ) -> Self:
+        """Fit samples  x  features, with optional aligned mask/probe tables.
+
+        ``y`` is ignored. Sparse stored entries, including numeric zeros, are
+        observations; absent entries and NaNs are missing. Entirely unobserved
+        training features are rejected. Warm-start A/S payloads retain the
+        explicitly documented low-level feature-first axes.
+
+        Returns:
+            This fitted estimator.
+
+        Invalid data, capacity, masks or probes raise ValueError during fit.
+        """
+        self._clear_fit_state()
+        try:
+            return self._fit_observations(X, mask, xprobe)
+        except Exception:
+            self._clear_fit_state()
+            raise
+
+    def _clear_fit_state(self) -> None:
+        """Invalidate learned state before fitting and after any fit failure."""
+        for name in tuple(vars(self)):
+            if name.endswith("_") or name in {"_av", "_sv", "_muv", "_pattern_index"}:
+                delattr(self, name)
+
+    def _fit_observations(
+        self, X: object, mask: object | None, xprobe: object | None
+    ) -> Self:
+        """Fit validated observations and publish state only on success.
+
+        Returns:
+            This fitted estimator.
+
+        Raises:
+            ValueError: Probe settings or shapes are invalid.
+        """
         options = self.get_config()
-        max_dense_bytes = resolve_max_dense_bytes(options.max_dense_bytes)
-        shape = np.shape(x)
-        if options.return_diagnostics and len(shape) == 2:
+        shape = getattr(X, "shape", None)
+        if options.return_diagnostics and shape is not None and len(shape) == 2:
             check_dense_output_budget(
-                (shape[0], shape[1]),
-                max_dense_bytes,
+                (int(shape[0]), int(shape[1])),
+                resolve_max_dense_bytes(options.max_dense_bytes),
                 arrays=3,
                 operation="Fit diagnostics",
             )
-        if xprobe is not None:
-            options = replace(options, xprobe=xprobe)
-        elif self.xprobe_fraction > 0.0:
-            x, xprobe_gen = make_xprobe_mask(
-                x,
-                fraction=self.xprobe_fraction,
-                rng=np.random.default_rng(self.random_state),
-                mask=mask,
-            )
-            options = replace(options, xprobe=xprobe_gen)
-
-        if not sp.issparse(x) and mask is not None and sp.issparse(mask):
-            msg = "mask must be dense when x is dense"
+        data = self._validate_observations(X, mask, reset=True)
+        rank = validate_rank(self.n_components, data.shape)
+        _warn_deprecated_tol(self.tol)
+        if not 0 <= self.xprobe_fraction < 1:
+            msg = "xprobe_fraction must be in [0, 1)"
             raise ValueError(msg)
-
-        if sp.issparse(x) and mask is not None and not sp.issparse(mask):
-            over, est = exceeds_budget(mask.shape, np.bool_, max_dense_bytes)
-            if over:
-                budget = 0 if max_dense_bytes is None else max_dense_bytes
-                msg = (
-                    "Dense mask would exceed max_dense_bytes: "
-                    f"{format_bytes(est)} > {format_bytes(int(budget))}"
-                )
+        probe = None
+        if xprobe is not None:
+            raw_probe = cast(
+                "InputMatrix",
+                validate_data(
+                    self,
+                    xprobe,
+                    reset=False,
+                    accept_sparse=["csr", "csc"],
+                    dtype="numeric",
+                    ensure_all_finite=False,
+                ),
+            )
+            if raw_probe.shape != data.shape or sp.issparse(raw_probe) != sp.issparse(
+                data
+            ):
+                msg = "xprobe must match X shape and dense/sparse representation"
                 raise ValueError(msg)
-
-        mask_clean: Matrix | None = None
-        if mask is not None:
-            if sp.issparse(mask):
-                mask_clean = sp.csr_matrix(mask)
-            else:
-                mask_clean = np.asarray(mask, dtype=bool)
-
-        mask_param: Matrix | None = None
-        data_for_fit: InputMatrix
-        if sp.issparse(x):
-            x_sparse = sp.csr_matrix(x)
-            if mask_clean is not None:
-                mask_csr = (
-                    sp.csr_matrix(mask_clean)
-                    if not sp.issparse(mask_clean)
-                    else mask_clean
-                )
-                if mask_csr.shape != x_sparse.shape:
-                    msg = "mask must have the same shape as x"
-                    raise ValueError(msg)
-                x_pattern = x_sparse.copy()
-                x_pattern.data = np.ones_like(x_pattern.data)
-                missing_pattern = mask_csr - mask_csr.multiply(x_pattern)
-                if missing_pattern.nnz:
-                    eps = np.finfo(float).eps
-                    x_sparse += missing_pattern.multiply(eps)
-                mask_param = mask_csr
-            data_for_fit = x_sparse
-        else:
-            x_dense = np.array(x, copy=True)
-            if mask_clean is not None:
-                mask_bool = np.asarray(mask_clean, dtype=bool)
-                if mask_bool.shape != x_dense.shape:
-                    msg = "mask must have the same shape as x"
-                    raise ValueError(msg)
-                x_dense = np.where(mask_bool, x_dense, np.nan)
-                mask_param = mask_bool
-            data_for_fit = x_dense
-
-        result = pca_full(
-            data_for_fit, self.n_components, mask=mask_param, options=options
-        )
-        self.components_ = np.asarray(result["A"], dtype=float)
-        self.scores_ = np.asarray(result["S"], dtype=float)
-        self.mean_ = np.asarray(result["Mu"], dtype=float)
-        rms_val = result.get("RMS", np.nan)
-        prms_val = result.get("PRMS", np.nan)
-        noise_val = result.get("V", np.nan)
-        cost_val = result.get("Cost", np.nan)
-        self.rms_ = (
-            float(rms_val)
-            if isinstance(rms_val, (float, int, np.floating))
-            else float("nan")
-        )
-        self.prms_ = (
-            float(prms_val)
-            if isinstance(prms_val, (float, int, np.floating))
-            else float("nan")
-        )
-        self.noise_variance_ = (
-            float(noise_val)
-            if isinstance(noise_val, (float, int, np.floating))
-            else float("nan")
-        )
-        self.cost_ = (
-            float(cost_val)
-            if isinstance(cost_val, (float, int, np.floating))
-            else float("nan")
-        )
-
-        # Convergence diagnostics from the learning curve.
-        lc = result.get("lc")
-        if lc and isinstance(lc, dict):
-            rms_history = lc.get("rms", [])
-            self.n_iter_ = max(0, len(rms_history) - 1)
-            self.convergence_reason_ = str(lc.get("convergence_reason", "maxiters"))
-            self.converged_ = self.convergence_reason_ not in {
-                "maxiters",
-                "earlystop",
-                "slowing_down",
-            }
-            best_probe_iteration = lc.get("best_probe_iteration")
-            self.best_probe_iteration_ = (
-                int(best_probe_iteration)
-                if isinstance(best_probe_iteration, (int, np.integer))
-                else None
+            probe = observed_matrix(
+                raw_probe, None, resolve_max_dense_bytes(self.max_dense_bytes)
             )
-            best_probe_rms = lc.get("best_probe_rms")
-            self.best_probe_rms_ = (
-                float(best_probe_rms)
-                if isinstance(best_probe_rms, (float, int, np.floating, np.integer))
-                else None
+        elif self.xprobe_fraction > 0:
+            data, probe = make_native_probe(
+                data, self.xprobe_fraction, np.random.default_rng(self.random_state)
             )
-            returned_iteration = lc.get("returned_iteration")
-            self.returned_iteration_ = (
-                int(returned_iteration)
-                if isinstance(returned_iteration, (int, np.integer))
-                else None
-            )
-            self.learning_curve_ = lc
-        else:
-            self.n_iter_ = 0
-            self.convergence_reason_ = "maxiters"
-            self.converged_ = False
-            self.best_probe_iteration_ = None
-            self.best_probe_rms_ = None
-            self.returned_iteration_ = None
-            self.learning_curve_ = None
-
-        runtime_report = result.get("RuntimeReport")
-        self.runtime_report_ = (
-            runtime_report if isinstance(runtime_report, dict) else None
-        )
-
-        self.reconstruction_ = None
-        if result.get("Xrec") is not None:
-            self.reconstruction_ = np.asarray(result["Xrec"], dtype=float)
-
-        self.variance_ = None
-        if result.get("Vr") is not None:
-            self.variance_ = np.asarray(result["Vr"], dtype=float)
-        self.predictive_variance_ = None
-        if result.get("Vpred") is not None:
-            self.predictive_variance_ = np.asarray(result["Vpred"], dtype=float)
-        self.explained_variance_ = None
-        if result.get("ExplainedVar") is not None:
-            self.explained_variance_ = np.asarray(result["ExplainedVar"], dtype=float)
-        self.explained_variance_ratio_ = None
-        if result.get("ExplainedVarRatio") is not None:
-            self.explained_variance_ratio_ = np.asarray(
-                result["ExplainedVarRatio"], dtype=float
-            )
-        self.n_features_in_ = int(self.components_.shape[0])
-        av_raw = cast("list[Float64Array] | None", result.get("Av"))
-        self._av = [np.asarray(a, dtype=float) for a in av_raw] if av_raw else None
-        sv_raw = cast("list[Float64Array] | None", result.get("Sv"))
-        self._sv = [np.asarray(s, dtype=float) for s in sv_raw] if sv_raw else None
-        isv_raw = result.get("Isv")
-        self._pattern_index = (
-            np.asarray(isv_raw, dtype=int) if isv_raw is not None else None
-        )
-        muv_raw = result.get("Muv")
-        self._muv = np.asarray(muv_raw, dtype=float) if muv_raw is not None else None
-        self._set_pruning_state(result)
+        require_training_observations(data, probe)
+        if probe is not None:
+            options = replace(options, xprobe=_transpose_matrix(probe))
+        result = pca_full(_transpose_matrix(data), rank, options=options)
+        self._assign_result(result)
         return self
 
-    def _set_pruning_state(self, result: Mapping[str, object]) -> None:
-        va_raw = result.get("Va")
-        self.prior_variances_ = (
-            np.asarray(va_raw, dtype=float).ravel() if va_raw is not None else None
+    def _assign_result(self, result: PCAResult) -> None:
+        """Publish modern axes after the unchanged feature-first solver."""
+        self.components_ = result["A"].T
+        self.scores_ = result["S"].T
+        self.mean_ = result["Mu"].reshape(-1)
+        self.noise_variance_ = result["V"]
+        self.rms_ = result["RMS"]
+        self.prms_ = result["PRMS"]
+        self.cost_ = result["Cost"]
+        self.learning_curve_ = result["lc"]
+        curve = self.learning_curve_ or {}
+        self.n_iter_ = max(0, len(curve.get("rms", [])) - 1)
+        self.convergence_reason_ = str(curve.get("convergence_reason", "maxiters"))
+        self.converged_ = self.convergence_reason_ not in {
+            "maxiters",
+            "earlystop",
+            "slowing_down",
+        }
+        self.best_probe_iteration_ = curve.get("best_probe_iteration")
+        self.best_probe_rms_ = curve.get("best_probe_rms")
+        self.returned_iteration_ = curve.get("returned_iteration")
+        self.runtime_report_ = result.get("RuntimeReport")
+        reconstruction = result["Xrec"]
+        variance = result["Vr"]
+        predictive = result["Vpred"]
+        self.reconstruction_ = reconstruction.T if reconstruction is not None else None
+        self.variance_ = variance.T if variance is not None else None
+        self.predictive_variance_ = predictive.T if predictive is not None else None
+        self.explained_variance_ = result["ExplainedVar"]
+        self.explained_variance_ratio_ = result["ExplainedVarRatio"]
+        self._av = _covariances_list(result["Av"]) if len(result["Av"]) else None
+        self._sv = result["Sv"]
+        self._muv = result["Muv"]
+        self._pattern_index = result["Isv"]
+        self.prior_variances_ = result["Va"]
+        self.bias_prior_variance_ = result["Vmu"]
+        self.component_relevance_ = _component_relevance(result["A"], result["S"])
+        trace = curve.get("prior_trace")
+        self.prior_trace_ = np.asarray(trace, dtype=np.float64) if trace else None
+
+    def _projection_input(self, X: object, mask: object | None) -> Matrix:
+        check_is_fitted(self, ["components_", "mean_", "noise_variance_"])
+        return self._validate_observations(X, mask, reset=False)
+
+    def transform(self, X: object, *, mask: object | None = None) -> Float64Array:
+        """Return conditional latent means for new rows without refitting."""
+        data = self._projection_input(X, mask)
+        means, _ = project_rows(
+            data,
+            self.components_.T,
+            self.mean_,
+            self.noise_variance_,
+            self._av,
+            covariance=False,
+            max_dense_bytes=resolve_max_dense_bytes(self.max_dense_bytes),
         )
-        vmu_raw = result.get("Vmu")
-        self.bias_prior_variance_ = (
-            float(vmu_raw)
-            if isinstance(vmu_raw, (float, int, np.floating, np.integer))
-            else None
+        return means
+
+    def transform_posterior(
+        self, X: object, *, mask: object | None = None
+    ) -> ProjectionPosterior:
+        """Return fresh conditional means and full latent covariance matrices."""
+        data = self._projection_input(X, mask)
+        means, covariance = project_rows(
+            data,
+            self.components_.T,
+            self.mean_,
+            self.noise_variance_,
+            self._av,
+            covariance=True,
+            max_dense_bytes=resolve_max_dense_bytes(self.max_dense_bytes),
         )
-        self.component_relevance_ = _component_relevance(
-            cast("Float64Array", self.components_), cast("Float64Array", self.scores_)
-        )
-        trace = (self.learning_curve_ or {}).get("prior_trace")
-        self.prior_trace_ = np.asarray(trace, dtype=float) if trace else None
-
-    def effective_rank(self, threshold: float = 0.01) -> int:
-        """Count components that survive ARD pruning.
-
-        Args:
-            threshold: Minimum share of reconstruction energy for a
-                component to count.
-
-        Returns:
-            Number of components whose ``component_relevance_`` exceeds
-            ``threshold``.
-
-        Raises:
-            RuntimeError: If the estimator has not been fitted.
-        """
-        if self.component_relevance_ is None:
-            msg = "VBPCA instance is not fitted yet"
-            raise RuntimeError(msg)
-        return int(np.sum(self.component_relevance_ > threshold))
-
-    def get_options(self) -> dict[str, object]:
-        """Return a fresh legacy keyword export of :meth:`get_config`."""
-        return self.get_config().to_kwargs()
-
-    def transform(self, x: InputMatrix | None = None) -> Float64Array:
-        """Return scores from the fitted model; new data not yet supported.
-
-        Raises:
-            RuntimeError: If the model is not fitted.
-        """
-        if self.scores_ is None:
-            msg = "Model not fitted"
-            raise RuntimeError(msg)
-        if x is not None:
-            msg = "Transform of new data is not supported yet"
-            raise NotImplementedError(msg)
-        return self.scores_
+        return ProjectionPosterior(means, cast("Float64Array", covariance))
 
     def fit_transform(
-        self, x: InputMatrix, mask: BoolArray | None = None
+        self,
+        X: object,
+        y: object = None,
+        *,
+        mask: object | None = None,
+        xprobe: object | None = None,
     ) -> Float64Array:
-        """Convenience wrapper for fit + transform on the training data.
+        """Fit and condition X; joint training variational means are in scores_.
 
         Returns:
-            Scores for the training data.
+            Conditional scores with one row per input sample.
         """
-        return self.fit(x, mask).transform()
+        return self.fit(X, y, mask=mask, xprobe=xprobe).transform(X, mask=mask)
 
-    def inverse_transform(self, scores: Float64Array | None = None) -> Float64Array:
-        """Reconstruct data from scores using fitted loadings and mean.
+    def inverse_transform(self, Z: object) -> Float64Array:
+        """Reconstruct samples x features from samples x components.
 
         Returns:
-            Reconstructed data matrix with shape (n_features, n_samples).
+            The dense reconstruction.
 
         Raises:
-            RuntimeError: If the model is not fitted.
-            ValueError: If scores have incompatible dimensions or the single
-                dense output would exceed ``max_dense_bytes``.
+            ValueError: Latent dimensions or the dense output budget are invalid.
         """
-        if self.components_ is None or self.mean_ is None:
-            msg = "Model not fitted"
-            raise RuntimeError(msg)
-        scores_arr = self.scores_ if scores is None else np.asarray(scores, dtype=float)
-        if (
-            scores_arr is None
-            or scores_arr.ndim != 2
-            or scores_arr.shape[0] != self.components_.shape[1]
-        ):
-            msg = "scores must have shape (n_components, n_samples)"
+        check_is_fitted(self, ["components_", "mean_"])
+        scores = cast(
+            "Float64Array", check_array(Z, dtype=np.float64, ensure_min_features=0)
+        )
+        if scores.shape[1] != self.components_.shape[0]:
+            msg = "Z must have shape (n_samples, n_components)"
             raise ValueError(msg)
         check_dense_output_budget(
-            (self.components_.shape[0], scores_arr.shape[1]),
+            (scores.shape[0], self.n_features_in_),
             resolve_max_dense_bytes(self.max_dense_bytes),
             operation="Inverse reconstruction",
         )
-        recon = self.components_ @ scores_arr
-        if self.bias:
-            recon += self.mean_
-        return recon
+        return scores @ self.components_ + self.mean_
 
-    def select_n_components(
-        self,
-        x: InputMatrix,
-        *,
-        mask: InputMask | None = None,
-        components: list[int] | range | None = None,
-        config: SelectionConfig | None = None,
-        **opts: object,
-    ) -> tuple[int, dict[str, object], list[dict[str, object]], VBPCA | None]:
-        """Delegate to model selection helper using this estimator's defaults.
+    def score_samples(self, X: object, *, mask: object | None = None) -> Float64Array:
+        """Return observed-row plug-in Gaussian log densities; empty rows give 0.
+
+        Empty scoring tables are rejected; returned row storage is budgeted.
+        """
+        data = self._projection_input(X, mask)
+        check_dense_output_budget(
+            (data.shape[0], 1),
+            resolve_max_dense_bytes(self.max_dense_bytes),
+            operation="Row log-density output",
+        )
+        return self._row_densities(data)
+
+    def _row_densities(self, data: Matrix) -> Float64Array:
+        """Evaluate a scoring table without imposing a temporary-memory limit.
 
         Returns:
-            Tuple of (best_k, best_metrics, trace, best_model) from the
-            shared model-selection helper.
+            A fresh row log-density vector.
+
+        Raises:
+            ValueError: The entire scoring table has no observations.
         """
-        _warn_deprecated_tol(self.tol)
-        merged_opts = self._solver_kwargs()
-        merged_opts.update(opts)
-
-        cfg = config if config is not None else SelectionConfig()
-        return select_n_components(
-            x,
-            mask=mask,
-            components=components,
-            config=cfg,
-            **merged_opts,
+        values, count = row_log_likelihood(
+            data, self.components_.T, self.mean_, self.noise_variance_
         )
+        if not count:
+            msg = "X has no observed entries to score"
+            raise ValueError(msg)
+        return values
+
+    def score(
+        self,
+        X: object,
+        y: object = None,  # noqa: ARG002 - unsupervised estimator protocol
+        *,
+        sample_weight: object | None = None,
+        mask: object | None = None,
+    ) -> float:
+        """Average row marginal log densities with optional scoring-only weights.
+
+        This is distinct from the variational objective and cellwise capacity
+        CV. Entry masks are separate from one-dimensional row weights.
+
+        Returns:
+            The weighted mean row log density.
+
+        Raises:
+            ValueError: Scoring weights are invalid or no entries are observed.
+        """
+        values = self._row_densities(self._projection_input(X, mask))
+        weights = None
+        if sample_weight is not None:
+            weights = np.asarray(sample_weight, dtype=np.float64)
+            if (
+                weights.shape != values.shape
+                or not np.all(np.isfinite(weights))
+                or np.any(weights < 0)
+                or not np.any(weights > 0)
+            ):
+                msg = (
+                    "sample_weight must be finite, nonnegative, "
+                    "one per row, with a positive sum"
+                )
+                raise ValueError(msg)
+            positive = weights > 0
+            values = values[positive]
+            weights = weights[positive]
+            weights /= np.max(weights)
+        return float(np.average(values, weights=weights))
+
+    def effective_rank(self, threshold: float = 0.01) -> int:
+        """Count returned components above the reconstruction-energy share.
+
+        Returns:
+            Number of components exceeding the threshold.
+        """
+        check_is_fitted(self, ["component_relevance_"])
+        return int(np.count_nonzero(self.component_relevance_ > threshold))
+
+    def get_options(self) -> dict[str, object]:
+        """Export fresh numerical options; low-level warm-start axes are retained.
+
+        Returns:
+            A fresh legacy-key numerical option mapping.
+        """
+        return self.get_config().to_kwargs()
 
 
-def _component_relevance(loadings: Float64Array, scores: Float64Array) -> Float64Array:
-    """Return each component's share of reconstruction energy.
-
-    The share of component ``k`` is ``|a_k| |s_k|`` over the sum across
-    components, in the order of the returned components. It is computed in
-    the returned (rotated) basis. ``Va`` matches that basis only with
-    ``variance_update_order="post_rotation"``; under the legacy order it is
-    last updated before the rotation and need not align component by
-    component.
+def _transpose_matrix(matrix: Matrix) -> Matrix:
+    """Transpose an audited sample/feature boundary, retaining stored zeros.
 
     Returns:
-        Shares summing to one, or zeros when the reconstruction is zero.
+        A transposed dense view or CSR representation retaining stored zeros.
     """
-    energy = np.linalg.norm(loadings, axis=0) * np.linalg.norm(scores, axis=1)
-    total = float(energy.sum())
-    if total <= 0.0:
-        return np.zeros_like(energy)
-    shares: Float64Array = energy / total
-    return shares
+    return sp.csr_matrix(matrix.T) if sp.issparse(matrix) else matrix.T

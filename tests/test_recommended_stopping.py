@@ -8,8 +8,9 @@ import numpy as np
 import pytest
 from numpy.testing import assert_allclose
 
-from vbpca_py import VBPCA, recommend_config
+from vbpca_py import recommend_config
 from vbpca_py._pca_full import _build_options
+from vbpca_py.legacy import VBPCA
 
 
 def _recommend(n, p, **kwargs):

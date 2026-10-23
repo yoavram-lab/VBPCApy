@@ -9,6 +9,8 @@ from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
+from .legacy import VBPCA as LegacyVBPCA  # noqa: N811 - explicit compatibility class
+
 if TYPE_CHECKING:
     from matplotlib.axes import Axes
     from matplotlib.figure import Figure
@@ -45,7 +47,7 @@ def _require_matplotlib() -> tuple[Any, ...]:
 
 
 def scree_plot(
-    model: VBPCA,
+    model: VBPCA | LegacyVBPCA,
     *,
     ax: Axes | None = None,
     cumulative: bool = True,
@@ -104,7 +106,7 @@ def scree_plot(
 
 
 def loadings_barplot(
-    model: VBPCA,
+    model: VBPCA | LegacyVBPCA,
     component: int = 0,
     *,
     ax: Axes | None = None,
@@ -128,11 +130,16 @@ def loadings_barplot(
     """
     plt, _, _ = _require_matplotlib()
 
-    if model.components_ is None:
+    if getattr(model, "components_", None) is None:
         msg = "Model not fitted"
         raise RuntimeError(msg)
 
-    loadings = np.asarray(model.components_[:, component], dtype=float)
+    components = np.asarray(model.components_, dtype=float)
+    loadings = (
+        components[:, component]
+        if isinstance(model, LegacyVBPCA)
+        else components[component, :]
+    )
     n_features = loadings.size
 
     if feature_names is None:
@@ -162,7 +169,7 @@ def loadings_barplot(
 
 
 def variance_explained_plot(
-    model: VBPCA,
+    model: VBPCA | LegacyVBPCA,
     *,
     ax: Axes | None = None,
 ) -> Figure:

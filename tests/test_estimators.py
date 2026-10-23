@@ -7,7 +7,7 @@ import pytest
 import scipy.sparse as sp
 
 from vbpca_py import make_xprobe_mask
-from vbpca_py.estimators import VBPCA
+from vbpca_py.legacy import VBPCA
 
 
 def test_vbpca_fit_transform_shapes() -> None:

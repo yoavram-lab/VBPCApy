@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 import scipy.sparse as sp
 
-from vbpca_py import VBPCA
+from vbpca_py.legacy import VBPCA
 
 
 def _host_info() -> dict[str, object]:

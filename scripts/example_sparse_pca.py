@@ -14,7 +14,8 @@ import logging
 import numpy as np
 import scipy.sparse as sp
 
-from vbpca_py import VBPCA, SelectionConfig, select_n_components
+from vbpca_py import SelectionConfig, select_n_components
+from vbpca_py.legacy import VBPCA
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 log = logging.getLogger(__name__)

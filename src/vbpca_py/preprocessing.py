@@ -24,9 +24,10 @@ from ._types import (
 if TYPE_CHECKING:
     import numpy.typing as npt
 
+from sklearn.base import BaseEstimator, TransformerMixin  # type: ignore[import-untyped]
+
 from ._encoding_checks import detect_one_hot_blocks, encoding_warnings
 from ._missingness_checks import mcar_screen, missingness_summary, scale_warnings
-from ._sklearn_compat import BaseEstimator, TransformerMixin
 from ._sparsity import validate_mask_compatibility
 from .encoding import EncodedVariable, EncodingSchema
 
@@ -200,7 +201,7 @@ def _safe_unique(values: InputArray) -> list[object]:
     return uniq
 
 
-class MissingAwareOneHotEncoder(BaseEstimator, TransformerMixin):
+class MissingAwareOneHotEncoder(TransformerMixin, BaseEstimator):  # type: ignore[misc]
     """One-hot encode categorical columns while respecting missing values.
 
     Args:
@@ -262,7 +263,13 @@ class MissingAwareOneHotEncoder(BaseEstimator, TransformerMixin):
         self.n_features_in_: int | None = None
         self._output_widths: list[int] = []
 
-    def fit(self, x: InputArray, mask: Mask | None = None) -> MissingAwareOneHotEncoder:
+    def fit(
+        self,
+        x: InputArray,
+        y: object = None,  # noqa: ARG002 - unsupervised transformer protocol
+        *,
+        mask: Mask | None = None,
+    ) -> MissingAwareOneHotEncoder:
         if self.binary not in {"single", "both"}:
             msg = f"binary must be 'single' or 'both', got {self.binary!r}"
             raise ValueError(msg)
@@ -467,9 +474,9 @@ class MissingAwareOneHotEncoder(BaseEstimator, TransformerMixin):
         )
 
     def fit_transform(
-        self, x: InputArray, mask: Mask | None = None
+        self, x: InputArray, y: object = None, *, mask: Mask | None = None
     ) -> InputArray | sp.csr_matrix:
-        return self.fit(x, mask).transform(x, mask)
+        return self.fit(x, y, mask=mask).transform(x, mask)
 
     def inverse_transform(self, z: InputArray, mask: Mask | None = None) -> InputArray:
         if self.n_features_in_ is None:
@@ -550,11 +557,13 @@ class MissingAwareOneHotEncoder(BaseEstimator, TransformerMixin):
                 col_vals[i] = cats[idx]
 
 
-class _BaseScaler(BaseEstimator, TransformerMixin):
+class _BaseScaler(TransformerMixin, BaseEstimator):  # type: ignore[misc]
     def __init__(self) -> None:
         self.n_features_in_: int | None = None
 
-    def fit(self, x: ArrayLike, mask: Mask | None = None) -> _BaseScaler:
+    def fit(
+        self, x: ArrayLike, y: object = None, *, mask: Mask | None = None
+    ) -> _BaseScaler:
         raise NotImplementedError
 
     def transform(
@@ -568,12 +577,12 @@ class _BaseScaler(BaseEstimator, TransformerMixin):
         raise NotImplementedError
 
     def fit_transform(
-        self, x: ArrayLike, mask: Mask | None = None
+        self, x: ArrayLike, y: object = None, *, mask: Mask | None = None
     ) -> Float64Array | sp.csr_matrix:
-        return self.fit(x, mask).transform(x, mask)
+        return self.fit(x, y, mask=mask).transform(x, mask)
 
 
-class MissingAwareSparseOneHotEncoder(BaseEstimator, TransformerMixin):
+class MissingAwareSparseOneHotEncoder(TransformerMixin, BaseEstimator):  # type: ignore[misc]
     """Sparse one-hot encoder for categorical columns.
 
     Assumptions:
@@ -603,7 +612,11 @@ class MissingAwareSparseOneHotEncoder(BaseEstimator, TransformerMixin):
         self._output_width: int = 0
 
     def fit(
-        self, x: sp.spmatrix, mask: Mask | None = None
+        self,
+        x: sp.spmatrix,
+        y: object = None,  # noqa: ARG002 - unsupervised transformer protocol
+        *,
+        mask: Mask | None = None,
     ) -> MissingAwareSparseOneHotEncoder:
         if mask is not None:
             msg = "mask must be None for sparse one-hot encoder"
@@ -775,7 +788,11 @@ class MissingAwareStandardScaler(_BaseScaler):
         self.var_: Float64Array | None = None
 
     def fit(
-        self, x: InputArray | sp.spmatrix, mask: Mask | None = None
+        self,
+        x: InputArray | sp.spmatrix,
+        y: object = None,  # noqa: ARG002 - unsupervised transformer protocol
+        *,
+        mask: Mask | None = None,
     ) -> MissingAwareStandardScaler:
         if _is_sparse(x):
             x_csc = _to_csc(x)
@@ -859,7 +876,11 @@ class MissingAwareMinMaxScaler(_BaseScaler):
         self.data_range_: Float64Array | None = None
 
     def fit(
-        self, x: InputArray | sp.spmatrix, mask: Mask | None = None
+        self,
+        x: InputArray | sp.spmatrix,
+        y: object = None,  # noqa: ARG002 - unsupervised transformer protocol
+        *,
+        mask: Mask | None = None,
     ) -> MissingAwareMinMaxScaler:
         if _is_sparse(x):
             x_csc = _to_csc(x)
@@ -929,7 +950,7 @@ class MissingAwareMinMaxScaler(_BaseScaler):
         return x
 
 
-class MissingAwareOrdinalEncoder(BaseEstimator, TransformerMixin):
+class MissingAwareOrdinalEncoder(TransformerMixin, BaseEstimator):  # type: ignore[misc]
     """Code ordered categorical columns as scaled numeric scores.
 
     Each column's levels map to equally spaced scores ``0, 1, ..., L - 1`` in
@@ -985,7 +1006,11 @@ class MissingAwareOrdinalEncoder(BaseEstimator, TransformerMixin):
         return scores, known
 
     def fit(
-        self, x: InputArray, mask: Mask | None = None
+        self,
+        x: InputArray,
+        y: object = None,  # noqa: ARG002 - unsupervised transformer protocol
+        *,
+        mask: Mask | None = None,
     ) -> MissingAwareOrdinalEncoder:
         if self.scaler not in {"standard", "minmax"}:
             msg = f"scaler must be 'standard' or 'minmax', got {self.scaler!r}"
@@ -1030,8 +1055,10 @@ class MissingAwareOrdinalEncoder(BaseEstimator, TransformerMixin):
         scores, known = self._scores(x_arr, _ensure_mask(x_arr, mask))
         return np.asarray(self._scaler.transform(scores, mask=known))
 
-    def fit_transform(self, x: InputArray, mask: Mask | None = None) -> Float64Array:
-        return self.fit(x, mask).transform(x, mask)
+    def fit_transform(
+        self, x: InputArray, y: object = None, *, mask: Mask | None = None
+    ) -> Float64Array:
+        return self.fit(x, y, mask=mask).transform(x, mask)
 
     def inverse_transform(self, z: InputArray, mask: Mask | None = None) -> ObjectArray:
         if self._scaler is None:
@@ -1082,7 +1109,7 @@ class _ColumnPlan:
     slice_end: int
 
 
-class AutoEncoder(BaseEstimator, TransformerMixin):
+class AutoEncoder(TransformerMixin, BaseEstimator):  # type: ignore[misc]
     """Column-wise router that applies missing-aware OHE or scaling.
 
     After fitting, ``feature_groups_`` gives the input column of every
@@ -1166,7 +1193,13 @@ class AutoEncoder(BaseEstimator, TransformerMixin):
             )
         return "continuous"
 
-    def fit(self, x: InputArray | sp.spmatrix, mask: Mask | None = None) -> AutoEncoder:
+    def fit(
+        self,
+        x: InputArray | sp.spmatrix,
+        y: object = None,  # noqa: ARG002 - unsupervised transformer protocol
+        *,
+        mask: Mask | None = None,
+    ) -> AutoEncoder:
         is_sparse = _is_sparse(x)
         self.encoding_schema_ = None
         if self.column_levels is not None and (
@@ -1374,9 +1407,9 @@ class AutoEncoder(BaseEstimator, TransformerMixin):
         return np.concatenate(tuple(parts_dense), axis=1)
 
     def fit_transform(
-        self, x: InputArray | sp.spmatrix, mask: Mask | None = None
+        self, x: InputArray | sp.spmatrix, y: object = None, *, mask: Mask | None = None
     ) -> InputArray | sp.spmatrix:
-        return self.fit(x, mask).transform(x, mask)
+        return self.fit(x, y, mask=mask).transform(x, mask)
 
     def inverse_transform(
         self, z: InputArray | sp.spmatrix, mask: Mask | None = None
@@ -1435,7 +1468,7 @@ class AutoEncoder(BaseEstimator, TransformerMixin):
 # ── Distributional transforms (#80) ──────────────────────────────────────
 
 
-class MissingAwareLogTransformer:
+class MissingAwareLogTransformer(TransformerMixin, BaseEstimator):  # type: ignore[misc]
     """Apply ``log1p`` (or ``log(x + offset)``) while preserving NaN entries.
 
     This is a *pre-scaling* transform: compress right-skewed features
@@ -1457,6 +1490,8 @@ class MissingAwareLogTransformer:
     def fit(
         self,
         x: InputArray,
+        y: object = None,  # noqa: ARG002 - unsupervised transformer protocol
+        *,
         mask: Mask | None = None,  # noqa: ARG002
     ) -> MissingAwareLogTransformer:
         """Record input width (stateless transform)."""
@@ -1473,8 +1508,10 @@ class MissingAwareLogTransformer:
         out[obs] = np.log(x_arr[obs] + self.offset)
         return out
 
-    def fit_transform(self, x: InputArray, mask: Mask | None = None) -> Float64Array:
-        return self.fit(x, mask).transform(x, mask)
+    def fit_transform(
+        self, x: InputArray, y: object = None, *, mask: Mask | None = None
+    ) -> Float64Array:
+        return self.fit(x, y, mask=mask).transform(x, mask)
 
     def inverse_transform(
         self, z: InputArray, mask: Mask | None = None
@@ -1489,7 +1526,7 @@ class MissingAwareLogTransformer:
         return out
 
 
-class MissingAwareWinsorizer:
+class MissingAwareWinsorizer(TransformerMixin, BaseEstimator):  # type: ignore[misc]
     """Clip features at fitted percentiles while preserving NaN entries.
 
     Winsorization prevents outlier-driven variance inflation *before*
@@ -1520,7 +1557,13 @@ class MissingAwareWinsorizer:
         self.lower_: Float64Array | None = None
         self.upper_: Float64Array | None = None
 
-    def fit(self, x: InputArray, mask: Mask | None = None) -> MissingAwareWinsorizer:
+    def fit(
+        self,
+        x: InputArray,
+        y: object = None,  # noqa: ARG002 - unsupervised transformer protocol
+        *,
+        mask: Mask | None = None,
+    ) -> MissingAwareWinsorizer:
         """Compute per-column clipping bounds from observed values."""
         x_arr = np.asarray(x, dtype=float)
         obs = _ensure_mask(x_arr, mask)
@@ -1550,8 +1593,10 @@ class MissingAwareWinsorizer:
             out[col_obs, j] = np.clip(x_arr[col_obs, j], self.lower_[j], self.upper_[j])
         return out
 
-    def fit_transform(self, x: InputArray, mask: Mask | None = None) -> Float64Array:
-        return self.fit(x, mask).transform(x, mask)
+    def fit_transform(
+        self, x: InputArray, y: object = None, *, mask: Mask | None = None
+    ) -> Float64Array:
+        return self.fit(x, y, mask=mask).transform(x, mask)
 
     def inverse_transform(  # noqa: PLR6301
         self,
@@ -1565,7 +1610,7 @@ class MissingAwareWinsorizer:
         return np.asarray(z, dtype=float).copy()
 
 
-class MissingAwarePowerTransformer:
+class MissingAwarePowerTransformer(TransformerMixin, BaseEstimator):  # type: ignore[misc]
     """Yeo-Johnson variance-stabilising transform preserving NaN entries.
 
     Supports mixed-sign data.  The transform is applied element-wise
@@ -1639,7 +1684,11 @@ class MissingAwarePowerTransformer:
         return float(-loglik)
 
     def fit(
-        self, x: InputArray, mask: Mask | None = None
+        self,
+        x: InputArray,
+        y: object = None,  # noqa: ARG002 - unsupervised transformer protocol
+        *,
+        mask: Mask | None = None,
     ) -> MissingAwarePowerTransformer:
         """Estimate per-column Yeo-Johnson lambda by profile MLE."""
         from scipy.optimize import minimize_scalar  # noqa: PLC0415
@@ -1695,8 +1744,10 @@ class MissingAwarePowerTransformer:
             out[~obs] = np.nan
         return out
 
-    def fit_transform(self, x: InputArray, mask: Mask | None = None) -> Float64Array:
-        return self.fit(x, mask).transform(x, mask)
+    def fit_transform(
+        self, x: InputArray, y: object = None, *, mask: Mask | None = None
+    ) -> Float64Array:
+        return self.fit(x, y, mask=mask).transform(x, mask)
 
     def inverse_transform(
         self, z: InputArray, mask: Mask | None = None

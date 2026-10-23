@@ -93,6 +93,7 @@ nav:
     - Model Selection: concepts/model-selection.md
   - API Reference:
     - VBPCA: api/vbpca.md
+    - 0.5 migration: api/migration-05.md
     - Solver Options: api/options.md
     - Fit Results: api/results.md
     - Model Selection: api/model-selection.md

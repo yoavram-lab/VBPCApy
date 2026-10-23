@@ -6,8 +6,8 @@ import numpy as np
 import pytest
 import scipy.sparse as sp
 
-from vbpca_py import estimators as est_mod
-from vbpca_py.estimators import VBPCA
+from vbpca_py import legacy as est_mod
+from vbpca_py.legacy import VBPCA
 
 
 def test_fit_dense_with_sparse_mask_raises() -> None:

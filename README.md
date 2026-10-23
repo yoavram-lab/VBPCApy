@@ -34,9 +34,9 @@ See the [installation guide](https://yoavram-lab.github.io/VBPCApy/getting-start
 import numpy as np
 from vbpca_py import VBPCA
 
-# 50 features, 200 samples
-x = np.random.randn(50, 200)
-mask = np.ones_like(x)  # 1 = observed, 0 = missing
+# 200 samples, 50 features
+x = np.random.randn(200, 50)
+mask = np.ones_like(x, dtype=bool)
 
 model = VBPCA(n_components=5, maxiters=100)
 scores = model.fit_transform(x, mask=mask)
@@ -45,6 +45,12 @@ var = model.variance_
 ```
 
 More examples: [quickstart](https://yoavram-lab.github.io/VBPCApy/getting-started/quickstart/), [dense PCA tutorial](https://yoavram-lab.github.io/VBPCApy/tutorials/basic-dense-pca/), [missing data & model selection](https://yoavram-lab.github.io/VBPCApy/tutorials/missing-data-model-selection/), [genomics dosage data](https://yoavram-lab.github.io/VBPCApy/tutorials/genomics-dosage/), and [sparse data](https://yoavram-lab.github.io/VBPCApy/tutorials/sparse-data/).
+
+The unreleased 0.5 API uses samples x features and defaults to modern
+observation semantics. `scores_` contains joint training variational means;
+`transform(X_new)` returns conditional projections. The explicit
+`vbpca_py.legacy.VBPCA` adapter preserves the feature-first API and historical
+default. See the [migration guide](docs/api/migration-05.md).
 
 ## Features
 
@@ -62,7 +68,7 @@ observation set through noise updates, probe exclusion and NaN cleanup. See the
   profiles and separate native/BLAS allocation reports
 - Missing-aware preprocessing: one-hot, standard/minmax scaling, log, power, winsorize, auto-routing (`AutoEncoder`)
 - Preflight data diagnostics via `check_data()` / `DataReport`
-- scikit-learn-compatible estimator (`fit`/`transform`/`inverse_transform`, `get_params`/`set_params`, cloning) — scikit-learn is an optional dependency
+- scikit-learn-compatible estimator (`fit`/`transform`/`inverse_transform`, `get_params`/`set_params`, cloning) — scikit-learn >=1.8 is required
 - Model selection via `select_n_components` and `cross_validate_components`
 - Configurable convergence: subspace angle, RMS/cost plateau, ELBO, curvature, composite rules, patience, with per-criterion enable/disable and custom ordering
 - Convergence diagnostics (`n_iter_`, `converged_`, `convergence_reason_`, `learning_curve_`, best-probe state metadata) and `predictive_variance_` (includes observation noise)

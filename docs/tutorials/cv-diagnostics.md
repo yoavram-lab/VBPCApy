@@ -1,5 +1,8 @@
 # Cross-Validation & Diagnostics
 
+These feature-first examples use the explicit pre-0.5 compatibility adapter.
+For the native samples-first estimator, see the [0.5 migration guide](../api/migration-05.md).
+
 This tutorial demonstrates K-fold cross-validated model selection and
 post-fit diagnostic inspection.
 
@@ -79,7 +82,8 @@ dataset, report the mean-only result; there is no positive-rank `VBPCA` object
 to fit. Otherwise, fit the selected positive-rank model as below.
 
 ```python
-from vbpca_py import VBPCA, make_xprobe_mask
+from vbpca_py import make_xprobe_mask
+from vbpca_py.legacy import VBPCA
 
 # Create a probe set for monitoring
 X_train, X_probe = make_xprobe_mask(X_obs, fraction=0.10, rng=rng)

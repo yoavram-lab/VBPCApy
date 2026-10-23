@@ -56,7 +56,7 @@ model = VBPCA(2, maxiters=4, niter_broadprior=0, verbose=0, random_state=7)
 model.set_params(algorithm=Algorithm.MAP, num_cpu=1)
 resolved_request = model.get_config()
 keyword_request = model.get_options()
-model.fit(x)
+model.fit(x.T)  # native estimator: samples x features
 ```
 
 For a fully typed direct constructor, use the categorical enum values shown

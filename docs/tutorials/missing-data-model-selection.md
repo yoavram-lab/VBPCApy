@@ -1,5 +1,8 @@
 # Missing Data & Model Selection
 
+These feature-first examples use the explicit pre-0.5 compatibility adapter.
+For the native samples-first estimator, see the [0.5 migration guide](../api/migration-05.md).
+
 This tutorial demonstrates VBPCApy's core strength: fitting PCA directly on
 incomplete data and automatically selecting the number of components.
 
@@ -106,7 +109,7 @@ model = best_model
 Otherwise, fit manually at the selected rank:
 
 ```python
-from vbpca_py import VBPCA
+from vbpca_py.legacy import VBPCA
 
 model = VBPCA(n_components=best_k, maxiters=200)
 model.fit(X_obs, mask=mask)

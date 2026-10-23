@@ -1,5 +1,8 @@
 # Plotting
 
+These feature-first examples use the explicit pre-0.5 compatibility adapter.
+For the native samples-first estimator, see the [0.5 migration guide](../api/migration-05.md).
+
 VBPCApy provides three convenience plotting functions. They require matplotlib,
 installed via the `plot` extra.
 
@@ -15,7 +18,7 @@ Shows the explained variance ratio for each component with an optional
 cumulative line:
 
 ```python
-from vbpca_py import VBPCA
+from vbpca_py.legacy import VBPCA
 from vbpca_py.plotting import scree_plot
 
 model = VBPCA(n_components=10, maxiters=200)

@@ -1,5 +1,8 @@
 # Convergence Tuning
 
+These feature-first examples use the explicit pre-0.5 compatibility adapter.
+For the native samples-first estimator, see the [0.5 migration guide](../api/migration-05.md).
+
 Recipes for adjusting stopping criteria when the defaults don't fit your
 dataset.
 
@@ -9,7 +12,7 @@ An active criterion can stop a fit even when another criterion is still moving.
 For a comparison reference, disable numerical and probe stopping explicitly:
 
 ```python
-from vbpca_py import VBPCA
+from vbpca_py.legacy import VBPCA
 
 model = VBPCA(
     n_components=5,
@@ -211,7 +214,8 @@ For a study that disables cost and composite stopping, record those flags
 explicitly even though current recommendations now leave them disabled:
 
 ```python
-from vbpca_py import VBPCA, recommend_config
+from vbpca_py import recommend_config
+from vbpca_py.legacy import VBPCA
 
 options = recommend_config(n=60, p=180)
 flags = dict(options.get("convergence_criteria", {}))

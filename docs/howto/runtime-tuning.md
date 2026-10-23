@@ -1,5 +1,8 @@
 # Runtime & Threading
 
+These feature-first examples use the explicit pre-0.5 compatibility adapter.
+For the native samples-first estimator, see the [0.5 migration guide](../api/migration-05.md).
+
 VBPCApy includes C++ kernels for the most expensive operations (score updates,
 loading updates, noise updates, RMS computation). Thread counts and memory
 policies can be tuned for your hardware.
@@ -9,7 +12,7 @@ policies can be tuned for your hardware.
 Control the autotuning policy via the `runtime_tuning` parameter:
 
 ```python
-from vbpca_py import VBPCA
+from vbpca_py.legacy import VBPCA
 
 # Default: short probe to pick threads and accessor mode
 model = VBPCA(n_components=5, runtime_tuning="safe")
@@ -97,7 +100,7 @@ is 2,000,000,000 bytes. A request above the limit raises `ValueError` before
 fitting; exactly the limit is allowed.
 
 ```python
-from vbpca_py import VBPCA
+from vbpca_py.legacy import VBPCA
 
 # Limit the three fit outputs together to 512 MiB.
 model = VBPCA(n_components=5, max_dense_bytes=512 * 1024**2)

@@ -5,8 +5,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from vbpca_py import VBPCA
 from vbpca_py._pca_full import pca_full
+from vbpca_py.legacy import VBPCA
 
 HP = 1e-3
 

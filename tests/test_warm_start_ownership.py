@@ -10,9 +10,9 @@ import pytest
 from scipy import sparse
 from sklearn.base import clone
 
-from vbpca_py import VBPCA
 from vbpca_py import _pca_full as solver
 from vbpca_py._pca_full import pca_full
+from vbpca_py.legacy import VBPCA
 
 
 def _warm_start(p=4, n=7, q=2):

@@ -1445,7 +1445,7 @@ def test_ard_stability_with_xprobe_via_estimator() -> None:
     x_train[miss] = np.nan
     x_train[probe_mask] = np.nan  # hide probe entries from training
 
-    from vbpca_py import VBPCA
+    from vbpca_py.legacy import VBPCA
 
     model = VBPCA(n_components=true_k, maxiters=300, bias=True)
     model.fit(x_train, xprobe=xprobe)

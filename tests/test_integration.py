@@ -1,4 +1,4 @@
-"""Integration tests: full round-trip pipelines.
+"""Legacy feature-first integration and low-level numerical regressions.
 
 These tests exercise the complete VB-PCA workflow:
 - fit → transform → inverse_transform → verify reconstruction
@@ -14,13 +14,13 @@ import pytest
 import scipy.sparse as sp
 
 from vbpca_py import (
-    VBPCA,
     AutoEncoder,
     MissingAwareStandardScaler,
     SelectionConfig,
     select_n_components,
 )
 from vbpca_py._pca_full import pca_full
+from vbpca_py.legacy import VBPCA
 
 # -- fixtures --
 

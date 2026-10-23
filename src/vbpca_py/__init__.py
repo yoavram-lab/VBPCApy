@@ -3,6 +3,7 @@
 from importlib.metadata import version
 
 from vbpca_py._missing import make_xprobe_mask
+from vbpca_py._projection import ProjectionPosterior
 from vbpca_py.configuration import PCAOptions
 from vbpca_py.defaults import recommend_config
 from vbpca_py.encoding import EncodedVariable, EncodingSchema
@@ -71,6 +72,7 @@ __all__ = [
     "PhaseTimingKey",
     "PosteriorCovariances",
     "PreprocessedFold",
+    "ProjectionPosterior",
     "SelectionConfig",
     "check_data",
     "cross_validate_components",

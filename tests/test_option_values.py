@@ -12,7 +12,7 @@ from scipy import sparse
 from scipy.io import savemat
 from sklearn.base import clone
 
-from vbpca_py import VBPCA, options
+from vbpca_py import options
 from vbpca_py._monitoring import _normalize_init
 from vbpca_py._pca_full import _build_options, _select_algorithm, pca_full
 from vbpca_py._runtime_policy import (
@@ -20,6 +20,7 @@ from vbpca_py._runtime_policy import (
     normalize_cov_writeback_mode,
     normalize_runtime_tuning_mode,
 )
+from vbpca_py.legacy import VBPCA
 from vbpca_py.options import (
     AccessorMode,
     Algorithm,

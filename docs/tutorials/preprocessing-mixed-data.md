@@ -1,5 +1,8 @@
 # Preprocessing Mixed Tabular Data
 
+These feature-first examples use the explicit pre-0.5 compatibility adapter.
+For the native samples-first estimator, see the [0.5 migration guide](../api/migration-05.md).
+
 Real-world datasets often mix categorical and continuous columns, contain
 missing values, and have skewed or outlier-heavy distributions. This tutorial
 shows how to use VBPCApy's missing-aware preprocessing pipeline to handle all
@@ -136,7 +139,7 @@ auto = AutoEncoder(column_types=["ordinal", "categorical", "continuous"])
 ## Fit VB-PCA
 
 ```python
-from vbpca_py import VBPCA
+from vbpca_py.legacy import VBPCA
 
 # Transpose: features × samples
 Z_t = Z.T
