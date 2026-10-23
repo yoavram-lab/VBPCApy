@@ -94,9 +94,24 @@ through a supported named table. Warm-start mappings retain the low-level
 
 Unsupervised preprocessing now accepts `y=None` and keyword-only `mask` on
 `fit`/`fit_transform`; pass `mask=...` explicitly rather than as a second
-positional argument. The remaining preprocessor constructor/fitted-state,
-metadata-routing and output-container work is still tracked by #36/#178/#179.
-A width-changing encoder must not receive a stale raw mask downstream.
+positional argument. All nine preprocessor constructors store parameters
+unchanged and create learned attributes during fitting. Invalid log offsets
+and winsorization quantiles are rejected by `fit`, so construction and cloning
+can retain requested settings. `transform` and `inverse_transform` require a
+fitted estimator and use scikit-learn's `NotFittedError`.
+
+Refitting discards old learned arrays/plans before fitting. A failed fit,
+including cancellation, clears partial state; refit successfully before using
+the transformer again. Successful pickle/deepcopy round trips retain fitted
+state. Fitted-state detection recognizes populated feature metadata in
+compatible older preprocessor artifacts and treats old unfitted `None`
+defaults as unfitted. Native `VBPCA`'s separate serialized-layout rules are
+described below.
+
+Input dtype/feature validation, metadata routing, names and output containers
+remain under #36/#38/#178/#179. The lifecycle change alone does not establish
+full preprocessor or Pipeline conformance. A width-changing encoder must not
+receive a stale raw mask downstream.
 
 ## Scoring and cellwise selection
 
