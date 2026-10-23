@@ -1,4 +1,4 @@
-"""Fitted metadata for decoding dense categorical representations."""
+"""Fitted metadata for decoding dense categorical and numeric representations."""
 
 from __future__ import annotations
 
@@ -8,6 +8,13 @@ from typing import Literal
 import numpy as np
 
 from ._types import Float64Array  # noqa: TC001 - runtime annotation resolution
+
+
+def _finite_real_scalar(value: object) -> bool:
+    if not np.isscalar(value):
+        return False
+    scalar = np.asarray(value)
+    return scalar.dtype.kind in "iuf" and bool(np.isfinite(scalar))
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,20 +84,33 @@ class EncodedVariable:
             ValueError: If numeric affine metadata or dimensions are unavailable.
         """
         dimensions_match = block.ndim == 2 and block.shape[0] == len(self.columns)
-        finite_affine = np.all(np.isfinite(self.offset)) and np.isfinite(self.weight)
-        if (
-            self.kind not in {"continuous", "ordinal"}
-            or not dimensions_match
-            or len(self.offset) != len(self.columns)
-            or not finite_affine
-            or self.weight <= 0
-        ):
+        if self.kind not in {"continuous", "ordinal"} or not dimensions_match:
             msg = "numeric decoding needs matching columns and fitted affine metadata"
             raise ValueError(msg)
+        self._validate_numeric_affine()
         decoded: Float64Array = (
             block / self.weight + np.asarray(self.offset)[:, np.newaxis]
         )
         return decoded
+
+    def _validate_numeric_affine(self) -> None:
+        if len(self.columns) != 1 or len(self.offset) != 1:
+            msg = (
+                "numeric encoding needs fitted affine metadata with "
+                "exactly one column and one offset"
+            )
+            raise ValueError(msg)
+        if not _finite_real_scalar(self.offset[0]):
+            msg = (
+                "numeric encoding needs a finite fitted offset that is a real scalar "
+                "(unavailable for wholly missing training support)"
+            )
+            raise ValueError(msg)
+        if not _finite_real_scalar(self.weight) or self.weight <= 0:
+            msg = (
+                "numeric encoding needs a positive finite weight that is a real scalar"
+            )
+            raise ValueError(msg)
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,11 +141,18 @@ class EncodingSchema:
                 groups[column] = index
         return tuple(groups)
 
-    def validate(self, n_features: int) -> None:
+    def validate(self, n_features: int, *, strict_numeric: bool = False) -> None:
         """Check that metadata describes every encoded feature exactly once.
 
         Args:
             n_features: Number of rows of the model's features-by-samples input.
+            strict_numeric: Also require continuous and ordinal variables to
+                have exactly one column, one finite real scalar fitted offset
+                and a positive finite real scalar weight. The default checks
+                their feature coverage only,
+                retaining compatibility with categorical-only scoring schemas.
+                Wholly missing numeric training columns have no fitted offset
+                and cannot pass strict validation.
 
         Raises:
             ValueError: If columns, kind, category dimensions or affine metadata
@@ -140,6 +167,8 @@ class EncodingSchema:
                 msg = f"unsupported encoding kind {variable.kind!r}"
                 raise ValueError(msg)
             if variable.kind != "categorical":
+                if strict_numeric:
+                    variable._validate_numeric_affine()  # noqa: SLF001 - shared schema contract
                 continue
             count = len(variable.categories)
             dropped = variable.reference is not None

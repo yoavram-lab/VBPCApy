@@ -178,6 +178,7 @@ def _validate_preprocessed_fold(
     fold: PreprocessedFold, index: int, cfg: CVConfig
 ) -> None:
     schema = fold.schema
+    schema.validate(fold.training.shape[0], strict_numeric=True)
     if any(not variable.columns for variable in schema.variables) or not np.all(
         np.isfinite(fold.training).any(axis=0)
     ):
