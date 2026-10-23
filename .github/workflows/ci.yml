@@ -167,6 +167,8 @@ jobs:
           tests/test_native_selection.py
           tests/test_native_sparse_validation.py
           tests/test_pipeline_example.py
+          tests/test_markdown_examples.py
+          tests/test_notebook_examples.py
           tests/test_modern_small_values.py
           tests/test_sparse_probe_partition.py
 

@@ -94,6 +94,7 @@ docs = [
     "mkdocs-material>=9.5",
     "mkdocstrings[python]>=0.24",
     "pymdown-extensions>=10.0",
+    "pytest>=8.0",
 ]
 
 [tool.setuptools.packages.find]

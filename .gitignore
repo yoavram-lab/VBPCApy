@@ -41,6 +41,7 @@ site/
 
 .ipynb_checkpoints/
 *.ipynb
+!examples/mixed-missing-table.ipynb
 
 ########################################
 # Local development clutter
