@@ -24,6 +24,11 @@ The development version is not a release announcement.
 
 ### Changed
 
+- Refuse low-level and legacy fits when training-axis removal would discard
+  observed probe entries, including stored zeros. This applies in both
+  compatibility modes and prevents silently incomplete PRMS diagnostics.
+  Unobserved axes without probe entries retain their existing handling.
+
 - Introduce the native samples-by-features `VBPCA` estimator with components
   `(q,p)`, joint training scores `(n,q)` and a flat feature mean. Default native
   fits to modern observation semantics, as approved for 0.5. Retain the explicit

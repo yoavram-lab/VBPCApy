@@ -69,9 +69,13 @@ values; the adapter preserves that behavior for compatibility.
 Masks and explicit `xprobe` tables follow the same sample-first layout as X.
 Automatic probes preserve the exact remaining sparse observation set.
 Rows with probe entries must retain at least one training observation. Native
-fitting rejects probe-only rows because the inherited solver removes empty
-training samples and cannot evaluate their probe diagnostics. This limitation
-does not prevent entirely missing rows without probe entries.
+fitting rejects probe-only rows because the solver removes empty training
+samples and cannot evaluate their probe diagnostics. Low-level and legacy
+calls also reject any observed probe entries that would be discarded by
+training-axis removal, including probe-only features and samples removed by
+historical sparse sum-based handling. This applies in both compatibility modes;
+it replaces silently incomplete PRMS diagnostics with a clear error. Empty
+training axes without probe observations can still be removed as before.
 
 Sparse stored entries are observed, including stored zeros; absent entries
 are missing. Conversions, row slicing and probe generation must retain this

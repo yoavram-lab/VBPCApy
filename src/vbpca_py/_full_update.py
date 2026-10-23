@@ -302,6 +302,8 @@ def _prepare_data(
 ) -> tuple[Matrix, Matrix | None, MaskMatrix | None, int, int, IndexArray, IndexArray]:
     """Copy input, apply probe handling, and remove empty rows/cols.
 
+    Refuse preparation that would discard observed probe entries.
+
     Returns:
         Data, probe data, original shapes, and kept row/col indices.
 
@@ -334,6 +336,7 @@ def _prepare_data(
         compat_mode=str(opts.get("compat_mode", "strict_legacy")),
     )
 
+    original_probe = x_probe
     x_data, x_probe, row_idx, col_idx, init_opt = remove_empty_entries(
         x_data,
         x_probe,
@@ -341,6 +344,7 @@ def _prepare_data(
         compat_mode=str(opts.get("compat_mode", "strict_legacy")),
         mask=mask_clean,
     )
+    _require_retained_probe_observations(original_probe, x_probe)
     # Carry updated init option forward.
     opts["init"] = init_opt
 
@@ -361,6 +365,40 @@ def _prepare_data(
         row_idx,
         col_idx,
     )
+
+
+def _require_retained_probe_observations(
+    original: Matrix | None, retained: Matrix | None
+) -> None:
+    """Refuse incomplete probe diagnostics after training-axis preparation.
+
+    Unchanged axes return the original probe object, so valid common paths
+    need no additional scan. Stored zeros count as observations; NaNs do not.
+    This also guards historical sparse sum-based axis removal.
+
+    Raises:
+        ValueError: Preparation removed an observed probe feature or sample.
+    """
+    if original is None or retained is original:
+        return
+    if _probe_observation_count(original) != _probe_observation_count(retained):
+        msg = (
+            "Probe entries would be discarded by empty-axis removal; "
+            "each probe feature/sample must remain in training"
+        )
+        raise ValueError(msg)
+
+
+def _probe_observation_count(probe: Matrix | None) -> int:
+    """Count observed probe cells without densifying sparse input.
+
+    Returns:
+        Non-NaN stored entries or non-NaN dense cells, including numeric zeros.
+    """
+    if probe is None:
+        return 0
+    values = sp.csr_matrix(probe).data if sp.issparse(probe) else probe
+    return int(values.size - np.count_nonzero(np.isnan(values)))
 
 
 def _coerce_probe(probe: object, *, sparse_input: bool) -> Matrix | None:
