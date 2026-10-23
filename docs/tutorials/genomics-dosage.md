@@ -8,9 +8,9 @@ values. VBPCApy's sparse solver assigns a different meaning to an unstored
 entry: it is missing. Use a dense floating-point array and an explicit
 observation mask for ordinary 0/1/2 dosage data.
 
-The preprocessing utilities use the scikit-learn convention of samples by
-features. The VBPCA estimator uses features by samples, so transpose only after
-preprocessing.
+The preprocessing utilities and native estimator use the scikit-learn
+convention of samples by features. This tutorial deliberately uses the
+feature-first compatibility adapter, so it transposes only after preprocessing.
 
 ## Prepare and inspect the matrix
 
@@ -43,7 +43,7 @@ as an observed value even when its mask entry is accidentally true.
 scaler = MissingAwareStandardScaler()
 scaled = scaler.fit_transform(dosage, mask=observed)
 
-# VBPCA uses features by samples.
+# The explicit legacy adapter uses features by samples.
 x = np.asfortranarray(scaled.T)
 mask = np.asfortranarray(observed.T)
 

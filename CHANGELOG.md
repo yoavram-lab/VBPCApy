@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Correct the native component-selection example and documentation of native
+  versus legacy data orientation and new-row projection.
+- State the exact wheel architectures published for 0.5 and add the
+  version-specific Zenodo DOI to the copyable citation metadata.
+
 ## [0.5.0] - 2026-10-23
 
 This release changes the public estimator and selection layout to samples x

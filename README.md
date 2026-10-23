@@ -16,7 +16,8 @@ Missing values are common in scientific and industrial tabular datasets, but man
 
 ## Installation
 
-**From PyPI** (pre-built wheels for Python 3.11–3.14, Linux/macOS/Windows):
+**From PyPI** (pre-built wheels for Python 3.11–3.14 on Linux x86_64, macOS
+arm64, and Windows amd64):
 ```bash
 pip install vbpca-py
 ```
@@ -187,7 +188,7 @@ encoder = AutoEncoder(
 )
 Z = encoder.fit_transform(X)  # samples x encoded features
 best_k, results = cross_validate_components(
-    Z.T,
+    Z,
     components=range(5),
     config=CVConfig(encoding_schema=encoder.encoding_schema_, metric="brier"),
 )
@@ -353,6 +354,7 @@ If you use this package in your research, please cite:
   year = {2026},
   url = {https://github.com/yoavram-lab/VBPCApy},
   version = {0.5.0},
+  doi = {10.5281/zenodo.23602828},
 }
 ```
 

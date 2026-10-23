@@ -18,6 +18,7 @@ authors:
     orcid: "https://orcid.org/0000-0002-9653-4458"
     affiliation: "Tel Aviv University"
 repository-code: "https://github.com/yoavram-lab/VBPCApy"
+repository-artifact: "https://github.com/yoavram-lab/VBPCApy/releases/tag/v0.5.0"
 url: "https://github.com/yoavram-lab/VBPCApy"
 abstract: >
   Variational Bayesian PCA (Ilin and Raiko, 2010) with support for missing data,
@@ -36,8 +37,11 @@ version: "0.5.0"
 date-released: "2026-10-23"
 identifiers:
   - type: doi
+    value: "10.5281/zenodo.23602828"
+    description: "Archived release 0.5.0"
+  - type: doi
     value: "10.5281/zenodo.19389250"
-    description: "Zenodo archive"
+    description: "Zenodo archive for all versions"
 references:
   - type: article
     title: "Practical Approaches to Principal Component Analysis in the Presence of Missing Values"

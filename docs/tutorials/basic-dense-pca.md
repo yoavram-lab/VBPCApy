@@ -25,9 +25,10 @@ S_true = rng.standard_normal((true_rank, n_samples))
 X = W_true @ S_true + noise_std * rng.standard_normal((n_features, n_samples))
 ```
 
-!!! note "Features × samples"
-    VBPCApy expects each **column** to be one observation. This differs from
-    scikit-learn's row-per-sample convention. See
+!!! note "Legacy-adapter features × samples"
+    The explicit compatibility adapter used here expects each **column** to be
+    one observation. The native 0.5 estimator follows scikit-learn's
+    row-per-sample convention. See
     [Data Convention](../concepts/data-convention.md) for details.
 
 ## Fit the model

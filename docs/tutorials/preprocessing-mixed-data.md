@@ -134,16 +134,18 @@ ordinal_auto = AutoEncoder(
 )
 ```
 
-!!! note "Convention mismatch"
-    `AutoEncoder` expects **samples × features** (scikit-learn convention), but
-    `VBPCA` expects **features × samples**. Transpose when passing to the model.
+!!! note "Legacy-adapter convention"
+    `AutoEncoder` expects **samples × features** (scikit-learn convention).
+    This example deliberately uses `vbpca_py.legacy.VBPCA`, which retains
+    **features × samples**, so it transposes the encoded table. The native
+    `vbpca_py.VBPCA` estimator uses samples × features without a transpose.
 
 ## Fit VB-PCA
 
 ```python
 from vbpca_py.legacy import VBPCA
 
-# Transpose: features × samples
+# The explicit legacy adapter uses features × samples.
 Z_t = Z.T
 mask_t = (~np.isnan(Z_t)).astype(float)
 

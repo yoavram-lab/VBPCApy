@@ -73,10 +73,12 @@ Pass held-out probe data using `model.fit(x, xprobe=probe)`; it is not a
 constructor hyperparameter. Constructor values are stored unchanged. Native sklearn `get_params`,
 `set_params`, `clone`, and grid-search parameter selection can inspect every
 parameter. Configuration validation happens in `get_config()` or fitting.
-This parameter contract does not change the current features × samples
-orientation or add projection of new data; those remain separate estimator
-migration work. Use the package's model-selection helpers for its existing
-missing-entry validation workflow.
+This typed parameter contract does not change the low-level `pca_full`
+features × samples boundary. The native estimator uses samples × features and
+supports conditional projection of new rows through `transform` and
+`transform_posterior`; the [0.5 migration guide](migration-05.md) distinguishes
+those interfaces. Use the package's model-selection helpers for
+missing-entry validation workflows.
 
 ### Migrating keyword dictionaries and `.opts`
 

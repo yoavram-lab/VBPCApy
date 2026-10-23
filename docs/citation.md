@@ -11,6 +11,7 @@ If you use this package in your research, please cite:
   year = {2026},
   url = {https://github.com/yoavram-lab/VBPCApy},
   version = {0.5.0},
+  doi = {10.5281/zenodo.23602828},
 }
 ```
 
@@ -27,5 +28,7 @@ If you use this package in your research, please cite:
 }
 ```
 
-Machine-readable citation metadata is available in
-[CITATION.cff](https://github.com/yoavram-lab/VBPCApy/blob/main/CITATION.cff).
+Machine-readable metadata is available in the
+[0.5.0 citation file](https://github.com/yoavram-lab/VBPCApy/blob/v0.5.0/CITATION.cff);
+the [development citation file](https://github.com/yoavram-lab/VBPCApy/blob/main/CITATION.cff)
+tracks the current repository state.
