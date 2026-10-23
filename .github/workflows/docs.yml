@@ -5,8 +5,15 @@ on:
     branches: [main]
     paths:
       - "docs/**"
+      - "examples/**"
+      - "tests/test_markdown_examples.py"
+      - "tests/test_notebook_examples.py"
       - "mkdocs.yml"
       - "src/vbpca_py/**"
+      - "README.md"
+      - "MANIFEST.in"
+      - "pyproject.toml"
+      - ".github/workflows/docs.yml"
   workflow_dispatch:
 
 permissions:
@@ -33,6 +40,11 @@ jobs:
         run: uv sync --extra docs
       - name: Build docs
         run: uv run mkdocs build --strict
+      - name: Execute maintained documentation workflows
+        run: >-
+          uv run pytest -q
+          tests/test_markdown_examples.py
+          tests/test_notebook_examples.py
       - uses: actions/upload-pages-artifact@v3
         with:
           path: site

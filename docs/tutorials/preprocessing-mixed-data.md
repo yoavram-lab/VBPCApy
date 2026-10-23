@@ -129,7 +129,9 @@ Ordinal columns are never inferred, because the data cannot say whether levels
 are ordered.
 
 ```python
-auto = AutoEncoder(column_types=["ordinal", "categorical", "continuous"])
+ordinal_auto = AutoEncoder(
+    column_types=["ordinal", "categorical", "continuous"]
+)
 ```
 
 !!! note "Convention mismatch"
@@ -183,7 +185,7 @@ log_tf = MissingAwareLogTransformer()
 income_log = log_tf.fit_transform(income.reshape(-1, 1))
 
 # Winsorize outliers to 1st–99th percentile
-winsor = MissingAwareWinsorizer(lower_percentile=1, upper_percentile=99)
+winsor = MissingAwareWinsorizer(lower_quantile=0.01, upper_quantile=0.99)
 income_clipped = winsor.fit_transform(income.reshape(-1, 1))
 
 # Yeo-Johnson power transform
