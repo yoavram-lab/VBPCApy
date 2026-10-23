@@ -72,6 +72,11 @@ fitted results; it does not change input orientation. See the
 [mode comparison and migration example](docs/howto/compatibility-modes.md)
 before changing an established workflow.
 
+The public `make_xprobe_mask` helper defaults to modern sparse splitting:
+unselected stored zeros are retained and stored NaNs are not sampled. Pass
+`compat_mode="strict_legacy"` explicitly to reproduce its historical sparse
+subtraction behavior. Legacy automatic fits use their configured mode.
+
 ## Features
 
 For sparse observations whose values include zero, use `compat_mode="modern"`

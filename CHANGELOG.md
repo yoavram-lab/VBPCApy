@@ -53,6 +53,14 @@ The development version is not a release announcement.
 
 ### Changed
 
+- Preserve unselected stored zeros in modern sparse automatic probes and
+  materialize legacy modern mask-requested zeros without sparse addition or
+  epsilon substitution. The public `make_xprobe_mask` helper defaults to modern
+  splitting, excludes stored NaNs from sampling and accepts an explicit
+  `compat_mode="strict_legacy"` for historical subtraction/sampling. Legacy
+  automatic fits and component selection pass their configured mode; the
+  native estimator's dedicated sparse split is unchanged.
+
 - Preserve finite near-zero training/probe values in modern dense explicit-mask
   fits, matching the equivalent NaN-observation fit. Keep historical epsilon
   replacement in strict-legacy mode.

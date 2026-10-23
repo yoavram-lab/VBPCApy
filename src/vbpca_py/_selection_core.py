@@ -510,6 +510,7 @@ def _ensure_metric_opts(
         fraction=probe_fraction,
         rng=np.random.default_rng(seed),
         mask=mask,
+        compat_mode=str(fit_opts.get("compat_mode", "strict_legacy")),
     )
     fit_opts["xprobe"] = xprobe
 

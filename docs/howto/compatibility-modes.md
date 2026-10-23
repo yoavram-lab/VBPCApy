@@ -44,6 +44,32 @@ adapter/low-level solver is authoritative: combine a supplied mask with
 replace that interface contract. In either mode, observed probes discarded by
 empty training-axis removal are refused rather than silently dropped.
 
+## Split automatic probes without losing observed zeros
+
+`make_xprobe_mask(X, ..., compat_mode="modern")` is the public helper's
+default. It removes exactly the sampled sparse coordinates and preserves
+every other stored zero. Stored NaNs are excluded from modern sampling;
+an explicit mask can request a zero at an absent coordinate. The mask only
+restricts probe sampling: it does not filter other entries from the returned
+training copy. Apply the same observation mask when fitting that copy.
+Neither input buffers nor the input mask are modified. The returned matrices
+retain the input orientation.
+
+For an older helper-based reproduction, explicitly pass
+`compat_mode="strict_legacy"`. That retains historical sparse sampling and
+subtraction, including the possible loss of unselected stored zeros and
+sampling of stored NaNs. Dense probe sampling is unchanged. The legacy
+estimator passes its configured mode to automatic probe generation, so its
+default strict-legacy path retains that behavior. Modern legacy fits also
+materialize mask-requested zeros directly without epsilon substitution.
+The native estimator keeps its existing dedicated sparse split in both modes.
+Component selection passes its requested mode when creating probes.
+
+The executed example below checks the reported nine-entry sparse case: seed
+19 holds out a nonzero observation, leaving eight training entries and the
+unselected stored zero. Using the strict helper instead leaves seven training
+entries. Compatibility mode does not qualify convergence or held-out coverage.
+
 ## Migrate an existing workflow
 
 For a frozen reproduction, retain the package version, explicit legacy

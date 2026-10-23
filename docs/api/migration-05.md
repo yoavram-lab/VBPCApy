@@ -70,6 +70,11 @@ The legacy dense explicit-mask path could instead count such NaNs as zero
 values; the adapter preserves that behavior for compatibility.
 Masks and explicit `xprobe` tables follow the same sample-first layout as X.
 Automatic probes preserve the exact remaining sparse observation set.
+The standalone `make_xprobe_mask` helper also defaults to modern splitting;
+older helper-based reproductions must explicitly request
+`compat_mode="strict_legacy"`. That historical path can discard unselected
+stored zeros and sample stored NaNs. Legacy automatic fits pass their own
+configured mode. See the [probe policy comparison](../howto/compatibility-modes.md#split-automatic-probes-without-losing-observed-zeros).
 Rows with probe entries must retain at least one training observation. Native
 fitting rejects probe-only rows because the solver removes empty training
 samples and cannot evaluate their probe diagnostics. Low-level and legacy
