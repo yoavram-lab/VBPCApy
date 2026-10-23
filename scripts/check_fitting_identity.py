@@ -20,8 +20,16 @@ import numpy as np
 import scipy
 
 import vbpca_py
-from vbpca_py import AutoEncoder
-from vbpca_py.legacy import CVConfig, cross_validate_components
+from vbpca_py import AutoEncoder, CVConfig
+
+# Early versions, including pre-selection 0.5 candidates, expose only the
+# feature-first root helper. New versions expose it explicitly through legacy.
+try:
+    from vbpca_py.legacy import cross_validate_components
+except ImportError as error:
+    if error.name != "vbpca_py.legacy":
+        raise
+    from vbpca_py import cross_validate_components
 
 # A deliberate version boundary: compare historical feature-first fits in both
 # environments, including installations that predate the explicit legacy API.
