@@ -10,6 +10,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+import vbpca_py
+
 ROOT = Path(__file__).parents[1]
 
 
@@ -18,6 +20,24 @@ def test_public_api_and_actual_quickstart_migration_examples():
     counts = checker["check_examples"](ROOT)
     assert counts
     assert all(count > 0 for count in counts.values())
+
+
+@pytest.mark.parametrize("failure", ["editable", "wrong-version"])
+def test_installed_examples_refuse_wrong_package_provenance(
+    tmp_path, monkeypatch, failure
+):
+    checker = runpy.run_path(str(ROOT / "scripts/check_public_examples.py"))
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nversion = "999.0.0"\n', encoding="utf-8"
+    )
+    location = (
+        tmp_path / "src/vbpca_py/__init__.py"
+        if failure == "editable"
+        else Path(sys.prefix) / "vbpca_py/__init__.py"
+    )
+    monkeypatch.setattr(vbpca_py, "__file__", str(location))
+    with pytest.raises(RuntimeError, match=r"editable checkout|Installed version"):
+        checker["check_examples"](tmp_path, require_wheel=True)
 
 
 @pytest.mark.docs

@@ -50,7 +50,7 @@ availability or helper skips cannot replace or disable the required checks.
 The extended CI job is diagnostic; inspect its output when changing the legacy
 reference implementations.
 
-## Dtypes, records and ownership in 0.5 development
+## Dtypes, records and ownership in 0.5
 
 Array annotations identify dtype; shape and ownership are checked separately.
 The numerical helpers distinguish these representations:

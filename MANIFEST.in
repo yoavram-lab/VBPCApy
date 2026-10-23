@@ -34,6 +34,9 @@ include tools/allocation_counter.c
 # -----------------------------
 # Include all lightweight tests
 recursive-include tests *.py
+include tests/data/legacy_pca_full_dense.mat
+include tests/data/legacy_pca_full_missing.mat
+include tests/data/legacy_rotate_to_pca.mat
 include examples/mixed-missing-table.ipynb
 include docs/getting-started/quickstart.md
 include docs/tutorials/basic-dense-pca.md

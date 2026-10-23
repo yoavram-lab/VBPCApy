@@ -105,7 +105,7 @@ def _execute_gallery(root, destination):
             f"# {title}",
             description,
             "These synthetic examples run at most eight fit iterations. They demonstrate API behavior; they do not establish posterior convergence, calibration or a recommended capacity.",
-            f"This example requires the 0.5 development API with the `plot` extra. From a 0.5 source checkout, install `python -m pip install '.[plot]'`, then run `python scripts/{filename} --output-dir outputs`. The downloaded source can also run directly against that installed development build.",
+            f"This example uses the 0.5 API with the `plot` extra. From a matching source checkout, install `python -m pip install '.[plot]'`, then run `python scripts/{filename} --output-dir outputs`. The downloaded source can also run directly against that installed 0.5 build.",
             f"[Download this standalone source]({filename}).",
             "## Output",
             f"```text\n{completed.stdout.rstrip()}\n```",

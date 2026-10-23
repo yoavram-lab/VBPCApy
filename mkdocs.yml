@@ -117,6 +117,7 @@ nav:
   - Limitations: limitations.md
   - Changelog: changelog.md
   - Release Validation:
+    - 0.5.0: releases/0.5.0.md
     - 0.4.12: releases/0.4.12.md
     - 0.4.11: releases/0.4.11.md
     - 0.4.7: releases/0.4.7.md

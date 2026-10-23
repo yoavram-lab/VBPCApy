@@ -1,6 +1,6 @@
 # Quick Start
 
-The native 0.5 development estimator consumes **samples x features** and defaults
+The native 0.5 estimator consumes **samples x features** and defaults
 to modern observation semantics. Dense NaNs are missing; numeric zeros are
 observed. For the pre-0.5 feature-first API, use the explicit
 [legacy adapter](../api/migration-05.md#explicit-legacy-api-and-serialized-models).

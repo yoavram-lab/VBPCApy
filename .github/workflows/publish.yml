@@ -3,7 +3,7 @@ name: Publish to PyPI
 on:
   release:
     types: [published]
-  workflow_dispatch:       # manual trigger for TestPyPI dry-runs
+  workflow_dispatch:       # build and qualify only; no upload
 
 permissions:
   contents: read
@@ -30,6 +30,12 @@ jobs:
         run: sudo apt-get install -y libeigen3-dev
       - name: Build sdist
         run: uv build --sdist
+      - name: Install development, plotting and documentation test dependencies
+        run: uv sync --extra dev --extra plot --extra docs
+      - name: Install from the actual source archive
+        run: uv pip install --reinstall --no-deps dist/*.tar.gz
+      - name: Qualify extracted source tests, public examples and strict site
+        run: .venv/bin/python scripts/check_sdist_tests.py dist --qualify
       - uses: actions/upload-artifact@v4
         with:
           name: sdist
@@ -67,6 +73,9 @@ jobs:
         env:
           # Python versions to build
           CIBW_BUILD: cp311-* cp312-* cp313-* cp314-*
+          CIBW_ARCHS_LINUX: x86_64
+          CIBW_ARCHS_MACOS: arm64
+          CIBW_ARCHS_WINDOWS: AMD64
           # Free-threaded CPython (cp314t) is not supported yet.
           CIBW_SKIP: "*-musllinux_* *-win32 *-manylinux_i686 cp31?t-*"
           # Use manylinux_2_28 so pre-built scipy wheels are available
@@ -76,7 +85,9 @@ jobs:
           CIBW_BEFORE_BUILD_LINUX: >-
             dnf install -y eigen3-devel 2>/dev/null ||
             apt-get install -y libeigen3-dev 2>/dev/null || true
-          CIBW_TEST_REQUIRES: pytest pytest-benchmark hypothesis numpy scipy matplotlib mypy scipy-stubs
+          # Resolve constrained dependencies through wheel metadata. Passing
+          # inequality specifiers through Windows cmd can become redirection.
+          CIBW_TEST_EXTRAS: dev,plot
           CIBW_TEST_COMMAND: python -m pytest {project}/tests -q -x -m "not perf and not octave and not docs" --ignore={project}/tests/test_octave_parity_smoke.py --ignore={project}/tests/test_rms_regression.py --ignore={project}/tests/test_cost.py --ignore={project}/tests/test_mean.py --ignore={project}/tests/test_rotate.py
 
       - uses: actions/upload-artifact@v4
@@ -90,6 +101,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
       - uses: actions/download-artifact@v4
         with:
           path: dist
@@ -98,6 +110,8 @@ jobs:
         run: |
           ls -1 dist
           python scripts/check_release_artifacts.py dist
+      - name: Validate distribution metadata and readme rendering
+        run: uvx twine check --strict dist/*
 
   # ── Publish to PyPI ────────────────────────────────────────────────
   publish:

@@ -1,6 +1,6 @@
 # A missing-aware Pipeline from fit to reconstruction
 
-This example uses the unreleased 0.5 API. Run it from a development checkout
+This example uses the 0.5 API. Run its standalone script from a matching checkout
 using the [installation instructions](../getting-started/installation.md).
 The input has 36 samples and two original variables: a categorical region and
 a continuous size. NaNs are missing. A Boolean mask also excludes arbitrary

@@ -49,6 +49,13 @@ def _write_metadata(
         f"# Changelog\n\n## [{project_version}] - {changelog_date}\n",
         encoding="utf-8",
     )
+    root.joinpath("docs").mkdir(exist_ok=True)
+    for relative in ("README.md", "docs/citation.md"):
+        root.joinpath(relative).write_text(
+            "```bibtex\n@software{example,\n"
+            f"  version = {{{citation_version}}},\n}}\n```\n",
+            encoding="utf-8",
+        )
 
 
 def test_release_metadata_accepts_consistent_values(tmp_path: Path) -> None:
@@ -75,6 +82,26 @@ def test_release_metadata_rejects_inconsistency(
 
     with pytest.raises(ValueError, match=message):
         check_release_metadata(tmp_path, tag)
+
+
+@pytest.mark.parametrize("relative", ["README.md", "docs/citation.md"])
+@pytest.mark.parametrize("failure", ["missing", "stale", "no-version", "duplicate"])
+def test_release_rejects_unusable_copyable_citation(tmp_path, relative, failure):
+    _write_metadata(tmp_path)
+    path = tmp_path / relative
+    text = path.read_text(encoding="utf-8")
+    if failure == "missing":
+        path.unlink()
+    else:
+        if failure == "stale":
+            text = text.replace("{1.2.3}", "{1.2.2}")
+        elif failure == "no-version":
+            text = text.replace("  version = {1.2.3},\n", "")
+        else:
+            text += "  version = {1.2.3},\n"
+        path.write_text(text, encoding="utf-8")
+    with pytest.raises(ValueError, match="citation"):
+        check_release_metadata(tmp_path, "v1.2.3")
 
 
 def _write_development_metadata(
@@ -107,6 +134,21 @@ def test_development_retains_stable_citation(
     output = capsys.readouterr().out
     assert f"{development} (unreleased)" in output
     assert f"citation remains {stable}" in output
+
+
+@pytest.mark.parametrize("relative", ["README.md", "docs/citation.md"])
+def test_development_citation_examples_keep_the_last_stable_version(
+    tmp_path, monkeypatch, relative
+):
+    monkeypatch.delenv("RELEASE_TAG", raising=False)
+    _write_development_metadata(tmp_path)
+    path = tmp_path / relative
+    path.write_text(
+        path.read_text(encoding="utf-8").replace("{0.4.12}", "{0.5.0.dev0}"),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="citation versions"):
+        check_release_metadata(tmp_path)
 
 
 @pytest.mark.parametrize("from_environment", [False, True])
