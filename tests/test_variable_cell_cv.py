@@ -7,7 +7,7 @@ import operator
 import numpy as np
 import pytest
 
-from vbpca_py import model_selection
+from vbpca_py import _selection_core as model_selection
 from vbpca_py._selection_core import CVConfig, cross_validate_components
 from vbpca_py.preprocessing import MissingAwareOneHotEncoder
 

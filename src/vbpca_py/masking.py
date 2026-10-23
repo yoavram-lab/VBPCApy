@@ -12,7 +12,11 @@ import scipy.sparse as sp
 from sklearn import get_config  # type: ignore[import-untyped]
 from sklearn.utils.validation import validate_data  # type: ignore[import-untyped]
 
-from ._feature_names import canonical_table_nulls, check_named_columns
+from ._feature_names import (
+    canonical_table_nulls,
+    check_named_columns,
+    named_table_input,
+)
 from ._preprocessing_state import (
     PreprocessorState,
     _check_sparse_structure,
@@ -124,17 +128,18 @@ class ObservationMasker(PreprocessorState):
             raw = cast("sp.csr_matrix | sp.csc_matrix | sp.coo_matrix", X)
             observed = _observation_mask(raw.shape, mask, sparse=True)
             _check_observed_infinity(raw, observed)
-        checked = cast(
-            "InputMatrix",
-            validate_data(
-                self,
-                X,
-                reset=reset,
-                dtype=None,
-                accept_sparse=["csr"],
-                ensure_all_finite=False,
-            ),
-        )
+        with named_table_input(self, X, reset=reset) as (validator, values):
+            checked = cast(
+                "InputMatrix",
+                validate_data(
+                    validator,
+                    values,
+                    reset=reset,
+                    dtype=None,
+                    accept_sparse=["csr"],
+                    ensure_all_finite=False,
+                ),
+            )
         names = getattr(self, "feature_names_in_", None)
         if names is not None and np.unique(names).size != len(names):
             msg = "X has duplicate feature names"

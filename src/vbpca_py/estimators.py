@@ -13,7 +13,12 @@ import scipy.sparse as sp
 from sklearn.utils import Tags  # type: ignore[import-untyped]  # noqa: TC002 - runtime annotation resolution
 from sklearn.utils.validation import check_array, check_is_fitted, validate_data  # type: ignore[import-untyped]
 
-from ._feature_names import FeatureNamesMixin, check_named_columns, empty_table_array
+from ._feature_names import (
+    FeatureNamesMixin,
+    check_named_columns,
+    empty_table_array,
+    named_table_input,
+)
 from ._full_update import _covariances_list
 from ._memory import check_dense_output_budget, resolve_max_dense_bytes
 from ._native import TypedEstimator
@@ -348,17 +353,18 @@ class VBPCA(FeatureNamesMixin, TypedEstimator):
             ValueError: Feature names, dimensions or observations are invalid.
         """
         check_named_columns(X)
-        checked = cast(
-            "InputMatrix",
-            validate_data(
-                self,
-                X,
-                reset=reset,
-                accept_sparse=["csr", "csc"],
-                dtype="numeric",
-                ensure_all_finite=False,
-            ),
-        )
+        with named_table_input(self, X, reset=reset) as (validator, values):
+            checked = cast(
+                "InputMatrix",
+                validate_data(
+                    validator,
+                    values,
+                    reset=reset,
+                    accept_sparse=["csr", "csc"],
+                    dtype="numeric",
+                    ensure_all_finite=False,
+                ),
+            )
         names = getattr(self, "feature_names_in_", None)
         if names is not None and np.unique(names).size != len(names):
             msg = "X has duplicate feature names"
@@ -430,25 +436,10 @@ class VBPCA(FeatureNamesMixin, TypedEstimator):
             raise ValueError(msg)
         probe = None
         if xprobe is not None:
-            raw_probe = cast(
-                "InputMatrix",
-                validate_data(
-                    self,
-                    xprobe,
-                    reset=False,
-                    accept_sparse=["csr", "csc"],
-                    dtype="numeric",
-                    ensure_all_finite=False,
-                ),
-            )
-            if raw_probe.shape != data.shape or sp.issparse(raw_probe) != sp.issparse(
-                data
-            ):
+            probe = self._validate_observations(xprobe, None, reset=False)
+            if probe.shape != data.shape or sp.issparse(probe) != sp.issparse(data):
                 msg = "xprobe must match X shape and dense/sparse representation"
                 raise ValueError(msg)
-            probe = observed_matrix(
-                raw_probe, None, resolve_max_dense_bytes(self.max_dense_bytes)
-            )
         elif self.xprobe_fraction > 0:
             data, probe = make_native_probe(
                 data, self.xprobe_fraction, np.random.default_rng(self.random_state)

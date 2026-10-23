@@ -268,13 +268,24 @@ def test_native_validation_refuses_invalid_data_and_does_not_mutate_inputs(helpe
         helper(x, mask=np.ones((1, 1), dtype=bool), components=[1], **OPTIONS)
 
 
-def test_native_probe_names_and_representation_are_checked():
-    x = pd.DataFrame(_data(), columns=list("abcde"))
-    probe = pd.DataFrame(_probe(x.to_numpy()), columns=x.columns)
+@pytest.mark.parametrize("kind", ["pandas", "polars"])
+def test_native_probe_names_and_representation_are_checked(kind):
+    names = list("abcde")
+    if kind == "pandas":
+        x = pd.DataFrame(_data(), columns=names)
+        probe = pd.DataFrame(_probe(_data()), columns=names)
+        reordered, shorter = probe.iloc[:, ::-1], probe.iloc[:3]
+    else:
+        x = pl.DataFrame(_data(), schema=names)
+        probe = pl.DataFrame(_probe(_data()), schema=names)
+        reordered, shorter = probe.select(names[::-1]), probe.head(3)
     _selection(x, xprobe=probe)
-    for bad in [probe.iloc[:, ::-1], probe.iloc[:3], sp.csr_matrix(probe.to_numpy())]:
+    VBPCA(1, **OPTIONS).fit(x, xprobe=probe)
+    for bad in [reordered, shorter, sp.csr_matrix(probe.to_numpy())]:
         with pytest.raises(ValueError, match=r"feature names|shape|representation"):
             _selection(x, xprobe=bad)
+        with pytest.raises(ValueError, match=r"feature names|shape|representation"):
+            VBPCA(1, **OPTIONS).fit(x, xprobe=bad)
     for kwargs in [{"xprobe": None}, {"xprobe_fraction": 0.1}]:
         with pytest.raises(ValueError, match="constructs its own probes"):
             cross_validate_components(x, components=[1], **OPTIONS, **kwargs)

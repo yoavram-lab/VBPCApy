@@ -56,6 +56,9 @@ The development version is not a release announcement.
   Qualify grouped, weighted multi-metric sklearn CV/GridSearchCV with raw mask
   routing and dense output containers. Masked inference after search uses its
   fitted `best_estimator_` because search `transform` does not route metadata.
+  Preserve Polars 2 input names and reject changed/reordered columns on the
+  sklearn 1.8 dependency floor, including preprocessors, maskers and probes,
+  without requiring pandas.
 
 - Name outputs from fitted categories, reference drops and original-variable
   plans; unnamed encoders use `x0`, `x1`, ... and generated collisions receive
