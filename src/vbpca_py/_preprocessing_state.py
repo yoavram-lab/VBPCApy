@@ -194,7 +194,9 @@ def _check_mask(
     return observed
 
 
-def _check_sparse_structure(x: object, *, complex_indicators: bool = False) -> None:
+def _check_sparse_structure(
+    x: object, *, complex_indicators: bool = False, check_infinity: bool = True
+) -> None:
     if not sp.issparse(x):
         return
     supported = cast("sp.csr_matrix | sp.csc_matrix | sp.coo_matrix", x)
@@ -209,7 +211,11 @@ def _check_sparse_structure(x: object, *, complex_indicators: bool = False) -> N
     if np.iscomplexobj(supported.data) and not complex_indicators:
         msg = "Complex data not supported"
         raise ValueError(msg)
-    if supported.data.dtype.kind in "biufc" and np.any(np.isinf(supported.data)):
+    if (
+        check_infinity
+        and supported.data.dtype.kind in "biufc"
+        and np.any(np.isinf(supported.data))
+    ):
         msg = "Input contains infinity in observed entries"
         raise ValueError(msg)
     if supported.format == "coo":

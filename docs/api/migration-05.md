@@ -142,10 +142,23 @@ raw categories or model inputs.
 
 The default preprocessors pass all applicable generic estimator checks on the
 minimum/current supported sklearn versions without skips or expected failures.
-These checks do not establish Pipeline mask routing or CV leakage prevention.
-Those integration gates remain under #178/#39; a width-changing encoder must
-not receive a stale raw mask downstream. Strict mixed numeric encoding-schema
-validation remains tracked under #38.
+For explicit masks in a Pipeline, put `ObservationMasker()` before learned
+preprocessing and enable sklearn metadata routing. Pass
+`observation_mask=mask` to Pipeline/GridSearchCV, or
+`params={"observation_mask": mask}` to `cross_validate`. The leading step
+consumes this alias; downstream encoders and VBPCA receive dense NaNs or sparse
+stored observations. CV slices training and test masks by row before feature
+expansion. Do not set `transform_input` for entry masks or forward the raw mask
+to a wider encoded table. Direct masker calls use `mask=mask`; every new table
+needs its own aligned mask when it contains placeholders. Without explicit
+masks, ordinary NaN/stored-entry Pipelines need no routing opt-in. See the
+[preprocessing API](preprocessing.md) for sparse zero handling and the runnable
+example. Generated output names/containers and selection-helper migration
+remain separate gates under #179/#39.
+
+`EncodingSchema.validate(..., strict_numeric=True)` now checks mixed numeric
+inverse maps explicitly; default categorical-only validation remains compatible
+with numeric descriptors that omit affine metadata.
 
 ## Scoring and cellwise selection
 

@@ -13,6 +13,13 @@ The development version is not a release announcement.
 
 ### Added
 
+- Add native `ObservationMasker` to consume Boolean original-variable masks
+  before learned preprocessing. Route its dedicated `observation_mask` alias
+  through Pipeline fit/transform/scoring and CV/GridSearchCV row splits.
+  Preserve stored and mask-requested sparse zeros without densification,
+  reject malformed sparse buffers before conversion, and keep no training
+  mask/data payload. Include a runnable mixed-input Pipeline example.
+
 - Add `EncodingSchema.validate(..., strict_numeric=True)` to require usable
   single-column continuous/ordinal affine metadata. Apply the same checks in
   numeric decoding and before raw-cell CV fits. Wholly missing numeric training

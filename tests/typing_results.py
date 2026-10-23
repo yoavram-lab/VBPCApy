@@ -200,3 +200,15 @@ def check_encoding_validation_types() -> None:
     assert_type(schema.validate(1, strict_numeric=True), None)
     assert_type(variable.decode_numeric(np.zeros((1, 2))), Float64Array)
     schema.validate(1, strict_numeric="yes")  # type: ignore[arg-type]
+
+
+def check_observation_masker_types() -> None:
+    from vbpca_py import ObservationMasker
+    from vbpca_py._types import InputMatrix
+
+    masker = ObservationMasker()
+    assert_type(masker.fit([[1.0], [0.0]], mask=[[True], [False]]), ObservationMasker)
+    assert_type(masker.transform([[1.0]], mask=[[True]]), InputMatrix)
+    assert_type(masker.fit_transform([[1.0]], mask=[[True]]), InputMatrix)
+    assert_type(masker.get_params(), dict[str, object])
+    assert_type(masker.set_params(), ObservationMasker)

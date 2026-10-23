@@ -96,6 +96,20 @@ The low-level `pca_full()` return annotation is `PCAResult`. See the
 outputs and shared covariance blocks. Type annotations specify dtypes; they
 do not validate array shapes or make arrays immutable.
 
+## Pipeline observation masks
+
+For explicit masks in a scikit-learn Pipeline, place `ObservationMasker()`
+before learned preprocessing. Enable metadata routing and pass
+`observation_mask=mask` to Pipeline/GridSearchCV, or
+`params={"observation_mask": mask}` to `cross_validate`. The leading step
+turns excluded placeholders into dense NaNs or sparse stored observations;
+downstream steps infer missingness in their own feature layout. CV slices
+training/test masks before feature expansion. Leave `transform_input` unset
+for entry masks and supply a fresh aligned mask for new data. Ordinary
+NaN/stored-entry Pipelines need no metadata opt-in. Run
+`python scripts/example_masked_pipeline.py` for mixed input, row CV, grid search
+and projection; see [preprocessing](docs/api/preprocessing.md) for the contract.
+
 ## Categorical component selection
 
 Dense `AutoEncoder` and `MissingAwareOneHotEncoder` fits expose an

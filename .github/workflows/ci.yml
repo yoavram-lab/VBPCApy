@@ -159,6 +159,7 @@ jobs:
           tests/test_sklearn_compat.py tests/test_probe_coverage.py
           tests/test_preprocessor_state.py
           tests/test_preprocessor_validation.py
+          tests/test_observation_masker.py
 
   numerical-reference:
     runs-on: ubuntu-latest
