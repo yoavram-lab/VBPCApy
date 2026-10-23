@@ -7,11 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Development builds use `0.5.0.dev0` while the estimator and typing migration is
-in progress. The stable citation remains at the most recent public release.
-The development version is not a release announcement.
+## [0.5.0] - 2026-10-23
+
+This release changes the public estimator and selection layout to samples x
+features and makes modern observations the native default. Existing 0.4
+applications should follow the migration guide or import the explicit legacy
+adapter. Python 3.11-3.14 and scikit-learn >=1.8 are required.
 
 ### Added
+
+- Add a synthetic mixed-data notebook and execute maintained quickstart, dense
+  PCA and preprocessing tutorial blocks directly from their documentation.
 
 - Execute six native gallery examples during strict documentation builds,
   publishing their outputs, source downloads, candidate tables and fitted-state
@@ -109,7 +115,7 @@ The development version is not a release announcement.
   Reject sparse masks instead of silently ignoring them, and drop stored NaNs
   from sparse observation structure. Mixed inverse masks describe original
   variables and are applied after decoding. Pipeline mask routing and output
-  container support remain separate work.
+  containers use the native contracts described above.
 
 - Store only constructor parameters in all nine preprocessors. Create learned
   fields during fitting, clear previous/partial state on refit failures or
@@ -133,13 +139,12 @@ The development version is not a release announcement.
 - Require scikit-learn >=1.8 at runtime and remove optional/no-op estimator
   bases. Use native validation, transactional fitted-state cleanup and explicit
   parameter signatures. Preprocessing accepts unsupervised `y` and keyword-only
-  masks; remaining preprocessor conformance and selection migration are tracked
-  by the 0.5 roadmap. Qualify estimator contracts on sklearn 1.8.0 and 1.9.1.
+  masks. Qualify estimator and preprocessor contracts on sklearn 1.8.0 and
+  1.9.1, including selection, Pipeline and cross-validation composition.
 - Version native serialized layouts and explicitly reject unmarked pre-0.5
   estimator pickles. Preserve old feature-first characterization tests and
   versioned engineering runners through explicit legacy imports. See the
-  migration guide for axes, observations, scoring, serialization and the
-  remaining development boundaries.
+  migration guide for axes, observations, scoring and serialization.
 
 - Propagate numerical dtype contracts through solver state, covariance helpers,
   bindings, encoding, preprocessing and selection. Keep raw inputs and dynamic
@@ -162,6 +167,14 @@ The development version is not a release announcement.
   for ownership, thread precedence and migration examples.
 
 ### Performance
+
+- Evaluate marginal variance with bounded covariance matrix products rather
+  than three per-cell einsum contractions and full-shape scratch arrays.
+  Reuse sparse CSR/CSC views and remove observed-cell native heap allocations.
+
+- Permit explicit endpoint-only cost diagnostics for PRMS selection while
+  retaining historical full cost traces by default. Endpoint mode refuses
+  requests that require cost history; it does not change stopping rules.
 
 - Use screened complete-minus-missing full-covariance noise statistics for
   eligible dense, nearly complete inputs at rank 8 or above. Preserve observed
@@ -209,6 +222,10 @@ The development version is not a release announcement.
 - Fail Octave parity checks on interpreter evaluation errors, retaining exit
   status, stdout and stderr. Interpreter absence remains an explicit local
   skip. The selected CI parity job now propagates failures.
+
+- Remove unconditional MATLAB covariance debug exports and restore the
+  reference covariance-pattern helper, including covariance-free paths.
+
 ### Runtime
 
 - Measure actual covariance/layout/statistics workloads with bounded cold/warm
@@ -219,6 +236,14 @@ The development version is not a release announcement.
   and rule deduplication. Reject incompatible profiles without overwriting them.
 - Report requested/effective native pools independently of loaded BLAS pools;
   include discoverable cgroup quotas in allocation caps.
+- Qualify sequential first-minimum execution as a separate component-selection
+  rule. It is distinct from exhaustive global-minimum and one-standard-error
+  selection; early execution is only available for the first-minimum rule.
+- Add advisory interleaved performance CI with machine, build, allocation and
+  provenance metadata. Timing checks remain separate from numerical parity.
+- Qualify installed source archives and all advertised platform wheels before
+  publishing. Wheel-test dependencies include the pandas and Polars containers
+  exercised by the native contract suite; manual builds do not upload packages.
 
 ## [0.4.12] - 2026-10-21
 

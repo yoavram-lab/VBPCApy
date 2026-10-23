@@ -6,6 +6,7 @@ import importlib
 import inspect
 import re
 import sys
+import tomllib
 from pathlib import Path
 
 import vbpca_py
@@ -36,6 +37,14 @@ def check_examples(root, *, require_wheel=False):
         raise RuntimeError(
             "Documentation checks require an installed wheel, not an editable checkout"
         )
+    if require_wheel:
+        with (root / "pyproject.toml").open("rb") as handle:
+            expected_version = tomllib.load(handle)["project"]["version"]
+        if vbpca_py.__version__ != expected_version:
+            raise RuntimeError(
+                f"Installed version {vbpca_py.__version__!r} differs from "
+                f"source version {expected_version!r}"
+            )
     runner = doctest.DocTestRunner()
     counts = {}
     for obj in PUBLIC_OBJECTS:

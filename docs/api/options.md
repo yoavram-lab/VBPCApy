@@ -1,6 +1,6 @@
 # Solver options
 
-The 0.5 development line provides named categorical values in
+Version 0.5 provides named categorical values in
 `vbpca_py.options`. Ordinary string calls to the numerical solver remain
 supported. Parsing is explicit, and occurs when resolving a configuration;
 estimator constructors retain the values supplied by the caller.
@@ -80,7 +80,7 @@ missing-entry validation workflow.
 
 ### Migrating keyword dictionaries and `.opts`
 
-| Previous use | 0.5 development interface |
+| Previous use | 0.5 interface |
 | --- | --- |
 | `VBPCA(2, **settings)` with recognized settings | Continue using it; every setting is now a named constructor parameter |
 | `VBPCA(2, xprobe=probe)` | `VBPCA(2).fit(x, xprobe=probe)` |

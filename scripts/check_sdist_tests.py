@@ -11,8 +11,12 @@ import tempfile
 from pathlib import Path
 
 
-def check_archive(archive: Path) -> None:
+def check_archive(archive: Path, *, qualify: bool = False) -> None:
     """Check shipped tests with the installed library and extracted helpers.
+
+    Qualification also runs the non-performance/non-Octave suite, public API
+    examples and strict site against an installed package. It requires the
+    dev, plot and docs extras in addition to the installed source archive.
 
     Raises:
         ValueError: The archive does not contain one test-bearing project root.
@@ -28,6 +32,19 @@ def check_archive(archive: Path) -> None:
         environment = dict(os.environ)
         environment.pop("PYTHONPATH", None)
         environment.pop("PYTEST_ADDOPTS", None)
+        project = projects[0]
+        if qualify:
+            # Refuse an editable checkout before accepting any release checks.
+            subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/check_public_examples.py",
+                    "--require-wheel",
+                ],
+                cwd=project,
+                env=environment,
+                check=True,
+            )
         # The working directory is the extracted tree. Neither the checkout's
         # analysis helpers nor its test configuration can satisfy missing files.
         subprocess.run(
@@ -41,10 +58,54 @@ def check_archive(archive: Path) -> None:
                 "addopts=",
                 "tests",
             ],
-            cwd=projects[0],
+            cwd=project,
             env=environment,
             check=True,
         )
+        if qualify:
+            subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "pytest",
+                    "-q",
+                    "-o",
+                    "addopts=",
+                    "-m",
+                    "not perf and not octave",
+                    "tests",
+                ],
+                cwd=project,
+                env=environment,
+                check=True,
+            )
+            site = destination / "site"
+            subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "mkdocs",
+                    "build",
+                    "--strict",
+                    "--site-dir",
+                    str(site),
+                ],
+                cwd=project,
+                env=environment,
+                check=True,
+            )
+            subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/check_gallery_site.py",
+                    "--site-dir",
+                    str(site),
+                ],
+                cwd=project,
+                env=environment,
+                check=True,
+            )
+            return
         # Collection cannot detect files opened only while a test runs. Execute
         # the public examples from the extracted tree so their Markdown and
         # notebook inputs must also be present in the archive.
@@ -59,7 +120,7 @@ def check_archive(archive: Path) -> None:
                 "tests/test_markdown_examples.py",
                 "tests/test_notebook_examples.py",
             ],
-            cwd=projects[0],
+            cwd=project,
             env=environment,
             check=True,
         )
@@ -69,11 +130,16 @@ def main() -> None:
     """Check the unique source archive in a release artifact directory."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("directory", type=Path)
+    parser.add_argument(
+        "--qualify",
+        action="store_true",
+        help="Run the shipped suite, API examples and strict site against an installed package",
+    )
     args = parser.parse_args()
     archives = list(args.directory.glob("*.tar.gz"))
     if len(archives) != 1:
         parser.error("provide a directory with exactly one source archive")
-    check_archive(archives[0])
+    check_archive(archives[0], qualify=args.qualify)
 
 
 if __name__ == "__main__":

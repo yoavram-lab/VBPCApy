@@ -20,7 +20,7 @@ with each example.
 | [Original-variable cell validation](raw-cv/index.md) | Training-only preprocessing, categorical scores and numeric units |
 | [Plotting utilities](plots/index.md) | Scree, component loadings and explained variance from the fitted model |
 
-These examples require the unreleased 0.5 API. From its source checkout, install
+These examples use the 0.5 API. From its matching source checkout, install
 `python -m pip install '.[plot]'` to run the scripts. Published 0.4 packages use
 the earlier estimator interface. Optional table output also needs
 the `data` extra for pandas or the `polars` extra for Polars. The

@@ -1,6 +1,6 @@
 # Choose a numerical compatibility mode
 
-The unreleased 0.5 native estimator and public component-selection helpers
+The 0.5 native estimator and public component-selection helpers
 default to `compat_mode="modern"`. Use that policy for new native workflows,
 including observed zeros and small finite measurements. The explicit
 `vbpca_py.legacy` helpers, low-level solver and a directly constructed

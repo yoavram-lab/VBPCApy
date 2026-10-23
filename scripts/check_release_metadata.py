@@ -68,6 +68,30 @@ def _changelog_date(changelog: Path, version: str) -> str:
     return match.group(1)
 
 
+def _citation_example_errors(root: Path, version: str) -> list[str]:
+    """Find missing or stale versions in the two copyable software citations.
+
+    Returns:
+        Descriptions of citation examples that disagree with the CFF version.
+    """
+    errors = []
+    for relative in ("README.md", "docs/citation.md"):
+        path = root / relative
+        if not path.is_file():
+            errors.append(f"missing citation example {relative}")
+            continue
+        versions = re.findall(
+            r"^\s*version\s*=\s*\{([^}]+)\}\s*,?\s*$",
+            path.read_text(encoding="utf-8"),
+            re.MULTILINE,
+        )
+        if versions != [version]:
+            errors.append(
+                f"{relative} citation versions {versions!r} != expected {[version]!r}"
+            )
+    return errors
+
+
 def check_release_metadata(root: Path, release_tag: str | None = None) -> None:
     """Check released metadata or an explicitly unreleased development build.
 
@@ -108,6 +132,7 @@ def check_release_metadata(root: Path, release_tag: str | None = None) -> None:
             "CITATION.cff date-released "
             f"{citation_date!r} != changelog date {changelog_date!r}"
         )
+    errors.extend(_citation_example_errors(root, version))
     if errors:
         raise ValueError("; ".join(errors))
 
@@ -158,6 +183,9 @@ def _check_development_metadata(
     if citation_date != stable_date:
         msg = "CITATION.cff date-released does not match its stable changelog date"
         raise ValueError(msg)
+    citation_errors = _citation_example_errors(root, citation_version)
+    if citation_errors:
+        raise ValueError("; ".join(citation_errors))
     print(
         f"development metadata consistent: {version} (unreleased); "
         f"citation remains {citation_version} ({stable_date})"

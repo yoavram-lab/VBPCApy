@@ -1,12 +1,14 @@
-# Native estimator migration in 0.5 development
+# Native estimator migration in 0.5
 
 The native `VBPCA` boundary consumes samples x features. It requires
 scikit-learn >=1.8, stores constructor parameters unchanged and validates data
 and fitted state through its native validation helpers. This follows the
 [scikit-learn estimator contract](https://scikit-learn.org/stable/developers/develop.html)
 and [`validate_data`](https://scikit-learn.org/stable/modules/generated/sklearn.utils.validation.validate_data.html).
-The package is still in unreleased 0.5 development. Native preprocessing,
-selection and sklearn composition use the contracts described here.
+Native preprocessing, selection and sklearn composition use the contracts
+described here. Upgrade existing applications through the explicit migration
+steps below; the public estimator layout and default observation policy change
+from 0.4.
 
 | API | Data | Components | Joint training scores | Mean |
 | --- | --- | --- | --- | --- |

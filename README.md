@@ -46,7 +46,7 @@ var = model.variance_
 
 More examples: [quickstart](https://yoavram-lab.github.io/VBPCApy/getting-started/quickstart/), [mixed missing-table notebook](examples/mixed-missing-table.ipynb), [missing-aware Pipeline](https://yoavram-lab.github.io/VBPCApy/tutorials/missing-aware-pipeline/), [missing data & model selection](https://yoavram-lab.github.io/VBPCApy/tutorials/missing-data-model-selection/), [genomics dosage data](https://yoavram-lab.github.io/VBPCApy/tutorials/genomics-dosage/), and [sparse data](https://yoavram-lab.github.io/VBPCApy/tutorials/sparse-data/).
 
-The unreleased 0.5 API uses samples x features and defaults to modern
+The 0.5 API uses samples x features and defaults to modern
 observation semantics. `scores_` contains joint training variational means;
 `transform(X_new)` returns conditional projections. The explicit
 `vbpca_py.legacy.VBPCA` adapter preserves the feature-first API and historical
@@ -277,6 +277,8 @@ for evidence, remaining limitations and fixed-iteration reference fits.
 
 ## Development
 
+The [0.5.0 qualification](docs/releases/0.5.0.md) covers the samples-first
+migration, installed examples and complete wheel/source artifact gates.
 The [0.4.7 validation](docs/releases/0.4.7.md) covers native failure repairs
 and numerical references. The [0.4.6 release validation](docs/releases/0.4.6.md)
 describes the paired fitting-compatibility check and package/adoption gates. General scoring and
@@ -350,7 +352,7 @@ If you use this package in your research, please cite:
   title = {{VBPCApy}: Variational Bayesian PCA with Missing Data Support},
   year = {2026},
   url = {https://github.com/yoavram-lab/VBPCApy},
-  version = {0.4.12},
+  version = {0.5.0},
 }
 ```
 

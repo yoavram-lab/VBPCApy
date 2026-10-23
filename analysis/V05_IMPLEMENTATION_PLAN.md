@@ -254,7 +254,9 @@ inventory used for its tests.
 The contract map merged in #320 before production edits. The categorical
 foundation (#324), native empty-eigensystem correction (#323), development
 metadata gate (#325), and fit-owned initialization payloads (#329) have merged
-after green CI. Main now reports `0.5.0.dev0`; no 0.5 release has been published.
+after green CI. The migration used `0.5.0.dev0` before final release preparation.
+The final version and citation are prepared together in #314; publication still
+requires release-head and complete wheel/source qualification.
 The native estimator layout and conditional projection landed in #337, with
 the explicit legacy adapter and migration guide. Typed solver configuration
 (#335) and numerical-helper contracts (#336) are also complete. Probe coverage
@@ -310,3 +312,14 @@ Representative runtime tuning (#316) and advisory performance infrastructure
 (#321) landed separately during this audit. Include their qualified current-main
 behavior in the release assessment; do not repeat completed tuner work or
 change frozen study environments. The statistical-policy work remains separate.
+
+
+## Release preparation checkpoint
+
+Executable gallery/API gates #25/#319 are complete in #354, alongside the
+maintained notebook/tutorial contribution in #355. Strict builds execute all
+six gallery sources, and installed-wheel jobs exercise public examples on the
+minimum/current sklearn versions. #314 prepares the reconciled 0.5.0 change
+notes, citation and dependency/artifact checks. Production publication follows
+qualification of the exact release source and every advertised wheel; this
+checkpoint does not record a completed publication.

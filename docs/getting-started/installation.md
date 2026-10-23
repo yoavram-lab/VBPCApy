@@ -108,7 +108,7 @@ uv sync --extra dev --extra data --extra benchmark
 uv sync --extra dev --extra data --extra benchmark --extra octave
 ```
 
-## 0.5 development dependency boundary
+## 0.5 dependency boundary
 
 Native estimators require scikit-learn >=1.8 at runtime. Minimum and current
 versions are qualified separately. Python remains >=3.11,<3.15. The optional
