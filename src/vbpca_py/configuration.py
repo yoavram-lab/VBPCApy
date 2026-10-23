@@ -98,6 +98,28 @@ class PCAOptions:
     ``init`` is the localized dynamic MAT/struct boundary: it also accepts
     third-party objects exposing ``_fieldnames``; normalization and shape checks
     run during fitting. Array shapes are runtime contracts, not type promises.
+
+    Examples:
+        >>> from vbpca_py import PCAOptions, VBPCA
+        >>> from vbpca_py.options import Algorithm, CompatMode
+        >>> flags = {"angle": False}
+        >>> options = PCAOptions(
+        ...     algorithm=Algorithm.VB,
+        ...     compat_mode=CompatMode.MODERN,
+        ...     convergence_criteria=flags,
+        ... )
+        >>> flags["angle"] = True
+        >>> options.convergence_criteria["angle"]
+        False
+        >>> options.algorithm.value, options.compat_mode.value
+        ('vb', 'modern')
+        >>> restored = PCAOptions.from_kwargs(**options.to_kwargs())
+        >>> restored.algorithm is Algorithm.VB
+        True
+        >>> VBPCA(1).get_config().compat_mode.value
+        'modern'
+        >>> PCAOptions().compat_mode.value
+        'strict_legacy'
     """
 
     init: object = "random"

@@ -77,6 +77,21 @@ unselected stored zeros are retained and stored NaNs are not sampled. Pass
 `compat_mode="strict_legacy"` explicitly to reproduce its historical sparse
 subtraction behavior. Legacy automatic fits use their configured mode.
 
+## Executed examples
+
+The [example gallery](https://yoavram-lab.github.io/VBPCApy/gallery/) executes
+standalone sources during every site build: dense missing observations, sparse
+stored zeros, the mixed-data Pipeline, cost/probe selection, raw-variable cell
+CV and plotting helpers. Pages show the actual output, downloadable source and
+result-derived figures. The bounded fits demonstrate API behavior rather than
+qualifying convergence or calibration.
+
+For a local build, install the `docs` and `plot` extras and run
+`python -m mkdocs build --strict`. The public API doctests and the actual
+quickstart/migration blocks can be run with
+`python scripts/check_public_examples.py`; use
+`python scripts/check_gallery_site.py` to verify rendered source and figures.
+
 ## Features
 
 For sparse observations whose values include zero, use `compat_mode="modern"`

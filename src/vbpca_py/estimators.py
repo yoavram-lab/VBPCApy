@@ -57,6 +57,60 @@ class VBPCA(FeatureNamesMixin, TypedEstimator):
     ``scores_`` contains joint variational training means. ``transform`` returns
     conditional new-row means under the fixed fitted state; these need not equal
     the joint means. Use ``vbpca_py.legacy.VBPCA`` for the pre-0.5 layout/API.
+
+    Examples:
+        These bounded fits demonstrate contracts, not posterior convergence.
+        Input rows are samples; output arrays use float64 by default.
+
+        >>> import numpy as np
+        >>> from sklearn.base import clone
+        >>> from vbpca_py import VBPCA
+        >>> x = np.random.default_rng(19).normal(size=(12, 3))
+        >>> x[0, 0] = np.nan
+        >>> estimator = VBPCA(
+        ...     2,
+        ...     maxiters=4,
+        ...     niter_broadprior=0,
+        ...     random_state=19,
+        ...     num_cpu=1,
+        ...     runtime_tuning="off",
+        ...     verbose=0,
+        ... )
+        >>> model = clone(estimator).fit(x)
+        >>> model.components_.shape, model.scores_.shape
+        ((2, 3), (12, 2))
+        >>> model.get_config().compat_mode.value
+        'modern'
+        >>> new_rows = np.array([[0.0, 1.0, 2.0], [np.nan, np.nan, np.nan]])
+        >>> projected = model.transform(new_rows)
+        >>> projected.shape, projected.dtype.name
+        ((2, 2), 'float64')
+        >>> posterior = model.transform_posterior(new_rows)
+        >>> posterior.covariance.shape
+        (2, 2, 2)
+        >>> np.testing.assert_allclose(projected, posterior.mean)
+        >>> np.testing.assert_allclose(posterior.covariance[1], np.eye(2))
+        >>> bool(np.shares_memory(posterior.mean, model.scores_))
+        False
+        >>> model.inverse_transform(projected).shape
+        (2, 3)
+        >>> model.get_feature_names_out().tolist()
+        ['vbpca0', 'vbpca1']
+        >>> row_scores = model.score_samples(new_rows)
+        >>> bool(np.isfinite(row_scores).all()), float(row_scores[1])
+        (True, 0.0)
+        >>> bool(np.isclose(model.score(new_rows), row_scores.mean()))
+        True
+        >>> try:
+        ...     model.transform(np.ones((2, 4)))
+        ... except ValueError as error:
+        ...     print("features" in str(error))
+        True
+
+        ``scores_`` is the joint variational fit; ``projected`` is conditional
+        on the fixed fitted factors. A wholly missing row has a unit latent
+        prior covariance and contributes zero to the plug-in row log density.
+        A scoring table must contain at least one observed entry overall.
     """
 
     components_: Float64Array

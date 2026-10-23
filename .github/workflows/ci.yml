@@ -189,6 +189,45 @@ jobs:
       - name: Sparse native allocation contract (Linux/glibc)
         run: uv run --extra dev python scripts/check_sparse_allocations.py
 
+  documentation-examples:
+    name: docs/examples (sklearn ${{ matrix.sklearn-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        sklearn-version: ["1.8.0", "1.9.1"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+          cache-dependency-glob: "**/pyproject.toml"
+      - name: Install Eigen
+        run: sudo apt-get install -y libeigen3-dev
+      - name: Install explicit documentation, plotting and table dependencies
+        run: uv sync --extra dev --extra docs --extra plot --extra data --extra polars --python 3.12
+      - name: Match supported sklearn version and install a wheel
+        run: |
+          uv build --wheel --out-dir dist-docs
+          uv pip install "scikit-learn==${{ matrix.sklearn-version }}"
+          uv pip install --reinstall --no-deps dist-docs/*.whl
+      - name: Execute source-collected API, quickstart and migration examples
+        run: .venv/bin/python scripts/check_public_examples.py --require-wheel
+      - name: Execute masked Pipeline and GridSearchCV in every output mode
+        run: >-
+          .venv/bin/python -m pytest -q tests/test_pipeline_example.py
+          tests/test_markdown_examples.py tests/test_notebook_examples.py
+      - name: Strict site, executed plots and failure propagation
+        run: .venv/bin/python -m pytest -q -m docs tests/test_documentation_examples.py
+      - name: Build and verify the source-matched site
+        run: |
+          .venv/bin/python -m mkdocs build --strict
+          .venv/bin/python scripts/check_gallery_site.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: documentation-sklearn-${{ matrix.sklearn-version }}
+          path: site
+
   octave-parity:
     needs: changes
     if: needs.changes.outputs.octave == 'true'

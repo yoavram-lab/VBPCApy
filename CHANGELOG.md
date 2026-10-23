@@ -13,6 +13,14 @@ The development version is not a release announcement.
 
 ### Added
 
+- Execute six native gallery examples during strict documentation builds,
+  publishing their outputs, source downloads, candidate tables and fitted-state
+  plots. Execute public API docstrings and the actual quickstart/migration
+  blocks. Add installed-wheel documentation checks on minimum/current sklearn,
+  explicit plot/table dependencies and failures for broken examples or stale
+  rendered sources/results/figures. Include documentation build inputs in the
+  source archive and replace retired contributor commands.
+
 - Document strict-legacy versus modern observation, epsilon and update-order
   policies, their defaults at each entry point, and an executed migration
   example. Clarify prior-variance versus observation-noise ordering.

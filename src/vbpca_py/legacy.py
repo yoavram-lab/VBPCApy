@@ -71,7 +71,35 @@ def _warn_deprecated_tol(tol: float | None) -> None:
 
 
 class VBPCA(TypedEstimator):
-    """Variational Bayesian PCA with a sklearn-like interface."""
+    """Explicit feature-first adapter for the pre-0.5 interface.
+
+    Examples:
+        New native workflows use samples by features. Historical calls use
+        this adapter explicitly; numerical compatibility is a separate choice.
+
+        >>> import numpy as np
+        >>> from vbpca_py import VBPCA as NativeVBPCA
+        >>> from vbpca_py.legacy import VBPCA as LegacyVBPCA
+        >>> x = np.random.default_rng(19).normal(size=(12, 3))
+        >>> options = dict(
+        ...     maxiters=4,
+        ...     niter_broadprior=0,
+        ...     random_state=19,
+        ...     num_cpu=1,
+        ...     runtime_tuning="off",
+        ...     verbose=0,
+        ... )
+        >>> native = NativeVBPCA(1, **options).fit(x)
+        >>> adapted = LegacyVBPCA(1, compat_mode="modern", **options).fit(x.T)
+        >>> native.components_.shape, adapted.components_.shape
+        ((1, 3), (3, 1))
+        >>> np.testing.assert_allclose(native.components_, adapted.components_.T)
+        >>> LegacyVBPCA(1).compat_mode
+        'strict_legacy'
+
+        This four-iteration example does not qualify convergence or old saved
+        models. Old serialized native layouts require the documented migration.
+    """
 
     def __init__(  # noqa: PLR0913, PLR0915
         self,

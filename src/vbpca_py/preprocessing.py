@@ -837,6 +837,20 @@ class MissingAwareStandardScaler(_BaseScaler):
     near-zero cutoff. Exactly constant observed columns have zero variance and
     use a unit denominator. Zero or nonfinite computed deviations also use a
     unit denominator; wholly missing columns retain NaN moments.
+
+    Examples:
+        >>> import numpy as np
+        >>> from vbpca_py import MissingAwareStandardScaler
+        >>> x = np.array([[1.0, 10.0], [3.0, np.nan], [5.0, 16.0]])
+        >>> scaler = MissingAwareStandardScaler().fit(x)
+        >>> scaler.mean_.tolist()
+        [3.0, 13.0]
+        >>> encoded = scaler.transform(x)
+        >>> encoded.shape, encoded.dtype.name
+        ((3, 2), 'float64')
+        >>> bool(np.isnan(encoded[1, 1]))
+        True
+        >>> np.testing.assert_allclose(scaler.inverse_transform(encoded), x)
     """
 
     _accept_sparse = True
@@ -1216,6 +1230,36 @@ class AutoEncoder(PreprocessorState):
     sparse fits leave it ``None`` (component CV accepts dense input only).
     ``column_levels`` declares external nominal vocabularies or ordinal level
     orders; leave continuous columns and training-inferred vocabularies ``None``.
+
+    Examples:
+        >>> import numpy as np
+        >>> from vbpca_py import AutoEncoder
+        >>> raw = np.array(
+        ...     [["west", 10.0], ["east", 20.0], ["north", 30.0], ["west", np.nan]],
+        ...     dtype=object,
+        ... )
+        >>> encoder = AutoEncoder(column_types=["categorical", "continuous"])
+        >>> encoded = encoder.fit_transform(raw)
+        >>> encoded.shape, encoded.dtype.name
+        ((4, 4), 'float64')
+        >>> len(encoder.get_feature_names_out())
+        4
+        >>> schema = encoder.encoding_schema_
+        >>> schema.validate(encoded.shape[1], strict_numeric=True)
+        >>> [variable.kind for variable in schema.variables]
+        ['categorical', 'continuous']
+        >>> bool(np.isnan(encoded[3, 3]))
+        True
+        >>> decoded = encoder.inverse_transform(encoded)
+        >>> decoded.shape
+        (4, 2)
+        >>> np.testing.assert_allclose(
+        ...     decoded[:3, 1].astype(float), [10.0, 20.0, 30.0]
+        ... )
+
+        ``schema`` describes this fit. For raw-cell validation, fit a fresh
+        encoder within every training fold; a schema alone does not prevent
+        preprocessing leakage.
     """
 
     _numeric_input = False
