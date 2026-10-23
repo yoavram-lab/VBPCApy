@@ -132,6 +132,11 @@ targets. `feature_groups` alone cannot identify binary versus numeric columns.
 
 This API splits an already encoded matrix. A schema describes the transform;
 use the raw-table API below when learning preprocessing within CV folds.
+For numeric inverse maps, call
+`schema.validate(n_features, strict_numeric=True)`: each continuous/ordinal
+variable needs one column, a finite fitted offset and a positive finite weight.
+Wholly missing numeric training support cannot provide that offset. Default
+schema validation retains categorical-only scoring compatibility.
 Unknown categories cannot be distinguished from a dropped reference when
 `handle_unknown="ignore"`; use `"raise"` when scoring new raw data. See the
 [model-selection guide](docs/concepts/model-selection.md) and

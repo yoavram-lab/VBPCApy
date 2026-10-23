@@ -189,3 +189,14 @@ def check_native_projection_types(estimator: VBPCA) -> None:
     assert_type(estimator.score_samples(np.ones((3, 4))), Float64Array)
     assert_type(estimator.score(np.ones((3, 4))), float)
     posterior.mean = np.zeros((3, 1))  # type: ignore[misc]
+
+
+def check_encoding_validation_types() -> None:
+    from vbpca_py import EncodedVariable, EncodingSchema
+
+    variable = EncodedVariable("continuous", (0,), offset=(2.0,), weight=0.5)
+    schema = EncodingSchema((variable,))
+    assert_type(schema.validate(1), None)
+    assert_type(schema.validate(1, strict_numeric=True), None)
+    assert_type(variable.decode_numeric(np.zeros((1, 2))), Float64Array)
+    schema.validate(1, strict_numeric="yes")  # type: ignore[arg-type]

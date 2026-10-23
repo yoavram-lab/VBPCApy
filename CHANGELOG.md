@@ -13,6 +13,12 @@ The development version is not a release announcement.
 
 ### Added
 
+- Add `EncodingSchema.validate(..., strict_numeric=True)` to require usable
+  single-column continuous/ordinal affine metadata. Apply the same checks in
+  numeric decoding and before raw-cell CV fits. Wholly missing numeric training
+  support cannot supply a finite fitted offset. Default categorical-only schema
+  validation retains its existing numeric-metadata compatibility.
+
 - Frozen, slotted `PCAOptions` at the numerical solver boundary, with owned
   stopping-policy containers and legacy keyword import/export. Separate
   execution caches and tuning metadata from public requested settings.

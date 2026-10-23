@@ -51,6 +51,20 @@ entries without making a dense copy of the data.
 
 ## Fitted encoding metadata
 
+`schema.validate(n_features)` checks feature coverage and categorical decoding
+metadata. For a mixed schema, use
+`schema.validate(n_features, strict_numeric=True)` to also check numeric inverse
+maps. Each continuous or ordinal variable must have exactly one encoded column,
+one finite fitted offset and a positive finite weight. `decode_numeric` applies
+the same numeric checks and returns continuous input units or unrounded ordinal
+level-index units. Raw-cell CV validates mixed schemas before model fitting.
+
+A wholly missing numeric training column retains a NaN offset in its fitted
+schema. It cannot pass strict validation or numeric decoding; declaring ordinal
+levels does not supply the missing scaling observations. The default validation
+mode still permits numeric descriptors without affine metadata when only
+categorical scoring is required.
+
 ::: vbpca_py.encoding.EncodingSchema
 
 ::: vbpca_py.encoding.EncodedVariable
