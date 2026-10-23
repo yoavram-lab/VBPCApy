@@ -85,6 +85,11 @@ numeric zeros: construct coordinates explicitly when those zeros are observed,
 or use dense NaNs/masks. Sparse explicit masks can declare observed zero values
 that are absent from the input's storage. Duplicate mask entries are combined
 as Boolean observations, never as repeated data values.
+Native validation checks raw sparse buffers and observed infinity before
+conversion can coalesce duplicate coordinates. Explicitly excluded infinities
+remain unobserved; duplicate `+inf`/`-inf` cannot silently become missing data
+when their location is observed. This also applies to new-row projection,
+scoring, explicit probes and public component-selection inputs.
 
 Empty training tables, entirely unobserved tables/features, observed infinity,
 invalid capacities and stale feature counts are rejected. Constant observed

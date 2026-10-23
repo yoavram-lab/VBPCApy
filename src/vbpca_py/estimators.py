@@ -26,6 +26,7 @@ from ._pca_full import pca_full
 from ._projection import ProjectionPosterior, project_rows, row_log_likelihood
 from ._types import Float64Array, InputMask, InputMatrix, Matrix, ObjectArray  # noqa: TC001 - runtime annotation resolution
 from ._validation import (
+    check_raw_sparse_observations,
     make_native_probe,
     observed_matrix,
     require_training_observations,
@@ -353,6 +354,7 @@ class VBPCA(FeatureNamesMixin, TypedEstimator):
             ValueError: Feature names, dimensions or observations are invalid.
         """
         check_named_columns(X)
+        check_raw_sparse_observations(X, mask)
         with named_table_input(self, X, reset=reset) as (validator, values):
             checked = cast(
                 "InputMatrix",

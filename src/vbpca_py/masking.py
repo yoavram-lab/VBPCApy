@@ -19,6 +19,7 @@ from ._feature_names import (
 )
 from ._preprocessing_state import (
     PreprocessorState,
+    _check_observed_infinity,
     _check_sparse_structure,
     _finite_observations,
 )
@@ -185,27 +186,6 @@ def _observation_mask(
         msg = f"mask shape {observed.shape} does not match data shape {shape}"
         raise ValueError(msg)
     return observed
-
-
-def _check_observed_infinity(
-    raw: sp.csr_matrix | sp.csc_matrix | sp.coo_matrix,
-    observed: BoolArray | sp.csr_matrix | None,
-) -> None:
-    # Check raw duplicates before a conversion can combine +inf/-inf into NaN.
-    infinite = np.isinf(raw.data)
-    if not np.any(infinite):
-        return
-    if observed is not None:
-        coordinates = raw.tocoo(copy=False)
-        rows, columns = coordinates.row[infinite], coordinates.col[infinite]
-        if sp.issparse(observed):
-            selected = np.asarray(observed[rows, columns]).ravel()
-        else:
-            selected = observed[rows, columns]
-        if not np.any(selected):
-            return
-    msg = "Input contains infinity in observed entries"
-    raise ValueError(msg)
 
 
 def _canonical_output(data: InputMatrix, observed: BoolArray | None) -> InputMatrix:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from numbers import Integral
+from typing import cast
 
 import numpy as np
 import scipy.sparse as sp
@@ -10,8 +11,55 @@ import scipy.sparse as sp
 from ._full_update import _filter_csr_entries
 from ._memory import exceeds_budget
 from ._missing import make_xprobe_mask
+from ._preprocessing_state import _check_observed_infinity, _check_sparse_structure
 from ._sparsity import validate_mask_compatibility
-from ._types import InputMask, InputMatrix, Matrix  # noqa: TC001 - runtime annotation resolution
+from ._types import BoolArray, InputMask, InputMatrix, Matrix  # noqa: TC001 - runtime annotation resolution
+
+
+def check_raw_sparse_observations(x: object, mask: object | None) -> None:
+    """Check raw sparse buffers and observed infinity before sklearn conversion.
+
+    Retain the native boundary's existing numeric-mask coercion. CSR/CSC/COO
+    buffers are checked before conversions can coalesce duplicate coordinates;
+    other scipy formats expose their entries through COO without aggregation.
+
+    Raises:
+        ValueError: Sparse buffers, mask dimensions or observed values are invalid.
+    """
+    raw_mask = (
+        _checked_sparse_input(mask, numeric_mask=True) if sp.issparse(mask) else None
+    )
+    if not sp.issparse(x):
+        return
+    raw = _checked_sparse_input(x)
+    if not np.any(np.isinf(raw.data)):
+        return
+    observed: BoolArray | sp.csr_matrix | None = None
+    if mask is not None:
+        observed = (
+            sp.csr_matrix(raw_mask, dtype=bool, copy=True)
+            if raw_mask is not None
+            else np.asarray(mask, dtype=bool)
+        )
+        if observed.shape != raw.shape:
+            msg = "mask must have the same shape as data"
+            raise ValueError(msg)
+    _check_observed_infinity(raw, observed)
+
+
+def _checked_sparse_input(
+    x: object, *, numeric_mask: bool = False
+) -> sp.csr_matrix | sp.csc_matrix | sp.coo_matrix:
+    """Validate coordinate buffers while preserving other sklearn sparse formats.
+
+    Returns:
+        Original CSR/CSC/COO storage, or unaggregated COO for another format.
+    """
+    raw = cast("sp.csr_matrix | sp.csc_matrix | sp.coo_matrix", x)
+    if raw.format not in {"csr", "csc", "coo"}:
+        raw = raw.tocoo(copy=False)
+    _check_sparse_structure(raw, complex_indicators=numeric_mask, check_infinity=False)
+    return raw
 
 
 def validate_rank(rank: object, shape: tuple[int, int]) -> int:
