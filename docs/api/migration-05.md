@@ -119,9 +119,9 @@ pandas/polars wrapping remain separate work under #179.
 Sparse preprocessing accepts CSR, CSC and COO matrices/arrays with valid
 structure. Stored NaNs become missing entries without eliminating stored
 zeros. Duplicate coordinates are summed on owned storage. Explicit masks on
-sparse preprocessing are rejected: scalers previously ignored them silently.
-Normalize sparse observations before these transformers rather than passing an
-extra mask. Dense inverse masks for one-hot and automatic encoding have the
+sparse encoders/scalers are rejected: scalers previously ignored them silently.
+Use a leading `ObservationMasker` to normalize sparse observations before these
+transformers. Dense inverse masks for one-hot and automatic encoding have the
 original variable width, not the expanded indicator width.
 Automatic encoders retain the plans learned for their fitted dense/sparse
 representation; cross-representation categorical composition is not qualified

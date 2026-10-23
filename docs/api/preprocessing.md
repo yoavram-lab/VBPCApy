@@ -11,7 +11,7 @@ handling and mask boundaries.
 Sparse inputs use stored-entry observations, including stored zeros. Supported
 CSR/CSC/COO matrices and arrays are validated before conversion; stored NaNs
 are removed and duplicate coordinates are summed without modifying the input.
-Sparse transformers reject extra masks. Sparse one-hot encoding supports
+Sparse encoders and scalers reject extra masks. Sparse one-hot encoding supports
 independent category blocks for multiple input columns, with flat
 `categories_` and output-to-input `feature_groups_` metadata. Dense numeric
 input to this encoder observes every non-NaN value, including zero; it returns
