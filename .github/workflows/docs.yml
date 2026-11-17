@@ -1,11 +1,33 @@
 name: Deploy docs
 
+# Versioned documentation built with mike.
+#
+#   push to main                     -> "dev"
+#   successful release publication   -> "<major>.<minor>", moving "latest" unless
+#                                       it already points at a newer release line;
+#                                       pre-releases are not published
+#   workflow_dispatch                -> any ref, version label and optional alias,
+#                                       for backfilling (v0.4.12 as 0.4) or rollback
+#
+# Jobs:
+#   resolve  decides what to build
+#   build    renders the site and commits the version to a local gh-pages branch,
+#            with read-only credentials (it runs examples and fresh dependencies)
+#   publish  pushes that commit with a write token, running only git
+#   deploy   serves the current gh-pages branch through GitHub Pages
+#
+# Release documentation is built after "Publish to PyPI" succeeds, so a release
+# that fails to publish never becomes "latest". That workflow_run event runs on
+# main, which the github-pages environment requires.
+
 on:
   push:
     branches: [main]
     paths:
       - "docs/**"
       - "examples/**"
+      - "overrides/**"
+      - ".github/pages/**"
       - "tests/test_markdown_examples.py"
       - "tests/test_notebook_examples.py"
       - "mkdocs.yml"
@@ -14,58 +36,343 @@ on:
       - "scripts/check_public_examples.py"
       - "scripts/example_masked_pipeline.py"
       - "README.md"
+      - "CHANGELOG.md"
       - "MANIFEST.in"
       - "pyproject.toml"
       - ".github/workflows/docs.yml"
+  workflow_run:
+    workflows: ["Publish to PyPI"]
+    types: [completed]
   workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch, tag or commit whose documentation is built
+        required: true
+        default: main
+      version:
+        description: Version label, for example 0.4 or dev
+        required: true
+        default: dev
+      alias:
+        description: Alias to point at this version (empty or latest)
+        required: false
+        default: ""
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
-concurrency:
-  group: pages
-  cancel-in-progress: true
+env:
+  NO_MKDOCS_2_WARNING: "1"
 
 jobs:
-  build:
+  resolve:
     runs-on: ubuntu-latest
+    outputs:
+      skip: ${{ steps.resolve.outputs.skip }}
+      ref: ${{ steps.resolve.outputs.ref }}
+      version: ${{ steps.resolve.outputs.version }}
+      alias: ${{ steps.resolve.outputs.alias }}
+    steps:
+      - name: Decide which ref and version to build
+        id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          RUN_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          RUN_EVENT: ${{ github.event.workflow_run.event }}
+          RUN_TAG: ${{ github.event.workflow_run.head_branch }}
+          INPUT_REF: ${{ inputs.ref }}
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_ALIAS: ${{ inputs.alias }}
+        run: |
+          set -euo pipefail
+          skip=false ref="" version="" alias=""
+          case "$EVENT" in
+            push)
+              ref="$GITHUB_SHA"; version=dev ;;
+            workflow_run)
+              if [ "$RUN_CONCLUSION" != success ] || [ "$RUN_EVENT" != release ]; then
+                echo "The publish run was not a successful release; nothing to build."
+                skip=true
+              elif [ -z "$RUN_TAG" ]; then
+                echo "::error::The publish run does not identify its release tag"
+                exit 1
+              elif [ "$(gh release view "$RUN_TAG" --repo "$GITHUB_REPOSITORY" \
+                        --json isPrerelease --jq .isPrerelease)" = true ]; then
+                echo "$RUN_TAG is a pre-release; its documentation is not published."
+                skip=true
+              else
+                ref="$RUN_TAG"
+                version="$(echo "${RUN_TAG#v}" | cut -d. -f1,2)"
+                alias=latest
+              fi ;;
+            workflow_dispatch)
+              ref="$INPUT_REF"; version="$INPUT_VERSION"; alias="$INPUT_ALIAS" ;;
+            *)
+              echo "::error::Unsupported event $EVENT"; exit 1 ;;
+          esac
+          if [ "$skip" = false ]; then
+            if ! [[ "$version" =~ ^([0-9]+\.[0-9]+|dev)$ ]]; then
+              echo "::error::Version label must be major.minor or dev, not '$version'"
+              exit 1
+            fi
+            if [ -n "$alias" ] && [ "$alias" != latest ]; then
+              echo "::error::Alias must be empty or latest, not '$alias'"
+              exit 1
+            fi
+            if [ "$version" = dev ] && [ -n "$alias" ]; then
+              echo "::error::The dev version cannot carry an alias"
+              exit 1
+            fi
+          fi
+          {
+            echo "skip=$skip"
+            echo "ref=$ref"
+            echo "version=$version"
+            echo "alias=$alias"
+          } >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: resolve
+    if: needs.resolve.outputs.skip != 'true'
+    runs-on: ubuntu-latest
+    # A newer dev build supersedes an older one; release and backfill builds
+    # are never cancelled by other runs.
+    concurrency:
+      group: docs-build-${{ needs.resolve.outputs.version }}
+      cancel-in-progress: ${{ needs.resolve.outputs.version == 'dev' }}
+    outputs:
+      base: ${{ steps.commit.outputs.base }}
+      changed: ${{ steps.commit.outputs.changed }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check out the documented source
+        env:
+          REF: ${{ needs.resolve.outputs.ref }}
+        run: |
+          set -euo pipefail
+          if git rev-parse --verify --quiet "$REF^{commit}" > /dev/null; then
+            target="$REF"
+          elif git rev-parse --verify --quiet "origin/$REF^{commit}" > /dev/null; then
+            target="origin/$REF"
+          else
+            echo "::error::Unknown branch, tag or commit '$REF'"
+            exit 1
+          fi
+          git worktree add --detach docs-src "$target"
+
+      - name: Require the version label to match the documented release line
+        working-directory: docs-src
+        env:
+          VERSION: ${{ needs.resolve.outputs.version }}
+        run: |
+          set -euo pipefail
+          line="$(grep -m1 '^version = ' pyproject.toml | sed -E 's/^version = "([0-9]+\.[0-9]+).*/\1/')"
+          if [ "$VERSION" != dev ] && [ "$line" != "$VERSION" ]; then
+            echo "::error::This ref is release line $line, not the requested label $VERSION"
+            exit 1
+          fi
+
       - uses: astral-sh/setup-uv@v4
         with:
           enable-cache: true
           cache-dependency-glob: "**/pyproject.toml"
+
       - name: Install Eigen
         run: sudo apt-get install -y libeigen3-dev
-      - name: Sync environment
-        run: uv sync --extra docs --extra plot --extra data --extra polars
-      - name: Install the documentation wheel
+
+      - name: Sync the documentation environment
+        working-directory: docs-src
         run: |
+          set -euo pipefail
+          extras=(--extra docs)
+          for extra in plot data polars; do
+            if grep -q "^$extra = \[" pyproject.toml; then
+              extras+=(--extra "$extra")
+            fi
+          done
+          uv sync "${extras[@]}"
+          uv pip install "mike==2.2.0"
+
+      # Releases from 0.5 onwards execute their examples before publishing.
+      # Earlier refs (backfilled documentation) are rendered as they were.
+      - name: Execute public API examples and the strict site build
+        if: hashFiles('docs-src/scripts/check_public_examples.py') != ''
+        working-directory: docs-src
+        run: |
+          set -euo pipefail
           uv build --wheel --out-dir dist-docs
           uv pip install --reinstall --no-deps dist-docs/*.whl
-      - name: Execute actual public API and migration sources
-        run: .venv/bin/python scripts/check_public_examples.py --require-wheel
-      - name: Build docs
-        run: |
+          .venv/bin/python scripts/check_public_examples.py --require-wheel
           .venv/bin/python -m mkdocs build --strict
           .venv/bin/python scripts/check_gallery_site.py
-      - name: Execute maintained documentation workflows
-        run: >-
-          .venv/bin/python -m pytest -q
-          tests/test_markdown_examples.py
-          tests/test_notebook_examples.py
-      - uses: actions/upload-pages-artifact@v3
+          .venv/bin/python -m pytest -q \
+            tests/test_markdown_examples.py tests/test_notebook_examples.py
+
+      - name: Enable the version selector and banner for refs that predate them
+        working-directory: docs-src
+        run: |
+          set -euo pipefail
+          if ! grep -q "provider: mike" mkdocs.yml; then
+            if grep -q "^extra:" mkdocs.yml; then
+              echo "::error::mkdocs.yml has an extra block without a mike version provider"
+              exit 1
+            fi
+            printf '\nextra:\n  version:\n    provider: mike\n    default: latest\n    alias: true\n' >> mkdocs.yml
+          fi
+          if ! grep -q "custom_dir:" mkdocs.yml; then
+            cp -R "$GITHUB_WORKSPACE/overrides" overrides
+            sed -i 's/^theme:$/theme:\n  custom_dir: overrides/' mkdocs.yml
+            grep -q "custom_dir: overrides" mkdocs.yml
+          fi
+
+      - name: Commit this version to a local gh-pages branch
+        id: commit
+        working-directory: docs-src
+        env:
+          EVENT: ${{ github.event_name }}
+          VERSION: ${{ needs.resolve.outputs.version }}
+          ALIAS: ${{ needs.resolve.outputs.alias }}
+        run: |
+          set -euo pipefail
+          # mike runs the mkdocs executable from PATH.
+          export PATH="$PWD/.venv/bin:$PATH"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git fetch origin gh-pages; then
+            git branch -f gh-pages FETCH_HEAD
+            base="$(git rev-parse FETCH_HEAD)"
+          else
+            echo "gh-pages does not exist yet"
+            base=none
+          fi
+          latest_version() {
+            (mike list --json 2> /dev/null || echo "[]") | python3 -c \
+              'import json, sys; print(next((e["version"] for e in json.load(sys.stdin) if "latest" in e.get("aliases", [])), ""))'
+          }
+          alias="$ALIAS"
+          if [ "$alias" = latest ]; then
+            current="$(latest_version)"
+            newest="$(printf '%s\n%s\n' "$current" "$VERSION" | sort -V | tail -n 1)"
+            if [ -n "$current" ] && [ "$newest" != "$VERSION" ]; then
+              echo "latest stays on $current, which is newer than $VERSION"
+              alias=""
+            fi
+          fi
+          if [ -n "$alias" ]; then
+            mike deploy --update-aliases "$VERSION" "$alias"
+            mike set-default "$alias"
+          else
+            mike deploy "$VERSION"
+          fi
+          # Before the first release under the versioned site, a push to main
+          # also publishes its release line (for example 0.5) as latest, so the
+          # site root and redirected links resolve.
+          if [ "$EVENT" = push ] && [ -z "$(latest_version)" ]; then
+            line="$(grep -m1 '^version = ' pyproject.toml | sed -E 's/^version = "([0-9]+\.[0-9]+).*/\1/')"
+            echo "No latest version yet; also publishing this build as $line (latest)"
+            mike deploy --update-aliases "$line" latest
+            mike set-default latest
+          fi
+          changed=true
+          if [ "$base" = none ]; then
+            git bundle create "$RUNNER_TEMP/gh-pages.bundle" gh-pages
+          elif [ "$(git rev-parse gh-pages)" = "$base" ]; then
+            echo "This build left gh-pages unchanged"
+            changed=false
+          else
+            git bundle create "$RUNNER_TEMP/gh-pages.bundle" gh-pages "^$base"
+          fi
+          {
+            echo "base=$base"
+            echo "changed=$changed"
+          } >> "$GITHUB_OUTPUT"
+
+      - if: steps.commit.outputs.changed == 'true'
+        uses: actions/upload-artifact@v4
         with:
-          path: site
+          name: gh-pages-bundle
+          path: ${{ runner.temp }}/gh-pages.bundle
+          retention-days: 1
+
+  publish:
+    needs: build
+    if: needs.build.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - uses: actions/download-artifact@v4
+        with:
+          name: gh-pages-bundle
+          path: ${{ runner.temp }}/bundle
+      - name: Push the new gh-pages commit
+        env:
+          BASE: ${{ needs.build.outputs.base }}
+          BUNDLE: ${{ runner.temp }}/bundle/gh-pages.bundle
+        run: |
+          set -euo pipefail
+          if git fetch origin gh-pages; then
+            current="$(git rev-parse FETCH_HEAD)"
+          else
+            current=none
+          fi
+          if [ "$current" != "$BASE" ]; then
+            echo "::error::gh-pages changed while this version was built ($BASE -> $current). Re-run this workflow."
+            exit 1
+          fi
+          git fetch "$BUNDLE" gh-pages:refs/heads/gh-pages-update
+          # Never forced: a concurrent update makes this push fail visibly.
+          git push origin refs/heads/gh-pages-update:refs/heads/gh-pages
 
   deploy:
-    needs: build
+    needs: [build, publish]
+    # Deploy after a successful push, or when the build left gh-pages unchanged
+    # (for example, after a change to the root 404 page).
+    if: >-
+      always() && needs.build.result == 'success' &&
+      (needs.publish.result == 'success' || needs.publish.result == 'skipped')
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    # Each deployment serves the gh-pages branch as it is when the job runs, so
+    # replacing a pending deployment with a newer one loses nothing.
+    concurrency:
+      group: docs-deploy
+      cancel-in-progress: false
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Assemble the site from the current gh-pages branch
+        run: |
+          set -euo pipefail
+          git fetch --depth=1 origin gh-pages
+          mkdir gh-pages-tree
+          git archive FETCH_HEAD | tar -x -C gh-pages-tree
+          # Copy alias symlinks (for example latest -> 0.5) as real directories.
+          cp -RL gh-pages-tree pages
+          cp .github/pages/404.html pages/404.html
+          for file in objects.inv sitemap.xml sitemap.xml.gz; do
+            if [ -e "pages/latest/$file" ]; then
+              cp "pages/latest/$file" "pages/$file"
+            fi
+          done
+          test -f pages/versions.json
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: pages
       - id: deployment
         uses: actions/deploy-pages@v4

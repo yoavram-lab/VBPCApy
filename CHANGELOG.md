@@ -4,8 +4,20 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+Breaking changes are listed under a **Breaking changes** heading in each release;
+see the [API stability policy](https://yoavram-lab.github.io/VBPCApy/latest/api/stability/).
 
 ## [Unreleased]
+
+### Added
+
+- Publish versioned documentation with a version selector: `latest` for the
+  newest release, one entry per minor release, `dev` for the development
+  branch and backfilled 0.4 documentation. Links to the earlier unversioned
+  pages redirect to the latest release.
+- Document the API stability and deprecation policy and the supported status
+  of the `vbpca_py.legacy` adapter, and check each pull request for breaking
+  public API changes against the latest release.
 
 ### Fixed
 

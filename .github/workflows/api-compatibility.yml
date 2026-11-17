@@ -1,0 +1,64 @@
+name: API compatibility
+
+# Compare the public API of a pull request with the latest release and fail on
+# breaking changes unless the pull request carries the breaking-change label.
+# griffe treats every module and name without a leading underscore as public;
+# see docs/api/stability.md.
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  griffe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v4
+      - name: Compare the public API with the latest release
+        env:
+          BREAKING_ALLOWED: ${{ contains(github.event.pull_request.labels.*.name, 'breaking-change') }}
+        run: |
+          set -uo pipefail
+          latest="$(git describe --tags --abbrev=0 --match 'v[0-9]*' HEAD)"
+          echo "Comparing the public API with $latest"
+          # The default shell runs with -e; capture griffe's status instead of
+          # letting a reported breakage end the script before the summary.
+          status=0
+          uvx --from "griffe==2.4.1" griffe check vbpca_py --search src --against "$latest" \
+            > griffe.txt 2>&1 || status=$?
+          cat griffe.txt
+          if [ "$status" -eq 0 ]; then
+            echo "No breaking public API changes relative to $latest." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          # griffe reports each breakage as "<path>:<line>: <object>: <change>".
+          # Any other failure (a crash, a failed download) is not overridable.
+          if ! grep -qE '^src/vbpca_py/[^:]+:[0-9]+: ' griffe.txt; then
+            echo "::error::griffe failed without reporting API changes (exit status $status)"
+            exit 1
+          fi
+          {
+            echo "### Breaking public API changes relative to $latest"
+            echo
+            echo '```'
+            cat griffe.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$BREAKING_ALLOWED" = true ]; then
+            echo "::warning::Breaking API changes accepted through the breaking-change label"
+            exit 0
+          fi
+          echo "::error::Breaking public API changes. Document them in the changelog and add the breaking-change label."
+          exit 1

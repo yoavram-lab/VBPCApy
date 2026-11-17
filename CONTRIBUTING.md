@@ -118,6 +118,12 @@ pytest tests/test_estimators.py::test_vbpca_fit_transform_shapes
 - Public API should be exported from `vbpca_py` (package root).
 - Internal modules/symbols are prefixed with `_` and may change without deprecation.
 - If a change adds new user-facing functionality, ensure it is intentionally exported and documented in README.
+- Follow the [API stability and deprecation policy](docs/api/stability.md).
+  Deprecations emit a `FutureWarning` that names the replacement and the
+  removal release. The *API compatibility* check compares each pull request
+  with the latest release using `griffe check`; an intended breaking change
+  needs the `breaking-change` label and an entry under **Breaking changes** in
+  `CHANGELOG.md`.
 
 ## Pull Request Process
 
@@ -197,6 +203,19 @@ also executes public API doctests collected from their source, runs the actual
 quickstart/migration Python blocks and verifies rendered/downloaded source,
 result summaries and generated figures. `just docs-serve` uses the same hook.
 Generated gallery files stay in build storage; do not commit them.
+
+The published site is versioned with [mike](https://github.com/jimporter/mike).
+Pushes to `main` update the `dev` version. After *Publish to PyPI* succeeds for
+a release, its `major.minor` version is built and the `latest` alias moves to
+it, unless `latest` already points at a newer release line; pre-releases are
+not published. To rebuild an earlier release, run the *Deploy docs* workflow
+manually with that tag and its version label (the label must match the tag's
+release line). To roll `latest` back after a withdrawn release, run it with the
+previous release's tag, its label and `alias=latest`.
+
+Builds run with read-only credentials; a separate job pushes the result to
+`gh-pages` without force. If two builds finish together, the second fails with
+"gh-pages changed while this version was built"; re-run that workflow.
 
 Run `uv run --extra dev --extra docs --extra plot pytest -q -m docs
 tests/test_documentation_examples.py` for site and failure-propagation checks.

@@ -16,6 +16,10 @@ from 0.4.
 | `vbpca_py.legacy.VBPCA` | features x samples | `(p, q)` | `(q, n)` | historical column layout |
 | Low-level `pca_full` | features x samples | result `A: (p, q)` | result `S: (q, n)` | historical result keys |
 
+Documentation for 0.4 remains available from the version selector. The
+[API stability policy](stability.md) describes how future changes are announced
+and the supported status of the legacy adapter.
+
 The maintainer approved **modern mode as the native estimator default**.
 The explicit legacy adapter and low-level solver retain their historical
 defaults. Explicit `compat_mode="strict_legacy"` still requests historical
