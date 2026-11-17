@@ -1,0 +1,31 @@
+Traceback (most recent call last):
+  File "/home/jcmacdonald/.cache/uv/archive-v0/l5WrdwdfNCIVg5Ah/lib/python3.13/site-packages/griffe/_internal/git.py", line 141, in _tmp_worktree
+    _git("-C", str(repo), "worktree", "add", "-b", tmp_branch, location, ref)
+    ~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/jcmacdonald/.cache/uv/archive-v0/l5WrdwdfNCIVg5Ah/lib/python3.13/site-packages/griffe/_internal/git.py", line 62, in _git
+    raise GitError(process.stdout.strip())
+griffe._internal.exceptions.GitError: fatal: invalid reference: v9.9.9-missing
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/jcmacdonald/.cache/uv/archive-v0/l5WrdwdfNCIVg5Ah/bin/griffe", line 12, in <module>
+    sys.exit(main())
+             ~~~~^^
+  File "/home/jcmacdonald/.cache/uv/archive-v0/l5WrdwdfNCIVg5Ah/lib/python3.13/site-packages/griffecli/_internal/cli.py", line 668, in main
+    return commands[subcommand](**opts_dict)
+           ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+  File "/home/jcmacdonald/.cache/uv/archive-v0/l5WrdwdfNCIVg5Ah/lib/python3.13/site-packages/griffecli/_internal/cli.py", line 569, in check
+    old_package = load_git(
+        against_path,
+    ...<9 lines>...
+        resolve_external=None,
+    )
+  File "/home/jcmacdonald/.cache/uv/archive-v0/l5WrdwdfNCIVg5Ah/lib/python3.13/site-packages/griffe/_internal/loader.py", line 954, in load_git
+    with _tmp_worktree(repo, ref) as worktree:
+         ~~~~~~~~~~~~~^^^^^^^^^^^
+  File "/home/jcmacdonald/miniforge3/lib/python3.13/contextlib.py", line 141, in __enter__
+    return next(self.gen)
+  File "/home/jcmacdonald/.cache/uv/archive-v0/l5WrdwdfNCIVg5Ah/lib/python3.13/site-packages/griffe/_internal/git.py", line 143, in _tmp_worktree
+    raise RuntimeError(f"Could not create git worktree: {error}") from error
+RuntimeError: Could not create git worktree: fatal: invalid reference: v9.9.9-missing

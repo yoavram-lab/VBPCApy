@@ -15,6 +15,7 @@
         document.getElementById("message").hidden = false;
       }
       if (path.indexOf(base) !== 0) {
+        show();
         return;
       }
       var rest = path.slice(base.length);
@@ -24,7 +25,7 @@
           return response.ok ? response.json() : [];
         })
         .then(function (versions) {
-          var known = {};
+          var known = Object.create(null);
           versions.forEach(function (entry) {
             known[entry.version] = true;
             (entry.aliases || []).forEach(function (alias) {

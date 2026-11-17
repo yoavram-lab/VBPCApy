@@ -205,10 +205,17 @@ result summaries and generated figures. `just docs-serve` uses the same hook.
 Generated gallery files stay in build storage; do not commit them.
 
 The published site is versioned with [mike](https://github.com/jimporter/mike).
-Pushes to `main` update the `dev` version, and each published release builds
-its `major.minor` version and moves the `latest` alias. To rebuild the
-documentation of an earlier release, run the *Deploy docs* workflow manually
-with that tag, its version label and an empty alias.
+Pushes to `main` update the `dev` version. After *Publish to PyPI* succeeds for
+a release, its `major.minor` version is built and the `latest` alias moves to
+it, unless `latest` already points at a newer release line; pre-releases are
+not published. To rebuild an earlier release, run the *Deploy docs* workflow
+manually with that tag and its version label (the label must match the tag's
+release line). To roll `latest` back after a withdrawn release, run it with the
+previous release's tag, its label and `alias=latest`.
+
+Builds run with read-only credentials; a separate job pushes the result to
+`gh-pages` without force. If two builds finish together, the second fails with
+"gh-pages changed while this version was built"; re-run that workflow.
 
 Run `uv run --extra dev --extra docs --extra plot pytest -q -m docs
 tests/test_documentation_examples.py` for site and failure-propagation checks.

@@ -30,6 +30,10 @@ theme:
 
 plugins:
   - search
+  # Canonical links point at /latest/; Material provides the version selector.
+  - mike:
+      canonical_version: latest
+      version_selector: false
   - mkdocstrings:
       handlers:
         python:
@@ -73,6 +77,7 @@ extra:
   version:
     provider: mike
     default: latest
+    alias: true
 
 extra_javascript:
   - javascripts/mathjax.js
