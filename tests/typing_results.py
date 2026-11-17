@@ -4,9 +4,10 @@ from typing import assert_type
 
 import numpy as np
 
-from vbpca_py import Float64Array, LearningCurve, PCAResult, ProjectionPosterior
-from vbpca_py._pca_full import pca_full
+from vbpca_py import LearningCurve, PCAResult, ProjectionPosterior
 from vbpca_py.estimators import VBPCA
+from vbpca_py.legacy import pca_full
+from vbpca_py.results import Float64Array
 
 
 def check_probe_helper_types() -> None:

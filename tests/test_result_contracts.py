@@ -27,8 +27,6 @@ def test_public_return_annotation_can_be_resolved() -> None:
     [
         "PCAResult",
         "LearningCurve",
-        "Float64Array",
-        "IndexArray",
         "PosteriorCovariances",
         "CovarianceResult",
         "HyperparameterResult",
@@ -37,6 +35,13 @@ def test_public_return_annotation_can_be_resolved() -> None:
 def test_result_contracts_are_exported_from_the_package_root(name) -> None:
     assert name in vbpca_py.__all__
     assert getattr(vbpca_py, name) is getattr(result_types, name)
+
+
+@pytest.mark.parametrize("name", ["Float64Array", "IndexArray"])
+def test_typing_aliases_are_public_in_results(name) -> None:
+    # Root access is deprecated; tests/test_public_api.py checks the warning.
+    assert name in result_types.__all__
+    assert name not in vbpca_py.__all__
 
 
 def test_result_docstring_examples() -> None:

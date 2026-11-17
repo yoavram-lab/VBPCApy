@@ -7,7 +7,7 @@ fitted components. NumPy typing specifies dtype but does not check shapes.
 
 Examples:
     >>> import numpy as np
-    >>> from vbpca_py._pca_full import pca_full
+    >>> from vbpca_py.legacy import pca_full
     >>> data = np.array([[1.0, 2.0, 3.0], [3.0, 1.0, 2.0]])
     >>> result = pca_full(
     ...     data,

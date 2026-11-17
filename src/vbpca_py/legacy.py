@@ -1,7 +1,9 @@
 """Explicit feature-first compatibility API for pre-0.5 callers.
 
 This adapter preserves the historical training-score transform and result
-layouts. It is not the native samples-first Pipeline estimator.
+layouts. It is not the native samples-first Pipeline estimator. The low-level
+``pca_full`` solver, which takes features x samples and returns a result
+dictionary, is available from this module.
 """
 
 from __future__ import annotations
@@ -55,6 +57,7 @@ __all__ = [
     "CVConfig",
     "SelectionConfig",
     "cross_validate_components",
+    "pca_full",
     "select_n_components",
 ]
 

@@ -36,7 +36,7 @@ legacy keywords on each low-level call:
 ```python
 import numpy as np
 from vbpca_py import PCAOptions, VBPCA
-from vbpca_py._pca_full import pca_full
+from vbpca_py.legacy import pca_full
 from vbpca_py.options import Algorithm, RuntimeTuning
 
 x = np.random.default_rng(7).normal(size=(5, 12))  # features x samples

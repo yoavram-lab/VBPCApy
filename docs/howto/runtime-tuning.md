@@ -139,7 +139,7 @@ Add `runtime_report=1` to the low-level `pca_full()` call to see which thread
 counts and accessor modes were selected:
 
 ```python
-from vbpca_py._pca_full import pca_full
+from vbpca_py.legacy import pca_full
 
 result = pca_full(X, n_components=5, runtime_report=1)
 ```

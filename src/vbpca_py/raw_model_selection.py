@@ -22,6 +22,12 @@ from ._types import BoolArray, Float64Array, InputArray  # noqa: TC001 - runtime
 from ._validation import validate_rank
 from .preprocessing import AutoEncoder, _ensure_mask
 
+__all__ = [
+    "PreprocessedFold",
+    "cross_validate_raw_components",
+    "prepare_raw_cv_folds",
+]
+
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
 

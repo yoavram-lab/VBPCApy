@@ -37,6 +37,7 @@ __all__ = [
     "MissingAwareLogTransformer",
     "MissingAwareMinMaxScaler",
     "MissingAwareOneHotEncoder",
+    "MissingAwareOrdinalEncoder",
     "MissingAwarePowerTransformer",
     "MissingAwareSparseOneHotEncoder",
     "MissingAwareStandardScaler",

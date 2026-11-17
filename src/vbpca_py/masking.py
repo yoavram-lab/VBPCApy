@@ -26,6 +26,10 @@ from ._preprocessing_state import (
 from ._types import BoolArray, InputArray, InputMask, InputMatrix  # noqa: TC001 - runtime annotation resolution
 from ._validation import observed_matrix
 
+__all__ = [
+    "ObservationMasker",
+]
+
 _MASK_BLOCK_ENTRIES = 65_536
 
 
