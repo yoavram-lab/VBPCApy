@@ -77,7 +77,14 @@ jobs:
           uv run python scripts/check_sdist_tests.py dist-source-check
 
   eigen33-updates:
-    runs-on: ubuntu-latest
+    # Eigen 3.3.4, the version manylinux_2_28 provides for release wheels, does
+    # not compile with GCC 15, the default compiler on ubuntu-26.04
+    # (Eigen/src/Core/Transpositions.h:387). Build with GCC 14, the major
+    # version manylinux_2_28 uses, on an image that provides it.
+    runs-on: ubuntu-24.04
+    env:
+      CC: gcc-14
+      CXX: g++-14
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v4
@@ -90,7 +97,10 @@ jobs:
           tar -xzf "$RUNNER_TEMP/eigen-3.3.4.tar.gz" -C "$RUNNER_TEMP"
           echo "EIGEN_INCLUDE_DIR=$RUNNER_TEMP/eigen-3.3.4" >> "$GITHUB_ENV"
       - name: Rebuild native extensions with old headers
-        run: uv sync --extra dev --extra plot --python 3.12 --reinstall-package vbpca-py
+        run: |
+          "$CXX" --version
+          uv sync --extra dev --extra plot --python 3.12 --reinstall-package vbpca-py -v 2>&1 | tee build.log
+          grep -q "$CXX" build.log
       - name: Require safe empty updates, full fits and validation
         run: >-
           .venv/bin/python -m pytest -q
