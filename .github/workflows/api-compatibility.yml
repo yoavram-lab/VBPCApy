@@ -1,0 +1,52 @@
+name: API compatibility
+
+# Compare the public API of a pull request with the latest release and fail on
+# breaking changes unless the pull request carries the breaking-change label.
+# See docs/api/stability.md.
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  griffe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v4
+      - name: Compare the public API with the latest release
+        env:
+          BREAKING_ALLOWED: ${{ contains(github.event.pull_request.labels.*.name, 'breaking-change') }}
+        run: |
+          set -uo pipefail
+          latest="$(git describe --tags --abbrev=0 --match 'v[0-9]*' HEAD)"
+          echo "Comparing the public API with $latest"
+          uvx --from "griffe==2.4.1" griffe check vbpca_py --search src --against "$latest" 2>&1 | tee griffe.txt
+          status=${PIPESTATUS[0]}
+          if [ "$status" -eq 0 ]; then
+            echo "No breaking public API changes relative to $latest." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          {
+            echo "### Breaking public API changes relative to $latest"
+            echo
+            echo '```'
+            cat griffe.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$BREAKING_ALLOWED" = true ]; then
+            echo "::warning::Breaking API changes accepted through the breaking-change label"
+            exit 0
+          fi
+          echo "::error::Breaking public API changes. Document them in the changelog and add the breaking-change label."
+          exit 1

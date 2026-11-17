@@ -6,6 +6,7 @@ repo_name: yoavram-lab/VBPCApy
 
 theme:
   name: material
+  custom_dir: overrides
   features:
     - navigation.sections
     - navigation.expand
@@ -68,6 +69,11 @@ markdown_extensions:
   - attr_list
   - md_in_html
 
+extra:
+  version:
+    provider: mike
+    default: latest
+
 extra_javascript:
   - javascripts/mathjax.js
   - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
@@ -108,6 +114,7 @@ nav:
   - API Reference:
     - VBPCA: api/vbpca.md
     - 0.5 migration: api/migration-05.md
+    - Stability & deprecations: api/stability.md
     - Solver Options: api/options.md
     - Fit Results: api/results.md
     - Model Selection: api/model-selection.md

@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Page not found · VBPCApy documentation</title>
+  <script>
+    // Links from before versioned documentation point to /VBPCApy/<page>.
+    // Send them to the same page under /VBPCApy/latest/ unless the first
+    // path segment is already a published version or alias.
+    (function () {
+      var base = "/VBPCApy/";
+      var path = window.location.pathname;
+      function show() {
+        document.getElementById("message").hidden = false;
+      }
+      if (path.indexOf(base) !== 0) {
+        return;
+      }
+      var rest = path.slice(base.length);
+      var first = rest.split("/")[0];
+      fetch(base + "versions.json")
+        .then(function (response) {
+          return response.ok ? response.json() : [];
+        })
+        .then(function (versions) {
+          var known = {};
+          versions.forEach(function (entry) {
+            known[entry.version] = true;
+            (entry.aliases || []).forEach(function (alias) {
+              known[alias] = true;
+            });
+          });
+          if (first && !known[first] && known.latest) {
+            window.location.replace(
+              base + "latest/" + rest + window.location.search + window.location.hash
+            );
+          } else {
+            show();
+          }
+        })
+        .catch(show);
+    })();
+  </script>
+</head>
+<body>
+  <p id="message" hidden>
+    This page does not exist. See the
+    <a href="/VBPCApy/latest/">current VBPCApy documentation</a>.
+  </p>
+  <noscript>
+    <p>
+      This page does not exist. See the
+      <a href="/VBPCApy/latest/">current VBPCApy documentation</a>.
+    </p>
+  </noscript>
+</body>
+</html>
