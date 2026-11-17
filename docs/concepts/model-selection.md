@@ -1,60 +1,39 @@
 # Model Selection
 
-Public selection inputs and masks use **samples x features**. Explicit
-`xprobe` tables supplied to `select_n_components` use those axes too; CV
-constructs its own probes. Modern observation semantics are the default. A
-requested positive-rank selected model is a native `VBPCA`: its public arrays,
-conditional new-data projection and names/containers follow the
-[0.5 contract](../api/migration-05.md). The numerical selection targets are
-unchanged. For feature-first inputs and historical defaults, import the helpers
-from `vbpca_py.legacy`; do not infer orientation from a matrix's dimensions.
-The [native selection example](https://github.com/yoavram-lab/VBPCApy/blob/main/scripts/example_component_selection.py)
-is executed in the test suite.
+VBPCApy offers three ways to choose the number of latent components $k$:
 
-## Cost diagnostic modes
+- `select_n_components` fits one model per candidate and compares them on
+  held-out probe entries or on the variational cost;
+- `cross_validate_components` repeats that comparison over K folds of the
+  observed entries;
+- `cross_validate_raw_components` does the same for a raw mixed-type table,
+  fitting the preprocessing again within each fold.
 
-Selection preserves full per-iteration cost traces by default, including when
-the selection metric is PRMS. Cost-driven selection and stopping, and requested
-replay evidence, retain those traces.
+All three take samples × features input, with `NaN` (or an explicit mask) for
+missing entries. The selected count is the number of components that best
+predicts withheld entries, or that minimizes the cost. It is not a test of how
+many components are statistically significant. A selected positive-rank model
+is a native `VBPCA` estimator. The feature-first versions of these helpers,
+with their historical defaults, remain in `vbpca_py.legacy` for reproducing
+pre-0.5 analyses. The
+[component-selection example](https://github.com/yoavram-lab/VBPCApy/blob/main/scripts/example_component_selection.py)
+runs in the test suite.
 
-For an explicitly fixed PRMS stopping policy that does not consume cost, opt in
-to a single cost evaluation per fitted candidate:
+## Example data
+
+The examples on this page use an incomplete matrix of 150 samples and 20
+features with a rank-three signal:
 
 ```python
-from vbpca_py import SelectionConfig, select_n_components
+import numpy as np
 
-best_k, metrics, trace, model = select_n_components(
-    X,
-    components=[0, 2, 4],
-    config=SelectionConfig(metric="prms", cost_diagnostics="endpoint"),
-    record_cost=False,
-    convergence_criteria={"cost": False, "composite": False},
-)
+rng = np.random.default_rng(0)
+signal = rng.standard_normal((150, 3)) @ rng.standard_normal((3, 20))
+X = signal + 0.5 * rng.standard_normal(signal.shape)
+X[rng.random(X.shape) < 0.1] = np.nan
 ```
 
-Endpoint mode preserves fitted factors, the stopping policy, selected capacity
-and the historical returned-iteration cost. If probe stopping restores an
-earlier iteration, its cost is evaluated using that saved state. Earlier cost
-trace entries remain `NaN`; endpoint mode cannot supply a replay trace. An
-initialization-only return and the mean-only rank-zero candidate have no
-iterative variational cost, so their cost remains `NaN`.
-
-The fitter rejects endpoint mode with `record_cost=True` or any enabled
-cost-consuming event, including relative/curvature cost stops and composite
-`elbo_rel`. Cost-based capacity selection requires trace mode. No stopping
-criterion is silently disabled. `SelectionConfig.cost_diagnostics` controls
-the selection sweep; standalone `VBPCA`/`pca_full` also accept the fit option
-`cost_diagnostics="endpoint"`. Cross-validation accepts that fit option and
-records the mode in its result table. Candidate traces and requested runtime
-reports retain diagnostic-mode provenance.
-
-The [paired sweep benchmark](https://github.com/yoavram-lab/VBPCApy/blob/main/scripts/benchmark_study.md#selection-cost-diagnostics)
-compares total sweep time, endpoint metrics and cost-evaluation counts.
-
-VBPCApy provides two strategies for choosing the number of latent components $k$:
-a sequential sweep and K-fold cross-validation.
-
-## `select_n_components` — sequential sweep
+## `select_n_components`: sequential sweep
 
 Fits VB-PCA for each positive candidate $k$ and selects the best according to a
 chosen metric. An explicitly requested rank zero is evaluated as a closed-form
@@ -63,10 +42,11 @@ mean-only model.
 ```python
 from vbpca_py import select_n_components, SelectionConfig
 
-cfg = SelectionConfig(metric="cost", patience=2, max_trials=12)
+config = SelectionConfig(metric="cost", patience=2, max_trials=12)
 best_k, metrics, trace, best_model = select_n_components(
-    x, mask=mask, components=range(1, 15), config=cfg, maxiters=200
+    X, components=range(1, 8), config=config, maxiters=200, random_state=0
 )
+print("Selected k:", best_k)
 ```
 
 ### Available metrics
@@ -74,7 +54,7 @@ best_k, metrics, trace, best_model = select_n_components(
 | Metric | Description |
 |--------|-------------|
 | `"cost"` | Variational free energy (negative ELBO). Lower is better. |
-| `"prms"` | Probe-set RMS — reconstruction error on held-out entries. Requires a probe set via `xprobe` or `xprobe_fraction`. |
+| `"prms"` | Held-out RMS error on the probe entries. Requires a probe set via `xprobe` or `xprobe_fraction`. Lower is better. |
 | `"rms"` | Training-set reconstruction RMS. Lower is better. |
 
 The requested metric is the objective: selection raises a clear error if that
@@ -116,12 +96,12 @@ entries report `runtime_policy_source`, `runtime_policy_regime`, and
 
 `select_n_components` returns a 4-tuple:
 
-1. `best_k` — the selected number of components.
-2. `best_metrics` — endpoint metrics dict for the winning $k$.
-3. `trace` — list of per-$k$ metric dicts.
-4. `best_model` — the fitted `VBPCA` instance when requested and a positive rank wins; otherwise `None`.
+1. `best_k`: the selected number of components.
+2. `best_metrics`: the metrics of the selected candidate at the end of its fit.
+3. `trace`: one metrics dictionary per fitted candidate.
+4. `best_model`: the fitted `VBPCA` estimator when `return_best_model=True` and a positive rank is selected; otherwise `None`.
 
-## `cross_validate_components` — K-fold CV
+## `cross_validate_components`: K-fold cross-validation
 
 Partitions the *observed entries* (not full rows) into folds, fits on each
 training fold, and evaluates on the held-out fold.
@@ -135,16 +115,16 @@ row and column.
 
 CV constructs its own probes: do not pass `xprobe` or a positive
 `xprobe_fraction`. Explicit capacities must be integral, nonnegative and no
-larger than either data dimension. The legacy helpers preserve the previous
-capacity handling for compatibility.
+larger than either data dimension.
 
 ```python
 from vbpca_py import cross_validate_components, CVConfig
 
-cfg = CVConfig(n_splits=5, metric="prms", one_se_rule=True)
+config = CVConfig(n_splits=5, metric="prms", one_se_rule=True)
 best_k, results = cross_validate_components(
-    x, mask=mask, components=range(0, 10), config=cfg, maxiters=200
+    X, components=range(0, 6), config=config, maxiters=200
 )
+print("Selected k:", best_k)
 ```
 
 ### `CVConfig` fields
@@ -191,20 +171,37 @@ is bounded and usually the most useful of the three; the log score is dominated
 by cells whose observed level receives almost no predicted mass, because a
 Gaussian low-rank reconstruction is not a calibrated categorical model.
 
+The example table has three categorical variables (coded 0, 1, 2) and one
+continuous variable, all driven by one latent variable:
+
 ```python
 from vbpca_py import AutoEncoder, CVConfig, cross_validate_components
 
-encoder = AutoEncoder(binary="both", handle_unknown="raise")
-Z = encoder.fit_transform(X)  # samples x features
+n = 200
+latent = rng.standard_normal(n)
+codes = np.column_stack(
+    [np.digitize(latent + 0.7 * rng.standard_normal(n), [-0.5, 0.5]) for _ in range(3)]
+).astype(float)
+table = np.column_stack([codes, latent + 0.3 * rng.standard_normal(n)])
+table[rng.random(table.shape) < 0.05] = np.nan
+
+encoder = AutoEncoder(
+    column_types=["categorical"] * 3 + ["continuous"],
+    binary="both",
+    handle_unknown="raise",
+)
+Z = encoder.fit_transform(table)  # samples x encoded features
 best_k, cv = cross_validate_components(
     Z,
-    components=range(10),
+    components=range(6),
     config=CVConfig(
         encoding_schema=encoder.encoding_schema_,
         selection_rule="first_minimum",
         metric="brier",
     ),
+    maxiters=200,
 )
+print("Selected k:", best_k)
 ```
 
 The fitted schema records variable kind, category order, encoded columns,
@@ -237,7 +234,7 @@ Variable-cell reconstruction CV predicts missing cells of the same samples;
 sample-wise sklearn CV evaluates held-out samples. These answer different
 prediction questions.
 
-## `cross_validate_raw_components` — training-only preprocessing
+## `cross_validate_raw_components`: preprocessing fitted within each fold
 
 Pass a dense **samples-by-original-variables** table and a factory returning a
 fresh `AutoEncoder` with explicit `column_types` and `handle_unknown="raise"`.
@@ -245,8 +242,21 @@ The raw mask has that same shape. Holdouts are assigned using only this
 observation pattern and `CVConfig.seed`; changing held-out values cannot affect
 fold assignments or the fitted preprocessing in that fold.
 
+The example raw table has a yes/no answer, a continuous measurement and an
+ordered rating, with 5% of cells missing:
+
 ```python
 from vbpca_py import AutoEncoder, CVConfig, cross_validate_raw_components
+
+raw = np.empty((120, 3), dtype=object)  # samples x original variables
+shared = rng.standard_normal(120)
+raw[:, 0] = np.where(shared + 0.5 * rng.standard_normal(120) > 0, "yes", "no")
+raw[:, 1] = 50 + 10 * (shared + 0.3 * rng.standard_normal(120))
+raw[:, 2] = np.array(["low", "medium", "high"], dtype=object)[
+    np.digitize(shared + 0.5 * rng.standard_normal(120), [-0.5, 0.5])
+]
+raw[rng.random(raw.shape) < 0.05] = np.nan
+
 
 def make_encoder():
     return AutoEncoder(
@@ -257,11 +267,12 @@ def make_encoder():
     )
 
 best_k, results, folds = cross_validate_raw_components(
-    X, encoder_factory=make_encoder, components=range(4),
+    raw, encoder_factory=make_encoder, components=range(4),
     config=CVConfig(n_splits=3, metric="brier", seed=11,
                     selection_rule="first_minimum", early_stop=True),
     maxiters=200,
 )
+print("Selected k:", best_k)
 ```
 
 All nontraining raw cells are replaced with NaNs before fitting each encoder.
@@ -269,7 +280,8 @@ Its fitted means, scales, category order and weights then transform both
 training and held-out cells. Every encoded indicator belonging to a raw cell
 shares that cell's observation mask. The same fitted encoder is reused for all
 candidate ranks, including early stopping. The three return values are selected
-capacity, aggregate records and `PreprocessedFold` audit objects. To inspect
+capacity, aggregate records and one `PreprocessedFold` per fold, which
+exposes the fold's masks, encoded matrices and fitted encoder. To inspect
 preprocessing alone, call `prepare_raw_cv_folds` with the same inputs.
 
 Each fold's `training` and `held_out` arrays have shape
@@ -313,12 +325,12 @@ installed-package example in `scripts/example_raw_cell_cv.py`.
 
 | | `select_n_components` | `cross_validate_components` |
 |---|---|---|
-| **Speed** | Faster — one fit per $k$ | Slower — $k \times \text{n\_splits}$ fits |
+| **Speed** | Faster: one fit per $k$ | Slower: $k \times \text{n\_splits}$ fits |
 | **Reliability** | Good with probe set | More robust variance estimate |
 | **Best for** | Quick exploration, large data | Repeated-fold comparisons and uncertainty summaries |
 
 
-## Optional sequential first minimum
+## Sequential first-minimum selection
 
 `CVConfig(selection_rule="first_minimum", early_stop=True)` evaluates each
 capacity on every fold before deciding whether to continue. At adjacent
@@ -348,11 +360,53 @@ both select 3. A prefix cannot rule out that later improvement. Requesting
 `early_stop=True` with `selection_rule="one_se"` or `"minimum"` raises
 `ValueError`. The default remains a full one-SE sweep.
 
-Capacity is the dimension fitted during prediction. A downstream significance
-procedure can return a different signal rank and requires its own calibration.
-Agreement of the first-minimum prefixes does not establish that calibration,
-and timing measurements do not establish an adoption policy. Retain full
-sweeps and fixed fitting settings when qualifying a particular application.
-The [bounded comparison procedure](https://github.com/yoavram-lab/VBPCApy/blob/main/scripts/benchmark_study.md#sequential-capacity-qualification)
-records evaluated capacities, fit count, wall/CPU cost and independent held-out
-predictive diagnostics without changing the selection default.
+The selected capacity is the number of components used for prediction. A
+separate significance procedure can select a different number of signal
+components and needs its own calibration. When choosing a selection rule for
+an application, compare it with a full sweep under fixed fitting settings. The
+[benchmark procedure](https://github.com/yoavram-lab/VBPCApy/blob/main/scripts/benchmark_study.md#sequential-capacity-qualification)
+records the evaluated capacities, number of fits, run time and held-out
+predictive diagnostics for such a comparison.
+
+## Reducing cost-trace overhead
+
+Selection records the cost at every iteration by default, even when the
+selection metric is the probe error. Cost-based selection and stopping, and
+convergence replay, need those traces.
+
+For an explicitly fixed PRMS stopping policy that does not consume cost, opt in
+to a single cost evaluation per fitted candidate:
+
+```python
+from vbpca_py import SelectionConfig, select_n_components
+
+best_k, metrics, trace, model = select_n_components(
+    X,
+    components=[0, 2, 4],
+    config=SelectionConfig(metric="prms", cost_diagnostics="endpoint"),
+    xprobe_fraction=0.1,
+    random_state=0,
+    record_cost=False,
+    convergence_criteria={"cost": False, "composite": False},
+)
+print([(entry["k"], entry["cost"]) for entry in trace])
+```
+
+Endpoint mode leaves the fitted factors, the stopping policy, the selected
+capacity and the cost at the returned iteration unchanged. If probe stopping restores an
+earlier iteration, its cost is evaluated using that saved state. Earlier cost
+trace entries remain `NaN`; endpoint mode cannot supply a replay trace. An
+initialization-only return and the mean-only rank-zero candidate have no
+iterative variational cost, so their cost remains `NaN`.
+
+The fitter rejects endpoint mode with `record_cost=True` or any enabled
+cost-consuming event, including relative/curvature cost stops and composite
+`elbo_rel`. Cost-based capacity selection requires trace mode. No stopping
+criterion is silently disabled. `SelectionConfig.cost_diagnostics` controls
+the selection sweep; standalone `VBPCA`/`pca_full` also accept the fit option
+`cost_diagnostics="endpoint"`. Cross-validation accepts that fit option and
+records the mode in its result table. Candidate traces and runtime reports
+record which mode was used.
+
+The [paired sweep benchmark](https://github.com/yoavram-lab/VBPCApy/blob/main/scripts/benchmark_study.md#selection-cost-diagnostics)
+compares total sweep time, endpoint metrics and cost-evaluation counts.

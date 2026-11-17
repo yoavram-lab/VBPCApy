@@ -273,7 +273,7 @@ for input and failed-fit semantics.
 that the registered downstream convergence audit found could truncate fits.
 Other recommended controls are retained. This scoped correction does not
 certify posterior stability for every data regime; see the
-[convergence guide](docs/howto/convergence.md#recommended-cost-stop-correction)
+[convergence guide](docs/howto/convergence.md#cost-change-stopping-in-recommend_config)
 for evidence, remaining limitations and fixed-iteration reference fits.
 
 ## Development
@@ -326,7 +326,7 @@ allocation growth with the observation count.
 Component selection preserves full per-iteration cost traces by default.
 For fixed-policy PRMS sweeps, `SelectionConfig(cost_diagnostics="endpoint")`
 can retain only the returned iteration's cost when no enabled stopping event
-needs a cost trace. See the [diagnostic-mode guide](docs/concepts/model-selection.md#cost-diagnostic-modes).
+needs a cost trace. See the [diagnostic-mode guide](docs/concepts/model-selection.md#reducing-cost-trace-overhead).
 The [dense-mask repair validation](analysis/BACKEND_COPY_VALIDATION_2026_10_20.md)
 records paired measurements and the limits of their interpretation.
 

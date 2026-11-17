@@ -1,106 +1,122 @@
 # Genomics dosage data
 
-These feature-first examples use the explicit pre-0.5 compatibility adapter.
-For the native samples-first estimator, see the [0.5 migration guide](../api/migration-05.md).
+Genotype dosage matrices contain many zeros, and those zeros are measured
+values: a sample carries no copy of the alternate allele. VBPCApy's sparse
+input treats an unstored entry as missing, so ordinary 0/1/2 dosage data
+should be supplied as a dense floating-point array with `NaN` (or an explicit
+mask) for missing calls.
 
-Genotype dosage matrices contain many zeros, but those zeros are measured
-values. VBPCApy's sparse solver assigns a different meaning to an unstored
-entry: it is missing. Use a dense floating-point array and an explicit
-observation mask for ordinary 0/1/2 dosage data.
+## Simulate a dosage matrix
 
-The preprocessing utilities and native estimator use the scikit-learn
-convention of samples by features. This tutorial deliberately uses the
-feature-first compatibility adapter, so it transposes only after preprocessing.
-
-## Prepare and inspect the matrix
-
-Convert every missing-value code to `np.nan` before constructing the mask.
-The mask remains the source of truth when additional entries are hidden for an
-evaluation.
+The example has 300 samples (rows) from two populations and 400 variants
+(columns). Allele frequencies differ slightly between the populations, and 5%
+of genotype calls are missing.
 
 ```python
 import numpy as np
 
-from vbpca_py import MissingAwareStandardScaler, check_data, make_xprobe_mask
-from vbpca_py.legacy import VBPCA
+rng = np.random.default_rng(7)
 
-# dosage has shape (n_samples, n_variants) and contains 0, 1, 2, or NaN.
-dosage = np.asarray(dosage, dtype=np.float64)
-observed = np.isfinite(dosage)
+n_per_population, n_variants = 150, 400
+base = rng.uniform(0.05, 0.5, size=n_variants)
+shift = rng.normal(0.0, 0.1, size=n_variants)
+frequencies = np.clip(np.vstack([base + shift, base - shift]), 0.01, 0.99)
+population = np.repeat([0, 1], n_per_population)
 
-report = check_data(dosage, mask=observed)
-for message in report.warnings:
-    print(message)
+dosage = rng.binomial(2, frequencies[population]).astype(np.float64)
+dosage[rng.random(dosage.shape) < 0.05] = np.nan
 ```
 
-`check_data` and `MissingAwareStandardScaler` use observed entries only.
-An explicit mask is intersected with finite values, so a `NaN` is never used
-as an observed value even when its mask entry is accidentally true.
+With real data, convert every missing-genotype code to `np.nan` first. The
+array has samples on rows and variants on columns.
 
-## Scale and fit a production model
+## Inspect the matrix
 
 ```python
+from vbpca_py import check_data
+
+observed = np.isfinite(dosage)
+report = check_data(dosage, mask=observed)
+print(f"{len(report.warnings)} warnings, for example:")
+for message in report.warnings[:3]:
+    print(" ", message)
+```
+
+`check_data` and the missing-aware scalers use observed entries only. An
+explicit mask is combined with the finite values, so a `NaN` is never treated
+as observed. Rare variants have skewed dosage distributions, so skewness
+warnings are expected here; they suggest a transform for continuous
+measurements but are not a reason to transform dosages.
+
+## Scale and fit
+
+```python
+from vbpca_py import VBPCA, MissingAwareStandardScaler
+
 scaler = MissingAwareStandardScaler()
 scaled = scaler.fit_transform(dosage, mask=observed)
 
-# The explicit legacy adapter uses features by samples.
-x = np.asfortranarray(scaled.T)
-mask = np.asfortranarray(observed.T)
+model = VBPCA(n_components=5, maxiters=300, random_state=0)
+model.fit(scaled, mask=observed)
 
-model = VBPCA(n_components=10, maxiters=500, random_state=0)
-model.fit(x, mask=mask)
+print("Explained variance ratio:", model.explained_variance_ratio_.round(3))
+first = model.scores_[:, 0]
+print("Mean first score by population:", [
+    round(float(first[population == group].mean()), 2) for group in (0, 1)
+])
 ```
 
-C- and Fortran-contiguous dense inputs have the same statistical semantics.
-Fortran order can reduce layout conversion in some native operations, but it
-does not change the fitted model.
+The first component separates the two populations. The other components are
+shrunk to near zero by automatic relevance determination, because the
+simulation has a single population contrast.
 
-## Create a probe set without preprocessing leakage
+C- and Fortran-ordered dense arrays give the same fit; Fortran order can
+avoid a layout conversion in some native operations.
 
-When probe entries are used to assess prediction, choose them before estimating
-the scaling statistics. Fit the scaler on the remaining training entries, then
-apply those statistics to the probe values.
+## Hold out probes without preprocessing leakage
+
+To assess prediction of withheld genotypes, choose the probe entries *before*
+estimating the scaling statistics. Fit the scaler to the remaining training
+entries and apply it to the probe values.
 
 ```python
-rng = np.random.default_rng(2026)
-train_raw_t, probe_raw_t = make_xprobe_mask(
-    dosage.T,
-    fraction=0.10,
-    rng=rng,
-    mask=observed.T,
-)
+from vbpca_py import make_xprobe_mask
 
-train_raw = train_raw_t.T
+probe_rng = np.random.default_rng(2026)
+train_raw, probe_raw = make_xprobe_mask(
+    dosage, fraction=0.10, rng=probe_rng, mask=observed
+)
 train_mask = np.isfinite(train_raw)
-probe_raw = probe_raw_t.T
 probe_mask = np.isfinite(probe_raw)
 
-scaler = MissingAwareStandardScaler().fit(train_raw, mask=train_mask)
-x_train = scaler.transform(train_raw, mask=train_mask).T
-x_probe = scaler.transform(probe_raw, mask=probe_mask).T
+probe_scaler = MissingAwareStandardScaler().fit(train_raw, mask=train_mask)
+x_train = probe_scaler.transform(train_raw, mask=train_mask)
+x_probe = probe_scaler.transform(probe_raw, mask=probe_mask)
 
-model = VBPCA(n_components=10, maxiters=500, random_state=0)
-model.fit(x_train, mask=np.isfinite(x_train))
+probe_model = VBPCA(n_components=5, maxiters=300, random_state=0)
+probe_model.fit(x_train, xprobe=x_probe)
+print(f"Held-out RMS error (scaled units): {probe_model.prms_:.3f}")
 ```
 
-The finite entries of `x_probe` are the held-out targets. This construction
-keeps natural missingness, injected probe missingness, and scaling aligned.
+The finite entries of `x_probe` are the held-out targets. Natural missingness,
+the withheld probes and the scaling statistics stay aligned, and no probe value
+influences the scaler or the fit.
 
 ## Why ordinary CSR conversion is unsafe
 
 ```python
 from scipy import sparse
 
-unsafe = sparse.csr_matrix(dosage)
+unsafe = sparse.csr_matrix(np.nan_to_num(dosage))
+print(f"Stored entries: {unsafe.nnz} of {int(observed.sum())} observed calls")
 ```
 
-This conversion normally drops dosage zeros. VBPCApy would consequently treat
-those positions as unobserved. A sparse representation is valid only when
-every observed zero is explicitly stored, or when every unstored position
-really is missing. Explicitly storing the common zero genotype usually removes
-the memory advantage of CSR. The sparse kernels can still be faster, so an
-explicit-zero CSR representation is a reasonable measured opt-in. Dense data
-plus a mask remain the safer default because their meaning is unambiguous.
+Converting to CSR drops the zero dosages, and VBPCApy would then treat those
+calls as missing. Sparse input is valid only when every observed zero is
+stored explicitly, or when every unstored position really is missing. Storing
+the common zero genotype removes most of the memory advantage of CSR. The
+sparse kernels can still be faster, so explicit-zero CSR is a reasonable
+opt-in after measurement, but a dense array with a mask is the safer default.
 
-The reproducible storage and runtime comparison is in the
-[`genomics storage report`](https://github.com/yoavram-lab/VBPCApy/blob/main/analysis/GENOMICS_STORAGE_REPORT.md).
+The [genomics storage report](https://github.com/yoavram-lab/VBPCApy/blob/main/analysis/GENOMICS_STORAGE_REPORT.md)
+compares storage and run time for the two representations.

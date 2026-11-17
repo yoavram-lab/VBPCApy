@@ -68,12 +68,12 @@ Component selection passes its requested mode when creating probes.
 The executed example below checks the reported nine-entry sparse case: seed
 19 holds out a nonzero observation, leaving eight training entries and the
 unselected stored zero. Using the strict helper instead leaves seven training
-entries. Compatibility mode does not qualify convergence or held-out coverage.
+entries. The compatibility mode does not affect whether a fit has converged or how well it predicts held-out entries.
 
 ## Migrate an existing workflow
 
-For a frozen reproduction, retain the package version, explicit legacy
-entry point, mode, initialization/seed and all fitting options. Switching
+To reproduce an earlier result exactly, keep the package version, the explicit
+legacy entry point, the mode, the initialization and seed, and all fitting options. Switching
 numerical mode can change both the observation set and update order; it is
 not a promise of identical fitted factors or convergence decisions.
 
@@ -83,7 +83,8 @@ masks/probes in that layout. Keep the [masking Pipeline](../tutorials/missing-aw
 responsible for missingness before feature expansion. Compare original-unit
 predictions and fitting diagnostics when migrating an established application.
 The [stopping guide](convergence.md) is a separate choice from compatibility
-mode; four-iteration examples below do not qualify convergence or calibration.
+mode. The four-iteration examples below show the interface; they are not
+converged fits.
 
 The following standalone source uses both entry points explicitly, checks that
 modern masked/unmasked tiny measurements agree, preserves a stored sparse

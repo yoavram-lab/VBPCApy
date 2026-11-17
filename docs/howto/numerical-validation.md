@@ -32,7 +32,7 @@ cannot produce a passing reference run.
 
 The equation checks use `rtol=1e-12`, `atol=1e-13`. Modern trajectory comparisons
 use their documented tolerances in `tests/test_update_trajectory.py` (up to
-`rtol=5e-9`, `atol=5e-11`); the frozen legacy RMS uses `1e-12` relative and
+`rtol=5e-9`, `atol=5e-11`); the fixed legacy RMS reference uses `1e-12` relative and
 absolute tolerance. These are small float64 fixtures, not tolerances for all
 data, ill-conditioned inputs or arbitrary floating-point backends.
 

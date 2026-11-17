@@ -1,149 +1,149 @@
 # Missing Data & Model Selection
 
-These feature-first examples use the explicit pre-0.5 compatibility adapter.
-For the native samples-first estimator, see the [0.5 migration guide](../api/migration-05.md).
-
-This tutorial demonstrates VBPCApy's core strength: fitting PCA directly on
-incomplete data and automatically selecting the number of components.
+This tutorial fits PCA directly to incomplete data and chooses the number of
+components by comparing candidate models on held-out entries.
 
 ## Generate data with missing entries
+
+The matrix has 200 samples (rows) and 60 features (columns) with a rank-five
+signal. Twenty percent of entries are hidden at random and replaced by `NaN`.
 
 ```python
 import numpy as np
 
 rng = np.random.default_rng(42)
 
-n_features, n_samples, true_rank = 60, 200, 5
+n_samples, n_features, true_rank = 200, 60, 5
 noise_std = 0.5
 
-W_true = rng.standard_normal((n_features, true_rank))
-S_true = rng.standard_normal((true_rank, n_samples))
-X_clean = W_true @ S_true + noise_std * rng.standard_normal((n_features, n_samples))
+signal = rng.standard_normal((n_samples, true_rank)) @ rng.standard_normal(
+    (true_rank, n_features)
+)
+X_complete = signal + noise_std * rng.standard_normal((n_samples, n_features))
 
-# Mask 20% of entries as missing
-missing_rate = 0.20
-mask = rng.random((n_features, n_samples)) > missing_rate  # True = observed
-X_obs = np.where(mask, X_clean, np.nan)
+observed = rng.random((n_samples, n_features)) > 0.20  # True = observed
+X_obs = np.where(observed, X_complete, np.nan)
 
-print(f"Data: {n_features} features × {n_samples} samples")
-print(f"Missing: {100 * (1 - mask.mean()):.1f}%")
+print(f"Data: {n_samples} samples x {n_features} features")
+print(f"Missing: {100 * (1 - observed.mean()):.1f}%")
 ```
 
-## Create a probe set
+VBPCApy treats `NaN` entries as unobserved. Only observed entries enter the
+likelihood, so no values are imputed before fitting. This is appropriate when
+the values are missing at random given the model.
 
-A **probe set** holds out a small fraction of the observed entries. The model
-never sees these during fitting, so they provide an unbiased estimate of
-reconstruction quality.
+## Hold out probe entries
+
+A **probe set** is a random subset of the observed entries that is removed
+before fitting. Because the model never sees these values, its error on them
+estimates how well it predicts entries it has not observed.
 
 ```python
 from vbpca_py import make_xprobe_mask
 
 X_train, X_probe = make_xprobe_mask(X_obs, fraction=0.10, rng=rng)
+print("Probe entries:", int(np.isfinite(X_probe).sum()))
 ```
 
-`make_xprobe_mask` returns two matrices:
-
-- `X_train` — the training data with probe entries set to NaN.
-- `X_probe` — a sparse matrix containing only the held-out probe entries.
+For dense input, `X_train` is a copy of `X_obs` with the probe entries set to
+`NaN`, and `X_probe` has the same shape with only the probe values filled in.
 
 ## Select the number of components
 
-Use `select_n_components` to sweep over candidate values of $k$ and pick the
-best according to the variational cost:
+`select_n_components` fits one model per candidate number of components and
+compares them with a chosen metric.
 
 ```python
-from vbpca_py.legacy import select_n_components, SelectionConfig
+from vbpca_py import SelectionConfig, select_n_components
 
-cfg = SelectionConfig(
-    metric="cost",          # select by variational free energy
-    patience=2,             # require 2 consecutive worsening trials to stop
-    max_trials=12,          # try at most 12 values of k
-    return_best_model=True, # keep the fitted model for the best k
+config = SelectionConfig(
+    metric="prms",  # held-out RMS error on the probe entries
+    patience=2,  # stop after two candidates without improvement
+    max_trials=12,  # fit at most 12 candidates
+    return_best_model=True,  # keep the fitted model for the selected count
 )
 
 best_k, metrics, trace, best_model = select_n_components(
     X_train,
-    mask=~np.isnan(X_train),
     components=range(1, 15),
-    config=cfg,
+    config=config,
     maxiters=200,
     xprobe=X_probe,
+    random_state=0,
 )
 
-print(f"Selected k = {best_k}  (true rank = {true_rank})")
-print(f"  cost = {metrics['cost']:.2f}")
+print(f"Selected k = {best_k} (generating rank {true_rank})")
+print(f"Held-out RMS error at k = {best_k}: {metrics['prms']:.3f}")
 ```
 
-!!! tip "Using probe RMS instead"
-    You can also select by held-out reconstruction error:
-
-    ```python
-    cfg = SelectionConfig(metric="prms", patience=2)
-    ```
-
-    This requires a probe set (via `xprobe` or `xprobe_fraction`).
+`prms` is the root mean squared error of the model's predictions for the probe
+entries. Selecting by `metric="cost"` instead uses the variational cost (the
+negative evidence lower bound) on the training entries and does not need a
+probe set. The [model-selection concepts page](../concepts/model-selection.md)
+compares the two.
 
 ## Inspect the selection trace
 
-The `trace` list contains per-$k$ endpoint metrics. You can plot the cost
-or probe RMS across candidates:
+`trace` has one entry per fitted candidate:
 
 ```python
-ks = [entry["k"] for entry in trace]
-costs = [entry["cost"] for entry in trace]
-
-# Quick text summary
 for entry in trace:
-    marker = " <-- best" if entry["k"] == best_k else ""
-    print(f"  k={entry['k']:2d}  cost={entry['cost']:.2f}{marker}")
+    marker = "  <- selected" if entry["k"] == best_k else ""
+    print(
+        f"k={entry['k']:2d}  probe RMS={entry['prms']:.3f}  "
+        f"cost={entry['cost']:.1f}{marker}"
+    )
 ```
 
-## Fit the final model
+The probe error falls until the generating rank is reached and then stays
+flat: additional components neither help nor hurt prediction here, because
+automatic relevance determination shrinks unneeded components towards zero.
 
-If you used `return_best_model=True`, the fitted model is already available:
+## The selected model
+
+With `return_best_model=True`, the model fitted at the selected count is
+returned. To refit on all observed entries, including the probes, construct
+the estimator directly:
 
 ```python
-model = best_model
+from vbpca_py import VBPCA
+
+model = VBPCA(n_components=best_k, maxiters=200, random_state=0)
+model.fit(X_obs)
 ```
 
-Otherwise, fit manually at the selected rank:
+## Compare predictions with the hidden values
+
+The data are simulated, so the values hidden by the missingness pattern are
+known. The fitted reconstruction predicts every entry, observed or not:
 
 ```python
-from vbpca_py.legacy import VBPCA
+X_hat = model.reconstruction_
+missing = ~observed
 
-model = VBPCA(n_components=best_k, maxiters=200)
-model.fit(X_obs, mask=mask)
+rmse_missing = float(np.sqrt(np.mean((X_hat[missing] - X_complete[missing]) ** 2)))
+rmse_observed = float(np.sqrt(np.mean((X_hat[observed] - X_complete[observed]) ** 2)))
+
+print(f"RMSE on observed entries: {rmse_observed:.3f}")
+print(f"RMSE on missing entries:  {rmse_missing:.3f}")
+print(f"Noise standard deviation: {noise_std}")
 ```
 
-## Evaluate on held-out entries
-
-```python
-X_hat = model.inverse_transform()
-held_out = ~mask
-
-rmse_held = float(np.sqrt(np.nanmean((X_hat[held_out] - X_clean[held_out]) ** 2)))
-rmse_obs = float(np.sqrt(np.nanmean((X_hat[mask] - X_clean[mask]) ** 2)))
-
-print(f"Reconstruction RMSE — observed: {rmse_obs:.4f}")
-print(f"Reconstruction RMSE — held-out: {rmse_held:.4f}")
-print(f"Noise σ: {noise_std}")
-```
-
-If the model has selected the correct rank, both RMSE values should be close to
-the noise standard deviation.
+Both errors are close to the noise standard deviation. The error on missing
+entries is slightly larger, because those values did not inform the fit.
 
 ## Explained variance
 
 ```python
-evr = model.explained_variance_ratio_
-if evr is not None:
-    for i, v in enumerate(evr[:best_k]):
-        print(f"  PC{i+1}: {v:.3f}")
+for i, ratio in enumerate(model.explained_variance_ratio_, start=1):
+    print(f"PC{i}: {ratio:.3f}")
 ```
 
 ## Next steps
 
-- [Preprocessing Mixed Data](preprocessing-mixed-data.md) — handle categorical +
-  continuous columns before fitting.
-- [Model Selection concepts](../concepts/model-selection.md) — understand the sweep
-  logic, metrics, and 1-SE rule.
+- [Preprocessing Mixed Data](preprocessing-mixed-data.md): categorical and
+  continuous columns.
+- [Cross-Validation & Diagnostics](cv-diagnostics.md): choose the number of
+  components with K-fold cross-validation.
+- [Model Selection concepts](../concepts/model-selection.md): metrics and
+  selection rules.

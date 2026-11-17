@@ -1,8 +1,5 @@
 # Preprocessing Mixed Tabular Data
 
-These feature-first examples use the explicit pre-0.5 compatibility adapter.
-For the native samples-first estimator, see the [0.5 migration guide](../api/migration-05.md).
-
 Real-world datasets often mix categorical and continuous columns, contain
 missing values, and have skewed or outlier-heavy distributions. This tutorial
 shows how to use VBPCApy's missing-aware preprocessing pipeline to handle all
@@ -134,34 +131,30 @@ ordinal_auto = AutoEncoder(
 )
 ```
 
-!!! note "Legacy-adapter convention"
-    `AutoEncoder` expects **samples × features** (scikit-learn convention).
-    This example deliberately uses `vbpca_py.legacy.VBPCA`, which retains
-    **features × samples**, so it transposes the encoded table. The native
-    `vbpca_py.VBPCA` estimator uses samples × features without a transpose.
-
 ## Fit VB-PCA
 
+`AutoEncoder` and `VBPCA` both use samples × features, so the encoded table is
+passed to the estimator directly. Missing entries stay `NaN` after encoding,
+and the estimator treats them as unobserved.
+
 ```python
-from vbpca_py.legacy import VBPCA
+from vbpca_py import VBPCA
 
-# The explicit legacy adapter uses features × samples.
-Z_t = Z.T
-mask_t = (~np.isnan(Z_t)).astype(float)
+model = VBPCA(n_components=3, maxiters=200, record_cost=True, random_state=0)
+model.fit(Z)
 
-model = VBPCA(n_components=3, maxiters=200, verbose=1)
-model.fit(Z_t, mask=mask_t)
-
-print(f"RMS: {model.rms_:.4f}")
+print(f"Training RMS: {model.rms_:.4f}")
 print(f"Cost: {model.cost_:.2f}")
 ```
 
 ## Round-trip reconstruction
 
+The model reconstructs every encoded entry, including the missing ones.
+`AutoEncoder.inverse_transform` maps that reconstruction back to the original
+variables:
+
 ```python
-Z_recon_t = model.inverse_transform()    # features × samples
-Z_recon = Z_recon_t.T                     # back to samples × features
-X_recon = auto.inverse_transform(Z_recon)
+X_recon = auto.inverse_transform(model.reconstruction_)
 
 print(f"Reconstructed shape: {X_recon.shape}")
 ```

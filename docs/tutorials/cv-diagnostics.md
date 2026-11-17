@@ -1,10 +1,8 @@
 # Cross-Validation & Diagnostics
 
-These feature-first examples use the explicit pre-0.5 compatibility adapter.
-For the native samples-first estimator, see the [0.5 migration guide](../api/migration-05.md).
-
-This tutorial demonstrates K-fold cross-validated model selection and
-post-fit diagnostic inspection.
+This tutorial chooses the number of components with K-fold cross-validation
+over observed entries, then fits the selected model while monitoring a probe
+set and inspects its diagnostics.
 
 ## Generate data
 
@@ -13,141 +11,138 @@ import numpy as np
 
 rng = np.random.default_rng(42)
 
-n_features, n_samples, true_rank = 40, 150, 4
+n_samples, n_features, true_rank = 150, 40, 4
 noise_std = 0.5
 
-W = rng.standard_normal((n_features, true_rank))
-S = rng.standard_normal((true_rank, n_samples))
-X = W @ S + noise_std * rng.standard_normal((n_features, n_samples))
+signal = rng.standard_normal((n_samples, true_rank)) @ rng.standard_normal(
+    (true_rank, n_features)
+)
+X = signal + noise_std * rng.standard_normal((n_samples, n_features))
 
-# 15% missing
-mask = rng.random(X.shape) > 0.15
-X_obs = np.where(mask, X, np.nan)
+observed = rng.random(X.shape) > 0.15  # 15% missing
+X_obs = np.where(observed, X, np.nan)
 ```
 
-## Cross-validate component count
+## Cross-validate the number of components
 
-`cross_validate_components` partitions the *observed entries* (not full rows)
-into folds. Each fold holds out a subset of entries, fits on the rest, and
-evaluates reconstruction on the held-out entries. The current implementation
-accepts dense inputs and guarantees that each training fold retains at least
-one observation in every non-empty row and column. `CVConfig.seed` controls
-both fold assignment and model initialization.
+`cross_validate_components` splits the *observed entries* (not whole rows)
+into folds. For each fold it fits every candidate on the remaining entries and
+scores its predictions for the held-out entries. Every training fold keeps at
+least one observation in each non-empty row and column. `CVConfig.seed`
+controls both the fold assignment and the model initialization.
 
 ```python
-from vbpca_py.legacy import cross_validate_components, CVConfig
+from vbpca_py import CVConfig, cross_validate_components
 
-cfg = CVConfig(
+config = CVConfig(
     n_splits=5,
-    metric="prms",       # probe RMS on held-out entries
-    one_se_rule=True,    # prefer simpler model within 1 SE of best
+    metric="prms",  # held-out RMS error
+    one_se_rule=True,  # prefer the smallest count within one standard error
     seed=42,
 )
 
 best_k, results = cross_validate_components(
     X_obs,
-    mask=mask,
-    components=range(0, 10),  # include the mean-only model
-    config=cfg,
+    components=range(0, 10),  # 0 is the mean-only model
+    config=config,
     maxiters=200,
 )
 
-print(f"Selected k = {best_k}  (true rank = {true_rank})")
+print(f"Selected k = {best_k} (generating rank {true_rank})")
 ```
 
-### Inspect CV results
+### Inspect the results
 
 ```python
 for entry in results:
-    k = entry["k"]
-    mean_metric = entry["mean_prms"]
-    se = entry["se_prms"]
-    marker = " <-- selected" if k == best_k else ""
-    print(f"  k={k:2d}  prms={mean_metric:.4f} ± {se:.4f}{marker}")
+    marker = "  <- selected" if entry["k"] == best_k else ""
+    print(
+        f"k={entry['k']:2d}  held-out RMS={entry['mean_prms']:.4f}"
+        f" +/- {entry['se_prms']:.4f}{marker}"
+    )
 ```
 
-### 1-SE rule
+Each entry reports the mean and standard error of the held-out error over the
+folds, and per-fold values such as `prms_fold_1`.
 
-When `one_se_rule=True`, the selected $k$ is the smallest value whose mean
-metric is within one standard error of the overall best. This guards against
-overfitting by favouring parsimony. Rank zero denotes a mean-only model and
-is a valid result when the held-out data do not support a latent component. The
-one-standard-error rule is a model-selection heuristic rather than a hypothesis
+### The one-standard-error rule
+
+With `one_se_rule=True`, the selected count is the smallest candidate whose
+mean held-out error is within one standard error of the lowest mean. This
+prefers a simpler model when larger ones do not predict clearly better. Rank
+zero denotes a mean-only model and is a valid result when no latent component
+improves prediction. The rule is a model-selection heuristic, not a hypothesis
 test.
 
-## Fit the final model
+## Fit the selected model
 
-The simulated example has positive latent rank. If `best_k == 0` on another
-dataset, report the mean-only result; there is no positive-rank `VBPCA` object
-to fit. Otherwise, fit the selected positive-rank model as below.
+This simulated example has a positive rank. If `best_k == 0` on other data,
+report the mean-only result; there is no positive-rank model to fit.
+
+A probe set lets the fit report its held-out error at every iteration:
 
 ```python
-from vbpca_py import make_xprobe_mask
-from vbpca_py.legacy import VBPCA
+from vbpca_py import VBPCA, make_xprobe_mask
 
-# Create a probe set for monitoring
 X_train, X_probe = make_xprobe_mask(X_obs, fraction=0.10, rng=rng)
 
-model = VBPCA(n_components=best_k, maxiters=300, verbose=1)
-model.fit(X_train, mask=~np.isnan(X_train), xprobe=X_probe)
+model = VBPCA(n_components=best_k, maxiters=300, record_cost=True, random_state=0)
+model.fit(X_train, xprobe=X_probe)
 ```
+
+`record_cost=True` keeps the variational cost at every iteration; it is off by
+default because computing it adds time.
 
 ## Convergence diagnostics
 
-### Learning curves
-
 ```python
-print(f"Final RMS:       {model.rms_:.6f}")
-print(f"Final probe RMS: {model.prms_:.6f}")
-print(f"Final cost:      {model.cost_:.2f}")
+print(f"Iterations: {model.n_iter_} ({model.convergence_reason_})")
+print(f"Training RMS: {model.rms_:.4f}")
+print(f"Probe RMS:    {model.prms_:.4f}")
+print(f"Cost:         {model.cost_:.1f}")
 ```
 
-### Explained variance
+`learning_curve_` holds the per-iteration history:
 
 ```python
-evr = model.explained_variance_ratio_
-if evr is not None:
-    total = 0.0
-    for i, v in enumerate(evr):
-        total += v
-        print(f"  PC{i+1}: {v:.3f}  (cumulative: {total:.3f})")
+curve = model.learning_curve_
+print(sorted(key for key in ("rms", "prms", "cost") if key in curve))
+print("Iterations recorded:", len(curve["rms"]))
+```
+
+## Explained variance
+
+```python
+cumulative = 0.0
+for i, ratio in enumerate(model.explained_variance_ratio_, start=1):
+    cumulative += ratio
+    print(f"PC{i}: {ratio:.3f} (cumulative {cumulative:.3f})")
 ```
 
 ## Plotting
 
-Install the plotting extra if you haven't already:
-
-```bash
-pip install vbpca_py[plot]
-```
+The plotting helpers need the `plot` extra (`pip install "vbpca-py[plot]"`).
 
 ```python
-from vbpca_py.plotting import scree_plot, loadings_barplot, variance_explained_plot
+from vbpca_py.plotting import loadings_barplot, scree_plot, variance_explained_plot
 
-# Scree plot — explained variance ratio per component
-fig = scree_plot(model, cumulative=True)
-
-# Loadings bar plot — feature importance for the first component
-fig = loadings_barplot(model, component=0, top_n=15)
-
-# Absolute variance per component
-fig = variance_explained_plot(model)
+scree = scree_plot(model, cumulative=True)
+loadings = loadings_barplot(model, component=0, top_n=15)
+variance = variance_explained_plot(model)
 ```
 
-### Scree plot
+- `scree_plot` shows the explained variance ratio of each component, with the
+  cumulative ratio when `cumulative=True`.
+- `loadings_barplot` shows the features with the largest absolute loadings on
+  one component; `top_n` limits how many are shown.
+- `variance_explained_plot` shows the variance of each component in data units.
 
-The scree plot shows the explained variance ratio for each component. A sharp
-"elbow" suggests the number of meaningful components. The cumulative line shows
-the total variance explained.
-
-### Loadings bar plot
-
-The loadings bar plot for a given component highlights which features
-contribute most. Use `top_n` to show only the highest-magnitude features.
+Each function returns a Matplotlib figure. The
+[plotting how-to](../howto/plotting.md) shows the figures and their options.
 
 ## Next steps
 
-- [Convergence Tuning](../howto/convergence.md) — fine-tune stopping criteria for
-  tricky datasets.
-- [Model Selection concepts](../concepts/model-selection.md) — understand the
-  sweep logic and 1-SE rule in depth.
+- [Convergence Tuning](../howto/convergence.md): stopping criteria and how to
+  check a fit.
+- [Model Selection concepts](../concepts/model-selection.md): selection rules
+  in more detail.

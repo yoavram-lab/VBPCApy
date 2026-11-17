@@ -195,7 +195,15 @@ If your changes affect the public API or usage:
 six bounded gallery scripts during the strict MkDocs build. `just docs-check`
 also executes public API doctests collected from their source, runs the actual
 quickstart/migration Python blocks and verifies rendered/downloaded source,
-result summaries and generated figures. `just docs-serve` uses the same hook.
+result summaries and generated figures.
+
+`tests/test_markdown_examples.py` runs every Python block on every page under
+`docs/`, in order and in one namespace per page, so each page must define the
+data it uses. A block that genuinely cannot run is preceded by
+`<!-- docs-test: skip: <reason> -->` and its page must be listed in the test's
+`SKIP_ALLOWED`. Pages that import pandas or Polars are skipped where those
+extras are missing, except in the documentation CI job, which installs them
+and sets `VBPCA_DOCS_REQUIRE_ALL=1`. `just docs-serve` uses the same hook.
 Generated gallery files stay in build storage; do not commit them.
 
 Run `uv run --extra dev --extra docs --extra plot pytest -q -m docs
