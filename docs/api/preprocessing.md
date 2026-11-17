@@ -126,6 +126,15 @@ For raw mixed string/NaN data, keep the leading masker in pandas mode when
 the remaining Pipeline uses Polars:
 
 ```python
+from sklearn.pipeline import Pipeline
+
+from vbpca_py import VBPCA, AutoEncoder, ObservationMasker
+
+pipeline = Pipeline([
+    ("observe", ObservationMasker()),
+    ("encode", AutoEncoder(column_types=["categorical", "continuous"])),
+    ("model", VBPCA(n_components=1)),
+])
 pipeline.set_output(transform="polars")
 pipeline.named_steps["observe"].set_output(transform="pandas")
 ```

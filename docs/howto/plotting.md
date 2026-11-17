@@ -1,15 +1,27 @@
 # Plotting
 
-These feature-first examples use the explicit pre-0.5 compatibility adapter.
-For the native samples-first estimator, see the [0.5 migration guide](../api/migration-05.md).
-
 VBPCApy provides three convenience plotting functions. They require matplotlib,
 installed via the `plot` extra.
 
 ## Install
 
 ```bash
-pip install vbpca_py[plot]
+pip install "vbpca-py[plot]"
+```
+
+The examples plot a model fitted to 200 samples and 30 features with a
+rank-four signal:
+
+```python
+import numpy as np
+
+from vbpca_py import VBPCA
+
+rng = np.random.default_rng(0)
+X = rng.standard_normal((200, 4)) @ rng.standard_normal((4, 30))
+X += 0.3 * rng.standard_normal(X.shape)
+
+model = VBPCA(n_components=10, maxiters=200, random_state=0).fit(X)
 ```
 
 ## Scree plot
@@ -18,11 +30,7 @@ Shows the explained variance ratio for each component with an optional
 cumulative line:
 
 ```python
-from vbpca_py.legacy import VBPCA
 from vbpca_py.plotting import scree_plot
-
-model = VBPCA(n_components=10, maxiters=200)
-model.fit(X)
 
 fig = scree_plot(model, cumulative=True)
 ```
@@ -35,7 +43,6 @@ import matplotlib.pyplot as plt
 fig, ax = plt.subplots()
 scree_plot(model, ax=ax, cumulative=True)
 ax.set_title("My scree plot")
-plt.show()
 ```
 
 ## Loadings bar plot
@@ -45,7 +52,8 @@ Visualise which features contribute most to a given component:
 ```python
 from vbpca_py.plotting import loadings_barplot
 
-fig = loadings_barplot(model, component=0, top_n=15)
+names = [f"feature {j}" for j in range(X.shape[1])]
+fig = loadings_barplot(model, component=0, top_n=15, feature_names=names)
 ```
 
 | Parameter | Description |

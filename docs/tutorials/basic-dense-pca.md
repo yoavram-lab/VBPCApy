@@ -1,99 +1,116 @@
 # Basic Dense PCA
 
-These feature-first examples use the explicit pre-0.5 compatibility adapter.
-For the native samples-first estimator, see the [0.5 migration guide](../api/migration-05.md).
-
-This tutorial walks through the simplest VBPCApy workflow: fitting a
-Variational Bayesian PCA model to fully-observed dense data.
+This tutorial fits a variational Bayesian PCA model to a complete dense
+matrix with known low-rank structure, then inspects the fitted components,
+reconstruction and convergence diagnostics.
 
 ## Generate synthetic data
 
-We create a low-rank matrix with known structure so we can verify the model
-recovers it.
+Rows are samples and columns are features, as in scikit-learn. The matrix is
+the product of five latent scores per sample and five loadings per feature,
+plus Gaussian noise, so the fitted model can be compared with known structure.
 
 ```python
 import numpy as np
 
 rng = np.random.default_rng(42)
 
-n_features, n_samples, true_rank = 50, 200, 5
+n_samples, n_features, true_rank = 200, 50, 5
 noise_std = 0.3
 
-# True latent factors
-W_true = rng.standard_normal((n_features, true_rank))
-S_true = rng.standard_normal((true_rank, n_samples))
-X = W_true @ S_true + noise_std * rng.standard_normal((n_features, n_samples))
+scores_true = rng.standard_normal((n_samples, true_rank))
+loadings_true = rng.standard_normal((true_rank, n_features))
+noise = noise_std * rng.standard_normal((n_samples, n_features))
+X = scores_true @ loadings_true + noise
 ```
-
-!!! note "Legacy-adapter features × samples"
-    The explicit compatibility adapter used here expects each **column** to be
-    one observation. The native 0.5 estimator follows scikit-learn's
-    row-per-sample convention. See
-    [Data Convention](../concepts/data-convention.md) for details.
 
 ## Fit the model
 
 ```python
-from vbpca_py.legacy import VBPCA
+from vbpca_py import VBPCA
 
-model = VBPCA(n_components=5, maxiters=200, verbose=1)
-scores = model.fit_transform(X)
+model = VBPCA(n_components=5, maxiters=200, random_state=0)
+model.fit(X)
 ```
 
-`fit_transform` runs the EM algorithm and returns the score matrix
-$S \in \mathbb{R}^{K \times N}$.
+`random_state` fixes the random initialization, so repeated fits give the same
+result. `maxiters` caps the number of update iterations; the fit stops earlier
+when a convergence criterion is met.
 
 ## Inspect the results
 
-### Learned attributes
+### Fitted attributes
 
 ```python
-print("Components shape:", model.components_.shape)   # (50, 5)
-print("Scores shape:", model.scores_.shape)            # (5, 200)
-print("Mean shape:", model.mean_.shape)                # (50,)
-print("Noise variance:", model.noise_variance_)
+print("Components:", model.components_.shape)  # (n_components, n_features)
+print("Scores:", model.scores_.shape)  # (n_samples, n_components)
+print("Mean:", model.mean_.shape)  # (n_features,)
+print("Noise variance:", round(float(model.noise_variance_), 4))
 ```
+
+`scores_` holds the posterior means of the latent scores estimated jointly with
+the loadings during fitting. `noise_variance_` is the fitted variance of the
+Gaussian observation noise; here it should be close to
+`noise_std ** 2 = 0.09`.
+
+!!! note "`fit_transform` and `scores_`"
+    Following scikit-learn, `model.fit_transform(X)` is `model.fit(X).transform(X)`.
+    `transform` projects rows onto the fitted components with the loadings held
+    fixed, so its result can differ slightly from `scores_`, which was estimated
+    together with the loadings. [Known limitations](../limitations.md)
+    describes the difference.
 
 ### Explained variance
 
 ```python
 evr = model.explained_variance_ratio_
-for i, v in enumerate(evr):
-    print(f"  PC{i+1}: {v:.3f}")
-print(f"  Total: {sum(evr):.3f}")
+for i, ratio in enumerate(evr, start=1):
+    print(f"PC{i}: {ratio:.3f}")
 ```
+
+Each ratio is the fraction of the variance of the fitted reconstruction that
+the component accounts for, so the ratios sum to one over the fitted
+components.
 
 ### Reconstruction quality
 
 ```python
-recon = model.inverse_transform()
-rmse = float(np.sqrt(np.mean((X - recon) ** 2)))
-print(f"Reconstruction RMSE: {rmse:.4f}  (noise σ = {noise_std})")
+reconstruction = model.reconstruction_
+rmse = float(np.sqrt(np.mean((X - reconstruction) ** 2)))
+print(f"Reconstruction RMSE: {rmse:.3f} (noise standard deviation {noise_std})")
 ```
 
-The reconstruction RMSE should be close to the noise standard deviation,
-confirming the model has recovered the underlying signal.
+`reconstruction_` equals `model.inverse_transform(model.scores_)`. Its error
+against the data is close to the noise standard deviation, because the five
+components capture the low-rank signal and leave the noise.
 
 ### Convergence diagnostics
 
 ```python
-print(f"Final RMS:  {model.rms_:.6f}")
-print(f"Final cost: {model.cost_:.2f}")
+print("Iterations:", model.n_iter_)
+print("Converged:", model.converged_)
+print("Stopping criterion:", model.convergence_reason_)
+print(f"Training RMS: {model.rms_:.4f}")
 ```
+
+`convergence_reason_` names the criterion that stopped the fit, or
+`"maxiters"` when the iteration cap was reached first. A criterion stopping
+the fit is a heuristic signal; the [convergence guide](../howto/convergence.md)
+describes how to check that a fit has stabilized.
 
 ## Resolved options
 
-Call `get_options()` to see all defaults merged with your overrides:
+`get_options()` returns every solver setting, with defaults filled in:
 
 ```python
-opts = model.get_options()
-for k, v in sorted(opts.items()):
-    print(f"  {k}: {v}")
+options = model.get_options()
+for key in ("maxiters", "bias", "rotate2pca", "compat_mode"):
+    print(f"{key}: {options[key]}")
 ```
 
 ## Next steps
 
-- [Missing Data & Model Selection](missing-data-model-selection.md) — handle
-  incomplete observations and choose $k$ automatically.
-- [VBPCA API reference](../api/vbpca.md) — full list of constructor parameters and
-  learned attributes.
+- [Missing Data & Model Selection](missing-data-model-selection.md): fit
+  incomplete data and choose the number of components.
+- [VBPCA API reference](../api/vbpca.md): constructor parameters and fitted
+  attributes.

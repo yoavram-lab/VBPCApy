@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Teach the native samples x features estimator in every tutorial, how-to and
+  concept page; `vbpca_py.legacy` now appears only where a page explains or
+  demonstrates the pre-0.5 interface. Each page defines its own example data,
+  and the genomics tutorial simulates a dosage matrix.
+- Execute every Python block on every documentation page in the test suite,
+  not only the quickstart and two tutorials.
+
 ### Fixed
 
 - Correct the native component-selection example and documentation of native

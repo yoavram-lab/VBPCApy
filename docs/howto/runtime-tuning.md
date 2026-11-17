@@ -1,19 +1,25 @@
 # Runtime & Threading
 
-These feature-first examples use the explicit pre-0.5 compatibility adapter.
-For the native samples-first estimator, see the [0.5 migration guide](../api/migration-05.md).
-
 VBPCApy includes C++ kernels for the most expensive operations (score updates,
 loading updates, noise updates, RMS computation). Thread counts and memory
-policies can be tuned for your hardware.
+policies can be tuned for your hardware. The examples use this matrix of 500
+samples and 60 features:
+
+```python
+import numpy as np
+
+from vbpca_py import VBPCA
+
+rng = np.random.default_rng(0)
+X = rng.standard_normal((500, 5)) @ rng.standard_normal((5, 60))
+X += 0.3 * rng.standard_normal(X.shape)
+```
 
 ## Runtime tuning modes
 
 Control the autotuning policy via the `runtime_tuning` parameter:
 
 ```python
-from vbpca_py.legacy import VBPCA
-
 # Default: short probe to pick threads and accessor mode
 model = VBPCA(n_components=5, runtime_tuning="safe")
 
@@ -94,14 +100,12 @@ diagnostic output budget below. Sparse automatic mode retains observed sums.
 
 `max_dense_bytes` bounds the combined persistent storage of the three full-shape
 fit diagnostics: reconstruction, latent variance and predictive variance. These
-are float64 arrays with the original feature-by-sample shape, even when input
-is sparse or empty rows/columns are removed during fitting. The default limit
+are float64 arrays with the shape of the input (samples x features), even when
+the input is sparse or empty rows/columns are removed during fitting. The default limit
 is 2,000,000,000 bytes. A request above the limit raises `ValueError` before
 fitting; exactly the limit is allowed.
 
 ```python
-from vbpca_py.legacy import VBPCA
-
 # Limit the three fit outputs together to 512 MiB.
 model = VBPCA(n_components=5, max_dense_bytes=512 * 1024**2)
 
@@ -112,7 +116,7 @@ model_without_outputs = VBPCA(n_components=5, return_diagnostics=False)
 model_without_limit = VBPCA(n_components=5, max_dense_bytes=None)
 ```
 
-For 5,846 features and 2,504 samples, the three outputs alone need about
+For 2,504 samples and 5,846 features, the three outputs alone need about
 335 MiB. Factors, covariance stores, input copies, temporary arrays and allocator
 behavior are outside this limit, so it is not a bound on peak process memory.
 `return_diagnostics=False` omits those fit outputs; it does not bound temporary
@@ -135,17 +139,23 @@ to charge. Its temporary scoring arrays remain outside this output limit.
 
 ## Runtime report
 
-Add `runtime_report=1` to the low-level `pca_full()` call to see which thread
+Construct the estimator with `runtime_report=True` to record which thread
 counts and accessor modes were selected:
+
+```python
+model = VBPCA(n_components=5, runtime_report=True, random_state=0).fit(X)
+report = model.runtime_report_
+print(sorted(report)[:5])
+```
+
+The low-level `pca_full()` function, which takes features x samples, returns
+the same dictionary with `runtime_report=1`:
 
 ```python
 from vbpca_py._pca_full import pca_full
 
-result = pca_full(X, n_components=5, runtime_report=1)
+result = pca_full(X.T, 5, runtime_report=1)
 ```
-
-The estimator exposes the same dictionary as `model.runtime_report_` when
-constructed with `runtime_report=True`.
 
 Component sweeps reuse measured execution settings within compatible
 power-of-two rank ranges by default. This reduces repeated tuning during
@@ -228,7 +238,8 @@ Masked dense score and loading updates support two exact accumulation forms:
 
 Set `dense_sufficient_statistics="auto"` (the default) to use the
 current density and rank policy. The policy is conservative and keeps the
-observed-cell implementation for the genomics study workload:
+observed-cell implementation for genotype-shaped data (thousands of samples
+and features, few missing cells):
 
 ```python
 model = VBPCA(n_components=10, dense_sufficient_statistics="auto")
@@ -240,7 +251,7 @@ observed fraction, and thresholds. Explicit modes are useful for benchmarking.
 ## Posterior variance diagnostics
 
 Full diagnostic output retains the reconstruction mean, posterior variance and
-predictive variance at every feature/sample cell. Predictive variance adds the
+predictive variance at every sample/feature cell. Predictive variance adds the
 observation noise to posterior variance. The contraction retains all loading
 and score covariance entries, shared pattern covariances and bias uncertainty;
 PPCA/MAP omit their absent covariance terms.
@@ -248,7 +259,7 @@ PPCA/MAP omit their absent covariance terms.
 Uncertainty is evaluated in rectangular blocks of at most 128 features and
 128 samples using matrix products. Covariance packing and outer products use
 only those blocks; NumPy scratch storage scales as
-`O(128 * rank**2 + 128**2)` rather than additional full feature-by-sample
+`O(128 * rank**2 + 128**2)` rather than additional full samples-by-features
 matrices. This excludes BLAS workspace and the required output itself.
 `max_dense_bytes` still checks combined diagnostic output storage, rather than
 peak process memory. Use `return_diagnostics=False` to omit full outputs.

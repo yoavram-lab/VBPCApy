@@ -238,6 +238,10 @@ jobs:
       - name: Execute source-collected API, quickstart and migration examples
         run: .venv/bin/python scripts/check_public_examples.py --require-wheel
       - name: Execute masked Pipeline and GridSearchCV in every output mode
+        env:
+          # Every documentation page must run here; none may skip for a
+          # missing optional dependency.
+          VBPCA_DOCS_REQUIRE_ALL: "1"
         run: >-
           .venv/bin/python -m pytest -q tests/test_pipeline_example.py
           tests/test_markdown_examples.py tests/test_notebook_examples.py

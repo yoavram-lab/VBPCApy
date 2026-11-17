@@ -14,7 +14,8 @@ See the [0.5 migration guide](../api/migration-05.md) for the transition.
 The native estimator defaults to `compat_mode="modern"`. The legacy adapter
 and low-level solver retain `strict_legacy` as their default. Selecting an
 explicit compatibility mode also selects its documented numerical and
-observation semantics. Frozen environments retain their registered versions.
+observation semantics. To reproduce an earlier analysis, use the VBPCApy
+version and settings recorded with it.
 
 ## Dense observations
 

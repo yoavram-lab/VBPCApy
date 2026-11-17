@@ -73,6 +73,8 @@ Require multiple criteria to trigger simultaneously. Pass a dict specifying
 which criteria must all be satisfied:
 
 ```python
+from vbpca_py import VBPCA
+
 model = VBPCA(
     n_components=5,
     composite_stop={"angle": 1e-4, "rms": 1e-3, "elbo_rel": 1e-4},
@@ -107,18 +109,18 @@ rather than numerical convergence. VBPCA warns whenever the resolved options hav
 `maxiters <= niter_broadprior`: that configuration leaves no eligible
 post-warmup iteration in which a convergence criterion can stop the fit.
 
-The legacy `slowing_down` name is unavailable in live fitting: the fitter does
-not supply its backtracking counter. Recommendations and resolved fit options
-disable it. An explicit `True` request emits a warning and resolves to `False`,
-without mutating the caller's dictionary or changing the already inert rule's
-fit endpoints. `criterion_available_slowing_down` is zero throughout the returned
-learning curve, distinguishing an unavailable event stream from an evaluated
-criterion that did not fire. The legacy helper can still interpret an explicitly
-supplied diagnostic counter; this does not enable it in the fitter.
+The `slowing_down` criterion from the MATLAB implementation is unavailable:
+it needs a backtracking counter that the fitter does not provide. Recommended
+and resolved options disable it. An explicit `True` request emits a warning
+and is treated as `False`, without modifying the caller's dictionary; because
+the rule never fired, fits are unchanged. `criterion_available_slowing_down`
+is zero throughout the learning curve, which distinguishes an unavailable
+criterion from one that was evaluated and did not fire.
 
-An accepted heuristic stopping rule does not certify posterior stability or
-predictive calibration. Changing a recommended threshold or policy requires
-separate evidence on the intended regimes and independent confirmation.
+A stopping criterion being met does not show that the posterior mean and
+variance have stabilized, or that predictions are calibrated. The
+[convergence how-to](../howto/convergence.md#compare-with-a-fixed-iteration-reference)
+shows how to check a fit against a fixed-iteration reference.
 
 ## Criterion ordering — `criterion_order`
 
