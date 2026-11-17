@@ -62,6 +62,10 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 RANK_ZERO_SELECTION_SUPPORTED = True
+"""True when selection helpers accept rank zero (a mean-only model) as a candidate.
+
+Downstream tools can check this flag instead of comparing version numbers.
+"""
 
 _Metric = Literal["rms", "prms", "cost"]
 _CVMetric = Literal["prms", "brier", "log_score"]

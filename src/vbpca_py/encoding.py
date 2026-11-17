@@ -9,6 +9,11 @@ import numpy as np
 
 from ._types import Float64Array  # noqa: TC001 - runtime annotation resolution
 
+__all__ = [
+    "EncodedVariable",
+    "EncodingSchema",
+]
+
 
 def _finite_real_scalar(value: object) -> bool:
     if not np.isscalar(value):

@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `vbpca_py.legacy.pca_full` is the public import path for the low-level
+  feature-first solver, which the documentation previously imported from the
+  private `vbpca_py._pca_full`.
+- Every public module declares `__all__`, and a test fixes the expected public
+  names of each module. `vbpca_py.preprocessing` now also lists
+  `MissingAwareOrdinalEncoder`. `RANK_ZERO_SELECTION_SUPPORTED` is documented
+  in the API reference.
+
+### Deprecated
+
+- Accessing the typing aliases `Float64Array`, `IndexArray`, `NumericTraceKey`
+  and `PhaseTimingKey` from the package root emits a `FutureWarning`; import
+  them from `vbpca_py.results`. Root access will be removed in 0.7.
+
 ### Fixed
 
 - Correct the native component-selection example and documentation of native

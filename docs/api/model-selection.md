@@ -13,3 +13,5 @@
 ::: vbpca_py.SelectionConfig
 
 ::: vbpca_py.CVConfig
+
+::: vbpca_py.RANK_ZERO_SELECTION_SUPPORTED

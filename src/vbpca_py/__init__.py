@@ -2,6 +2,9 @@
 
 from importlib.metadata import version
 
+from vbpca_py._deprecated import (  # noqa: F401 - PEP 562 module attribute hook
+    module_getattr as __getattr__,
+)
 from vbpca_py._missing import make_xprobe_mask
 from vbpca_py._projection import ProjectionPosterior
 from vbpca_py.configuration import PCAOptions
@@ -36,13 +39,9 @@ from vbpca_py.raw_model_selection import (
 )
 from vbpca_py.results import (
     CovarianceResult,
-    Float64Array,
     HyperparameterResult,
-    IndexArray,
     LearningCurve,
-    NumericTraceKey,
     PCAResult,
-    PhaseTimingKey,
     PosteriorCovariances,
 )
 
@@ -55,9 +54,7 @@ __all__ = [
     "DataReport",
     "EncodedVariable",
     "EncodingSchema",
-    "Float64Array",
     "HyperparameterResult",
-    "IndexArray",
     "LearningCurve",
     "MissingAwareLogTransformer",
     "MissingAwareMinMaxScaler",
@@ -67,11 +64,9 @@ __all__ = [
     "MissingAwareSparseOneHotEncoder",
     "MissingAwareStandardScaler",
     "MissingAwareWinsorizer",
-    "NumericTraceKey",
     "ObservationMasker",
     "PCAOptions",
     "PCAResult",
-    "PhaseTimingKey",
     "PosteriorCovariances",
     "PreprocessedFold",
     "ProjectionPosterior",

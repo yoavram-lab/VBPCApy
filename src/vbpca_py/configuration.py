@@ -34,6 +34,10 @@ from .options import (
     VarianceUpdateOrder,
 )
 
+__all__ = [
+    "PCAOptions",
+]
+
 _Value = TypeVar("_Value")
 
 
