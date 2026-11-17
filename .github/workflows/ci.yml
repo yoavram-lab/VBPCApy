@@ -77,7 +77,9 @@ jobs:
           uv run python scripts/check_sdist_tests.py dist-source-check
 
   eigen33-updates:
-    runs-on: ubuntu-latest
+    # Eigen 3.3.4 (the manylinux_2_28 headers) does not compile with the
+    # Ubuntu 26.04 compiler; keep a toolchain that supports those headers.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v4
